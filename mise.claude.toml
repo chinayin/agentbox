@@ -1,0 +1,3 @@
+# MISE_ENV=claude overlay: adds Claude Code on top of mise.toml. Exact versions live in mise.claude.lock.
+[tools]
+"aqua:anthropics/claude-code" = "latest"

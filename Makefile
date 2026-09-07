@@ -15,8 +15,8 @@ MISE       ?= mise
 BUILD = docker build $(if $(PLATFORM),--platform $(PLATFORM)) \
         $(if $(filter-out dev,$(VERSION)),--build-arg AGENTBOX_VERSION=$(VERSION)) \
         $(if $(AGENT_UID),--build-arg AGENT_UID=$(AGENT_UID)) $(if $(AGENT_GID),--build-arg AGENT_GID=$(AGENT_GID)) $(BUILD_ARGS)
-# MISE_ENV=pi loads mise.toml + mise.pi.toml and writes both lock files in one run.
-LOCK = MISE_ENV=pi MISE_TRUSTED_CONFIG_PATHS=$(CURDIR) $(MISE) lock
+# MISE_ENV=claude,pi loads mise.toml plus every agent overlay and writes all lock files in one run.
+LOCK = MISE_ENV=claude,pi MISE_TRUSTED_CONFIG_PATHS=$(CURDIR) $(MISE) lock
 
 .PHONY: help image image-claude image-pi lock lock-refresh test lint smoke check
 
@@ -25,10 +25,10 @@ help: ## Show this help
 
 image: image-claude image-pi ## Build both images
 
-image-claude: ## Build agentbox:<VERSION>
-	$(BUILD) --target agentbox -t $(IMAGE):$(VERSION) .
+image-claude: ## Build agentbox:<VERSION> (Claude Code)
+	$(BUILD) --target agentbox-claude -t $(IMAGE):$(VERSION) .
 
-image-pi: ## Build agentbox:<VERSION>-pi
+image-pi: ## Build agentbox:<VERSION>-pi (pi)
 	$(BUILD) --target agentbox-pi -t $(IMAGE):$(VERSION)-pi .
 
 lock: ## Bump every tool to upstream latest and rewrite lock files (network)

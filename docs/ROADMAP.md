@@ -15,7 +15,7 @@
 | # | 事项 | 现状 | 验收 |
 |---|---|---|---|
 | 4 | compose 加固：`read_only: true` + tmpfs + healthcheck | 未做；`cap_drop`、`no-new-privileges`、`init`、pids 上限已有，但**这一层完全没有测试覆盖**——`make smoke` 走裸 `docker run`，不经过 compose。cc-connect 凭据无效时不退出只刷 websocket error，healthcheck 不能只看进程 | 起真实实例后 `docker inspect` 能读到 `PidsLimit`、`CapDrop`、`SecurityOpt` 实际生效（`docker compose config` 只证明 YAML 没写错，不算验收）；实例 `healthy` 且无 `read-only file system` |
-| 5 | pi 会话端到端 | 已决定（2026-09-06）：pi 变体保留，语义为叠加；先把 Claude Code 生态跑通，pi 之后再验证。`agent.type = "pi"` 已被接受并启动引擎，未用真实凭据驱动过会话 | 真实飞书应用 + `-pi` 镜像，发一条消息拿到回复 |
+| 5 | pi 会话端到端 | 已决定（2026-09-06）：pi 变体保留；2026-09-07 起与 Claude Code 镜像平级、共享工具链、互不包含。先把 Claude Code 生态跑通，pi 之后再验证。`agent.type = "pi"` 已被接受并启动引擎，未用真实凭据驱动过会话 | 真实飞书应用 + `-pi` 镜像，发一条消息拿到回复 |
 | 6 | state 卷备份/恢复脚本 | 无脚本；卷内含 git 私钥 | `scripts/state-backup.sh`，文档标注备份件密级 |
 
 ## 已否决

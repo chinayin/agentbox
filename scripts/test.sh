@@ -204,7 +204,7 @@ for f in "$ROOT"/docs/*.md; do
 	doc_files+=("$f")
 done
 doc_paths="$(grep -ohE '`[^` ]+`' "${doc_files[@]}" 2>/dev/null | tr -d '`' | sort -u | grep -E \
-	'^((scripts|docs|examples|etc|\.github|\.claude)/[A-Za-z0-9._/-]*|mise\.(toml|lock|pi\.toml|pi\.lock)|Dockerfile|Makefile|docker-compose\.yaml|entrypoint\.sh|\.env\.example|\.dockerignore|\.gitignore|CLAUDE\.md|README\.md|SECURITY\.md|LICENSE)$')"
+	'^((scripts|docs|examples|etc|\.github|\.claude)/[A-Za-z0-9._/-]*|mise\.(toml|lock|(claude|pi)\.(toml|lock))|Dockerfile|Makefile|docker-compose\.yaml|entrypoint\.sh|\.env\.example|\.dockerignore|\.gitignore|CLAUDE\.md|README\.md|SECURITY\.md|LICENSE)$')"
 if [ -z "$doc_paths" ]; then
 	bad "every repo path named in the docs exists" "extraction matched nothing; the filter broke"
 else
@@ -218,7 +218,7 @@ fi
 
 # ---------- mise declaration vs lock ----------
 group "mise toolchain declaration"
-for f in mise.toml mise.lock mise.pi.toml mise.pi.lock; do
+for f in mise.toml mise.lock mise.claude.toml mise.claude.lock mise.pi.toml mise.pi.lock; do
 	[ -f "$ROOT/$f" ] && ok "${f} exists" || bad "${f} exists" "missing"
 done
 
@@ -229,26 +229,30 @@ import tomllib
 
 root = pathlib.Path(sys.argv[1])
 base = tomllib.loads((root / "mise.toml").read_text())
+claude = tomllib.loads((root / "mise.claude.toml").read_text())
 pi = tomllib.loads((root / "mise.pi.toml").read_text())
 assert base["settings"]["lockfile"] is True
 assert base["settings"]["registry_floating"] is False
 assert base["settings"]["use_versions_host"] is False
 assert base["tool_config"]["locked"] is True
+# agent CLIs live only in their overlay: the shared toolchain carries no agent
+assert "aqua:anthropics/claude-code" not in base["tools"]
 assert "aqua:earendil-works/pi" not in base["tools"]
+assert list(claude["tools"]) == ["aqua:anthropics/claude-code"]
 assert list(pi["tools"]) == ["aqua:earendil-works/pi"]
 # mise.toml holds update policy only; kubectl and helm must be prefix-bounded
 def selector(value):
     return value if isinstance(value, str) else value["version"]
 assert selector(base["tools"]["aqua:kubernetes/kubernetes/kubectl"]).startswith("prefix:1.")
 assert selector(base["tools"]["aqua:helm/helm"]).startswith("prefix:")
-for config in (base, pi):
+for config in (base, claude, pi):
     for value in config["tools"].values():
         assert selector(value), "every tool needs a version selector"
 
 def lock_key(name):
     return name.removeprefix("core:")
 platforms_wanted = set(base["settings"]["lockfile_platforms"])
-for config, lock_name in ((base, "mise.lock"), (pi, "mise.pi.lock")):
+for config, lock_name in ((base, "mise.lock"), (claude, "mise.claude.lock"), (pi, "mise.pi.lock")):
     lock = tomllib.loads((root / lock_name).read_text())
     assert lock["lockfile_version"] == 1
     declared = {lock_key(n) for n in config["tools"]}
@@ -290,32 +294,37 @@ grep -q '/usr/local/share/mise/shims' "$DF" && ok "PATH uses the system shims" |
 grep -q 'MISE_NOT_FOUND_AUTO_INSTALL=false' "$DF" && ok "mise auto-install is disabled at runtime" || bad "mise auto-install is disabled at runtime" "missing"
 grep -q 'MISE_NOT_FOUND_SYSTEM_FALLBACK=false' "$DF" && ok "mise shims do not fall back to system tools" || bad "mise shims do not fall back to system tools" "missing"
 grep -q 'MISE_OFFLINE=true' "$DF" && ok "mise is forced offline at runtime" || bad "mise is forced offline at runtime" "missing"
-grep -q 'DISABLE_UPDATES=1' "$DF" && ok "claude self-update is disabled at runtime" || bad "claude self-update is disabled at runtime" "missing"
+# DISABLE_UPDATES is Claude Code's switch; it belongs to the claude stage, not to the shared base or pi
+stage_has() { awk -v st="AS $1\$" '$0 ~ "^FROM .* " st {p=1; next} /^FROM /{p=0} p && $0 ~ pat {f=1} END{exit !f}' pat="$2" "$DF"; }
+stage_has agentbox-claude 'DISABLE_UPDATES=1' && ok "claude self-update is disabled in the claude stage" || bad "claude self-update is disabled in the claude stage" "missing"
+stage_has agentbox 'DISABLE_UPDATES=1' || stage_has agentbox-pi 'DISABLE_UPDATES=1' \
+	&& bad "DISABLE_UPDATES stays out of the base and pi stages" "found outside the claude stage" \
+	|| ok "DISABLE_UPDATES stays out of the base and pi stages"
 grep -qE 'MISE_IGNORED_CONFIG_PATHS=[^ ]*/workspace' "$DF" && ok "mise configs under the workspace are ignored at runtime" || bad "mise configs under the workspace are ignored at runtime" "MISE_IGNORED_CONFIG_PATHS is absent"
 grep -qE 'MISE_IGNORED_CONFIG_PATHS=[^ ]*/state' "$DF" && bad "the ignore list excludes /state" "ignoring HOME would drop the system config too" || ok "the ignore list excludes /state"
 grep -q 'MISE_GLOBAL_CONFIG_FILE=/etc/mise/config.toml' "$DF" && ok "the global mise config points back at /etc/mise" || bad "the global mise config points back at /etc/mise" "missing"
 grep -qE 'MISE_(DATA|CONFIG|CACHE)_DIR=/mise|MISE_INSTALL_PATH=' "$DF" && bad "the single-directory /mise mode is not mixed in" "conflicting variables found" || ok "the single-directory /mise mode is not mixed in"
 grep -q 'MISE_LOCKED=' "$DF" && bad "locked mode is declared in mise.toml, not inlined as MISE_LOCKED" "still inlined" || ok "locked mode is declared in mise.toml, not inlined as MISE_LOCKED"
-if awk '/AS agentbox-pi/{p=1} p && /mise install --system/{found=1} END{exit !found}' "$DF" \
-	&& awk '/AS agentbox-pi/{p=1} p && /HOME=\/root/{ok=1} END{exit !ok}' "$DF"; then
-	ok "the pi stage inlines HOME=/root before installing"
-else
-	bad "the pi stage inlines HOME=/root before installing" "missing"
-fi
+# agent stages run mise with HOME=/state inherited; each must point HOME back to /root while installing
+for st in agentbox-claude agentbox-pi; do
+	stage_has "$st" 'mise install --system' && stage_has "$st" 'HOME=/root' \
+		&& ok "the ${st} stage inlines HOME=/root before installing" \
+		|| bad "the ${st} stage inlines HOME=/root before installing" "missing"
+done
 hp="$(grep -oE 'HELM_PLUGINS=[^ \\]+' "$DF" | head -1 | cut -d= -f2)"
 case "${hp:-}" in /opt/*) ok "HELM_PLUGINS lives inside the image (${hp})" ;; *) bad "HELM_PLUGINS lives inside the image" "currently ${hp:-unset}" ;; esac
 grep -E '^[^#]*go env -w' "$DF" | grep -q . && bad "GOPROXY is not written with go env -w" "the state volume would override it at runtime" || ok "GOPROXY is not written with go env -w"
 grep -E 'install -d -o \$\{AGENT_UID\}' "$DF" | grep -q '/agent' && ok "/agent is owned by the agent user (cc-connect lock file)" || bad "/agent is owned by the agent user (cc-connect lock file)" "missing"
 grep -q '^USER ' "$DF" && ok "the Dockerfile declares a non-root USER" || bad "the Dockerfile declares a non-root USER" "missing"
 case "$(grep -m1 '^FROM ' "$DF")" in "FROM debian:"*) ok "the base image is debian slim" ;; *) bad "the base image is debian slim" "$(grep -m1 '^FROM ' "$DF")" ;; esac
-for st in toolchain agentbox agentbox-pi; do
+for st in toolchain agentbox agentbox-claude agentbox-pi; do
 	grep -qE "^FROM .* AS ${st}\$" "$DF" && ok "stage ${st} exists" || bad "stage ${st} exists" "missing"
 done
 grep -E 'useradd|groupadd' "$DF" | grep -q '|| true' && bad "useradd/groupadd do not swallow errors" "found || true" || ok "useradd/groupadd do not swallow errors"
 
 # .dockerignore is an allowlist: only files the Dockerfile COPYs enter the build context
 head -1 "$ROOT/.dockerignore" | grep -q '^# ' && sed -n '2p' "$ROOT/.dockerignore" | grep -qx '\*' && ok ".dockerignore is an allowlist (first rule is *)" || bad ".dockerignore is an allowlist (first rule is *)" "see the file"
-for f in Dockerfile entrypoint.sh etc/ mise.toml mise.lock mise.pi.toml mise.pi.lock; do
+for f in Dockerfile entrypoint.sh etc/ mise.toml mise.lock mise.claude.toml mise.claude.lock mise.pi.toml mise.pi.lock; do
 	grep -qx "!$f" "$ROOT/.dockerignore" && ok ".dockerignore allows $f" || bad ".dockerignore allows $f" "missing"
 done
 
@@ -384,8 +393,10 @@ grep -q '^PI_KEY=x' "$sc/examples/data/env.example" \
 want="$(python3 -c 'import re,sys,tomllib
 def walk(n):
     if isinstance(n,str): yield n
-    elif isinstance(n,dict): [ (yield from walk(v)) for v in n.values() ]
-    elif isinstance(n,list): [ (yield from walk(v)) for v in n ]
+    elif isinstance(n,dict):
+        for v in n.values(): yield from walk(v)
+    elif isinstance(n,list):
+        for v in n: yield from walk(v)
 names=set()
 for v in walk(tomllib.load(open(sys.argv[1],"rb"))): names.update(re.findall(r"\$\{([A-Z_]+)\}",v))
 names.discard("WORK_DIR")

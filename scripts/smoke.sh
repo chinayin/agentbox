@@ -144,7 +144,7 @@ scrub_dir() {
 	rmdir "${dir}"
 }
 
-group "base image"
+group "claude image"
 
 run_capture "${IMAGE}" -- --version
 case "${RUN_OUT}" in
@@ -187,6 +187,7 @@ run_capture "${IMAGE}" -- sh -c '
 test "$MISE_NOT_FOUND_AUTO_INSTALL" = false
 test "$MISE_NOT_FOUND_SYSTEM_FALLBACK" = false
 test "$MISE_OFFLINE" = true
+test "$MISE_ENV" = claude
 test "$DISABLE_UPDATES" = 1
 test -d /usr/local/share/mise/installs
 test -d /usr/local/share/mise/shims
@@ -235,13 +236,14 @@ check_lock_installed() {
 		|| bad "every tool in ${lock} is installed at its locked version" "${RUN_OUT}"
 }
 check_lock_installed "${IMAGE}" mise.lock
+check_lock_installed "${IMAGE}" mise.claude.lock
 
 # Shims actually execute: only the runtime-critical few, the rest is covered by the lock loop.
 check_version "Node" "$(lock_version mise.lock node)" node --version
 check_version "Go" "$(lock_version mise.lock go)" go version
 check_version "Python" "$(lock_version mise.lock python)" python --version
 check_version "cc-connect" "$(lock_version mise.lock "github:chenhg5/cc-connect")" cc-connect --version
-check_version "Claude Code" "$(lock_version mise.lock "aqua:anthropics/claude-code")" claude --version
+check_version "Claude Code" "$(lock_version mise.claude.lock "aqua:anthropics/claude-code")" claude --version
 
 run_capture "${IMAGE}" -- sh -c '
 gcc --version >/dev/null
@@ -249,14 +251,14 @@ g++ --version >/dev/null
 make --version >/dev/null
 '
 [ "${RUN_RC}" -eq 0 ] \
-	&& ok "base image keeps the native build toolchain" \
-	|| bad "base image keeps the native build toolchain" "${RUN_OUT}"
+	&& ok "claude image keeps the native build toolchain" \
+	|| bad "claude image keeps the native build toolchain" "${RUN_OUT}"
 
 # `command` is a shell builtin; wrap in sh -c.
 run_capture "${IMAGE}" -- sh -c 'command -v pi >/dev/null 2>&1 && echo FOUND || echo ABSENT'
 [ "${RUN_RC}" -eq 0 ] && [ "$(last_line "${RUN_OUT}")" = ABSENT ] \
-	&& ok "base image does not contain pi" \
-	|| bad "base image does not contain pi" "rc=${RUN_RC} output=${RUN_OUT}"
+	&& ok "claude image does not contain pi" \
+	|| bad "claude image does not contain pi" "rc=${RUN_RC} output=${RUN_OUT}"
 
 run_capture "${IMAGE}" -- helm plugin list
 [ "${RUN_RC}" -eq 0 ] && printf '%s\n' "${RUN_OUT}" | awk 'NR>1 {print $1}' | grep -qx diff \
@@ -437,11 +439,21 @@ else
 fi
 
 if [ -n "${PI_IMAGE}" ]; then
-	group "pi variant"
+	group "pi image"
 	run_capture "${PI_IMAGE}" -- sh -c 'command -v pi'
 	[ "${RUN_RC}" -eq 0 ] && [ -n "$(last_line "${RUN_OUT}")" ] \
-		&& ok "pi variant contains pi" \
-		|| bad "pi variant contains pi" "rc=${RUN_RC} output=${RUN_OUT}"
+		&& ok "pi image contains pi" \
+		|| bad "pi image contains pi" "rc=${RUN_RC} output=${RUN_OUT}"
+	# Siblings, not layers: the pi image carries neither Claude Code nor its settings.
+	run_capture "${PI_IMAGE}" -- sh -c 'command -v claude >/dev/null 2>&1 && echo FOUND || echo ABSENT'
+	[ "${RUN_RC}" -eq 0 ] && [ "$(last_line "${RUN_OUT}")" = ABSENT ] \
+		&& ok "pi image does not contain claude" \
+		|| bad "pi image does not contain claude" "rc=${RUN_RC} output=${RUN_OUT}"
+	run_capture "${PI_IMAGE}" -- sh -c 'test "$MISE_ENV" = pi && test -z "${DISABLE_UPDATES:-}"'
+	[ "${RUN_RC}" -eq 0 ] \
+		&& ok "pi image selects the pi overlay and carries no Claude Code settings" \
+		|| bad "pi image selects the pi overlay and carries no Claude Code settings" "rc=${RUN_RC} output=${RUN_OUT}"
+	check_lock_installed "${PI_IMAGE}" mise.lock
 	check_lock_installed "${PI_IMAGE}" mise.pi.lock
 	pi_expected="$(lock_version mise.pi.lock "aqua:earendil-works/pi")"
 	run_capture "${PI_IMAGE}" -- pi --version
@@ -453,8 +465,8 @@ if [ -n "${PI_IMAGE}" ]; then
 	run_capture "${PI_IMAGE}" -- id -un
 	pi_user="$(last_line "${RUN_OUT}")"
 	[ "${RUN_RC}" -eq 0 ] && [ "${pi_user}" = agent ] \
-		&& ok "pi variant default user is agent" \
-		|| bad "pi variant default user is agent" "rc=${RUN_RC} got=${pi_user}"
+		&& ok "pi image default user is agent" \
+		|| bad "pi image default user is agent" "rc=${RUN_RC} got=${pi_user}"
 fi
 
 if [ "${JSON}" = 1 ]; then

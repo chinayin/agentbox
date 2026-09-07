@@ -46,10 +46,9 @@ locked = true
 "aqua:koalaman/shellcheck" = "latest"
 "aqua:google/yamlfmt" = "latest"
 
-# AI agent (cc-connect bridges chat platforms to it; see below)
-"aqua:anthropics/claude-code" = "latest"
+# Agent CLIs are not here: each lives in its own overlay (mise.claude.toml, mise.pi.toml), selected by MISE_ENV.
 
-# Not in the aqua registry: mise picks the linux tar.gz assets itself.
+# Chat bridge. Not in the aqua registry: mise picks the linux tar.gz assets itself.
 # The archive binary is named cc-connect-v<ver>-linux-<arch>; rename so the shim is "cc-connect".
 [tools."github:chenhg5/cc-connect"]
 version = "latest"

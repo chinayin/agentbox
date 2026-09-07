@@ -34,10 +34,12 @@ docker compose up -d
 
 | tag | 内容 |
 |---|---|
-| `agentbox:<版本>` | 运行时（Node / Go / Python）、Kubernetes 交付链、云厂商与代码托管 CLI、通用工具、cc-connect、Claude Code |
-| `agentbox:<版本>-pi` | 同上，叠加 pi |
+| `agentbox:<版本>` | 公共工具链 + Claude Code |
+| `agentbox:<版本>-pi` | 公共工具链 + pi，不含 Claude Code |
 
-工具清单以 `mise.toml` / `mise.pi.toml` 为准，精确版本、下载 URL 与上游提供的 SHA256 锁在 lock 文件里，构建只读 lock。用哪个 agent CLI 由 `config.toml` 的 `agent.type` 决定。版本策略、加工具、发布流程见 [TOOLCHAIN](docs/TOOLCHAIN.md)。
+公共工具链：运行时（Node / Go / Python）、Kubernetes 交付链、云厂商与代码托管 CLI、通用工具、cc-connect。两个镜像共享这一层，只在最后一层各装一个 agent CLI；再加 agent 就是多一个 tag。
+
+工具清单以 `mise.toml`（公共工具链）与 `mise.claude.toml` / `mise.pi.toml`（各 agent）为准，精确版本、下载 URL 与上游提供的 SHA256 锁在 lock 文件里，构建只读 lock。用哪个 agent CLI 由 `config.toml` 的 `agent.type` 决定。版本策略、加工具、发布流程见 [TOOLCHAIN](docs/TOOLCHAIN.md)。
 
 ## 多实例
 

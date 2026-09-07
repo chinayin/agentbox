@@ -11,10 +11,10 @@
 | 云厂商 CLI | aws-cli、aliyun-cli、cloudflared | `aqua:`，aliyun-cli 为 `github:` |
 | 代码托管 CLI | gh、glab | `aqua:`，glab 为 `gitlab:` |
 | 通用工具 | ripgrep、fd、jq、uv、bats、shellcheck、yamlfmt | `aqua:` |
-| agent | claude-code、cc-connect | `aqua:`，cc-connect 为 `github:` |
-| pi 变体叠加 | pi（`mise.pi.toml`） | `aqua:` |
+| 桥接器 | cc-connect | `github:` |
+| agent（每个一份覆盖层） | claude-code（`mise.claude.toml`）、pi（`mise.pi.toml`） | `aqua:` |
 
-清单以 `mise.toml` 为准，本表只说明分组。backend 取舍：`core:` 与 `aqua:` 优先，aqua registry 带资产定义与上游校验和；不在 registry 的才用 `github:` / `gitlab:`，mise 按 OS/架构自动挑资产，挑错了再用 `asset_pattern` 点名；包内二进制带版本号的加 `rename_exe`（cc-connect）。短名（`glab`、`claude-code`）只是 registry 别名，配置里一律写完整 backend。
+清单以 `mise.toml` 与各 `mise.<agent>.toml` 为准，本表只说明分组。公共工具链里不出现任何 agent CLI，`test.sh` 盯着这一点。backend 取舍：`core:` 与 `aqua:` 优先，aqua registry 带资产定义与上游校验和；不在 registry 的才用 `github:` / `gitlab:`，mise 按 OS/架构自动挑资产，挑错了再用 `asset_pattern` 点名；包内二进制带版本号的加 `rename_exe`（cc-connect）。短名（`glab`、`claude-code`）只是 registry 别名，配置里一律写完整 backend。
 
 ## 2. 版本策略
 
@@ -38,10 +38,10 @@ lock 由 mise 官方的 `mise lock` 生成，仓库只加了一层很薄的封�
 
 | 命令 | 实际执行 | 何时用 |
 |---|---|---|
-| `make lock` | `MISE_ENV=pi mise lock --bump` | CI 的 `lock.yml` 每周或手动跑并开 PR |
+| `make lock` | `MISE_ENV=claude,pi mise lock --bump` | CI 的 `lock.yml` 每周或手动跑并开 PR |
 | `make lock-refresh` | 同上但不 `--bump`，只刷新已锁版本的 URL/校验和 | 本机加一个工具 |
 
-`MISE_ENV=pi` 让 mise 同时加载 `mise.toml` 与 `mise.pi.toml`，一次写出两个 lock，这是 mise 的环境 lock 机制。平台列表、直连 GitHub 解析 latest（`use_versions_host = false`）、`minimum_release_age` 都是 `mise.toml` 里的官方设置，不靠命令行参数。GitHub token 由 mise 自己从 `GITHUB_TOKEN` 或 `gh` 登录态取。
+`MISE_ENV=claude,pi` 让 mise 同时加载 `mise.toml` 与每个 agent 覆盖层，一次写出 `mise.lock`、`mise.claude.lock`、`mise.pi.lock`，这是 mise 的环境 lock 机制；镜像里每个 agent 阶段只用自己的 `MISE_ENV=<agent>` 装那一层。平台列表、直连 GitHub 解析 latest（`use_versions_host = false`）、`minimum_release_age` 都是 `mise.toml` 里的官方设置，不靠命令行参数。GitHub token 由 mise 自己从 `GITHUB_TOKEN` 或 `gh` 登录态取。
 
 lock 的生成与校验完全是 mise 官方机制，仓库不加自己的步骤。`mise lock` 只在上游提供校验和时记录：aqua 的 `http` 与 `github_archive` 类型资产（aws-cli、bats-core）上游没有校验和，lock 里只有版本化 URL，下载一致性靠 TLS 与固定文件名。这是已知取舍，不要手工往 lock 里补 checksum。
 
@@ -57,7 +57,7 @@ lock 永远记上游 URL；构建机出网需要代理时用 docker 的 `HTTPS_P
 ## 4. 加一个工具
 
 1. 在 [mise-versions.jdx.dev](https://mise-versions.jdx.dev/) 查 backend 全名，或 `mise registry <短名>`。
-2. 按 §1 的分组写进 `mise.toml`（pi 独有的进 `mise.pi.toml`），选择器按 §2。不要同时用 apt 装同名包。
+2. 按 §1 的分组写进 `mise.toml`（agent CLI 进自己的 `mise.<agent>.toml`），选择器按 §2。不要同时用 apt 装同名包。
 3. `MISE=... make lock-refresh && make test`。审 lock diff：只多出这一个工具，两个平台都有 `url`（上游提供时还有 `checksum`）。改过声明方式时旧块不会自动删，手工删掉。
 4. `make check`，再用 remote-build 技能跑 `smoke`（`.claude/skills/remote-build/scripts/remote-build.sh smoke`）真实构建验证。smoke 按 lock 逐项核对安装，不需要为新工具改任何测试。
 

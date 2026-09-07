@@ -29,9 +29,9 @@ agentbox 的产出不是 Dockerfile，而是一份**挂载契约**：固定路�
 
 只有工作区不可恢复，所以它必须是 bind mount，不能是 named volume。
 
-## 4. 一套公共工具链，一个 pi 变体
+## 4. 一套公共工具链，每个 agent 一个变体
 
-Go 与 Kubernetes CLI 没有运行时版本冲突，按能力拆镜像只会制造缓存分叉和 tag 矩阵。产物固定两个：`agentbox:<版本>` 与叠加 pi 的 `-pi`。组成与版本策略见 [TOOLCHAIN](TOOLCHAIN.md)。
+Go 与 Kubernetes CLI 没有运行时版本冲突，按能力拆镜像只会制造缓存分叉和 tag 矩阵，所以工具链只有一层。agent CLI 则各自独立：`agentbox:<版本>` 装 Claude Code，`-pi` 装 pi，两者从同一个不含 agent 的基础阶段分出，互不包含；再加一个 agent（如 codex）就是一份 `mise.<agent>.toml` 覆盖层加一个构建阶段。组成与版本策略见 [TOOLCHAIN](TOOLCHAIN.md)。
 
 工具由 `mise install --system` 装到 `/usr/local/share/mise`，运行期从 system shims 找，不依赖 shell profile，也不会被 `HOME=/state` 覆盖。构建永远直连上游、不分境内外；运行期用不用境内源由 `AGENTBOX_PROFILE` 决定，见 [CN_MIRRORS](CN_MIRRORS.md)。
 

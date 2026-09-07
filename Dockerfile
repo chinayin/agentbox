@@ -1,5 +1,9 @@
 # syntax=docker/dockerfile:1
 # Mount-driven runtime image for chat-ops AI agents. Design and pitfalls: docs/ARCHITECTURE.md.
+#
+# Stages: toolchain (shared tools) -> agentbox (user, mounts, entrypoint; no agent CLI)
+#         -> agentbox-claude (published as agentbox:<version>) and agentbox-pi (-pi), siblings.
+# One agent per stage, installed from its mise.<agent>.toml overlay; a new agent is one more pair.
 
 # ---- stage 1: system-wide toolchain ----------------------------------------------------------
 FROM debian:trixie-slim AS toolchain
@@ -29,6 +33,7 @@ COPY mise.toml mise.lock /opt/agentbox-mise/
 WORKDIR /opt/agentbox-mise
 
 # Locked mode comes from mise.toml ([tool_config] locked = true); versions only from the lock.
+# helm finds plugins only under $HELM_PLUGINS/<name>/plugin.yaml, so the mise install is linked there.
 RUN set -eu; \
     export MISE_TRUSTED_CONFIG_PATHS=/opt/agentbox-mise; \
     MISE_CACHE_DIR=/tmp/mise-cache mise install --system; \
@@ -36,15 +41,12 @@ RUN set -eu; \
     install -d -m 0755 /etc/mise /opt/helm/plugins; \
     install -m 0644 mise.toml /etc/mise/config.toml; \
     install -m 0644 mise.lock /etc/mise/mise.lock; \
-    diff_ver="$(python3 -c 'import tomllib; print(tomllib.load(open("mise.lock","rb"))["tools"]["github:databus23/helm-diff"][0]["version"])')"; \
-    diff_dir="$(mise where "github:databus23/helm-diff@${diff_ver}")"; \
-    if [ -f "${diff_dir}/plugin.yaml" ]; then plugin_dir="${diff_dir}"; \
-    elif [ -f "${diff_dir}/diff/plugin.yaml" ]; then plugin_dir="${diff_dir}/diff"; \
-    else echo "error: plugin.yaml not found in helm-diff install" >&2; exit 1; fi; \
-    ln -s "${plugin_dir}" /opt/helm/plugins/diff; \
+    plugin_yaml="$(find "$(mise where github:databus23/helm-diff)" -maxdepth 2 -name plugin.yaml)"; \
+    [ -n "${plugin_yaml}" ] || { echo "error: plugin.yaml not found in helm-diff install" >&2; exit 1; }; \
+    ln -s "$(dirname "${plugin_yaml}")" /opt/helm/plugins/diff; \
     rm -rf /tmp/mise-cache /root/.local/share/mise /root/.local/state/mise /root/.config/mise
 
-# ---- stage 2: runtime (agentbox:<version>) ---------------------------------------------------
+# ---- stage 2: runtime base: user, mounts, entrypoint; no agent CLI (not published) -----------
 FROM toolchain AS agentbox
 
 ARG AGENTBOX_VERSION=dev
@@ -77,7 +79,6 @@ ENV HOME=/state \
     MISE_OFFLINE=true \
     MISE_IGNORED_CONFIG_PATHS=/workspace:/cache:/refs:/knowledge:/opt/toolkit \
     MISE_GLOBAL_CONFIG_FILE=/etc/mise/config.toml \
-    DISABLE_UPDATES=1 \
     PATH=/opt/toolkit/bin:/usr/local/share/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     AGENTBOX_CONFIG=/agent/config.toml
 
@@ -91,13 +92,34 @@ LABEL org.opencontainers.image.title="agentbox" \
 
 ENTRYPOINT ["/entrypoint.sh"]
 
-# ---- stage 3: pi variant (agentbox:<version>-pi) ---------------------------------------------
+# ---- stage 3: Claude Code (agentbox:<version>) -----------------------------------------------
+FROM agentbox AS agentbox-claude
+
+USER root
+COPY mise.claude.toml mise.claude.lock /opt/agentbox-mise/
+WORKDIR /opt/agentbox-mise
+# HOME is already /state here; point it back to /root so mise state does not land in the volume path.
+RUN set -eu; \
+    export HOME=/root MISE_ENV=claude MISE_OFFLINE=false MISE_CACHE_DIR=/tmp/mise-cache; \
+    export MISE_TRUSTED_CONFIG_PATHS=/opt/agentbox-mise; \
+    mise install --system; \
+    mise reshim --system; \
+    install -m 0644 mise.claude.toml /etc/mise/config.claude.toml; \
+    install -m 0644 mise.claude.lock /etc/mise/mise.claude.lock; \
+    rm -rf /tmp/mise-cache /root/.local/share/mise /root/.local/state/mise /root/.config/mise
+
+# The native binary self-updates in the background by default; the version comes from the lock only.
+ENV MISE_ENV=claude \
+    DISABLE_UPDATES=1
+USER ${AGENT_USER}
+WORKDIR /workspace
+
+# ---- stage 4: pi (agentbox:<version>-pi) -----------------------------------------------------
 FROM agentbox AS agentbox-pi
 
 USER root
 COPY mise.pi.toml mise.pi.lock /opt/agentbox-mise/
 WORKDIR /opt/agentbox-mise
-# HOME is already /state here; point it back to /root so mise state does not land in the volume path.
 RUN set -eu; \
     export HOME=/root MISE_ENV=pi MISE_OFFLINE=false MISE_CACHE_DIR=/tmp/mise-cache; \
     export MISE_TRUSTED_CONFIG_PATHS=/opt/agentbox-mise; \

@@ -7,3 +7,5 @@
 !mise.lock
 !mise.pi.toml
 !mise.pi.lock
+!mise.claude.toml
+!mise.claude.lock
