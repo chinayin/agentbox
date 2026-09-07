@@ -15,14 +15,20 @@ new container at all.
 Ask, if the request does not already say: *does the new work share the same secrets (chat app,
 model gateway key) as an existing instance?*
 
-- **Same secrets** → do not scaffold. Add a `[[projects]]` block to that instance's
-  `examples/<existing>/config.toml`, following the commented template at the bottom of
-  `examples/demo/config.toml`. Table names carry no project name (`[projects.agent]`, never
-  `[projects.<name>.agent]`); getting this wrong makes cc-connect start without an agent for the
-  second project. New placeholders use a suffix (`FEISHU_APP_ID_<NAME>`), and the same suffixed
-  names go into that instance's `env.example` with `xxxx` values. The workspace for the second
-  project is a subdirectory of the existing one (`work_dir = "/workspace/<name>"`), so create
-  `runtime/workspaces/<existing>/<name>` on the host.
+- **Same secrets** → do not scaffold. Add a `[[projects]]` block, following the commented
+  template at the bottom of `examples/demo/config.toml`. Which `config.toml` you edit depends on
+  whether `<existing>` is already deployed: **not yet** → the template at
+  `examples/<existing>/config.toml`. **Already live** → editing the template changes nothing
+  running; edit the real `config.toml` in the deploy repo at
+  `hosts/<host>/instances/<existing>/config.toml` instead, and push the change with the `deploy`
+  skill. Table names carry no project name (`[projects.agent]`, never `[projects.<name>.agent]`);
+  getting this wrong makes cc-connect start without an agent for the second project. New
+  placeholders use a suffix (`FEISHU_APP_ID_<NAME>`); put the same suffixed names, with real
+  values, in whichever env file sits next to the `config.toml` you edited — `env.example` (`xxxx`
+  values) for a template, `env` in the deploy repo for a live instance. The workspace for the
+  second project is a subdirectory of the existing one (`work_dir = "/workspace/<name>"`): create
+  `runtime/workspaces/<existing>/<name>` by hand for a template instance; for a live one it lives
+  on the server, and the `deploy` skill creates and owns it.
 - **Different secrets, repo, or team** → new instance. Continue with Step 2.
 
 When in doubt, prefer the new instance: cross-domain calls are meant to have friction.
