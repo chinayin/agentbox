@@ -19,6 +19,7 @@ ENTRY="$ROOT/entrypoint.sh"
 DF="$ROOT/Dockerfile"
 DEMO_TOML="$ROOT/examples/demo/config.toml"
 DEMO_ENV="$ROOT/examples/demo/env.example"
+DP_SRC="$ROOT/.claude/skills/deploy/scripts/deploy.sh"
 
 # Controlled PATH: cc-connect is a stub; only python3 (>= 3.11 for tomllib) is linked in, never its
 # whole directory, which may contain real CLIs and break "not installed" assertions.
@@ -215,6 +216,29 @@ else
 	[ -z "$gone" ] && ok "every repo path named in the docs exists" \
 		|| bad "every repo path named in the docs exists" "${gone}"
 fi
+
+# deploy.sh gates on placeholders locally, entrypoint.sh gates on them inside the container. If the
+# two disagree, a deploy passes and the container then exits 2. Same config in, same names out.
+cc="$TMP/cc.toml"
+cat > "$cc" <<'TOML'
+[[projects]]
+name = "c"
+[projects.agent.options]
+work_dir = "${WORK_DIR}"
+[projects.agent.options.env]
+UPPER_NAME = "${UPPER_NAME}"
+lower_key = "${lower_name}"
+mixed = "prefix-${Mixed_9}-suffix"
+[[projects.platforms]]
+type = "feishu"
+[projects.platforms.options]
+app_id = "${FEISHU_APP_ID}"
+TOML
+ep_out="$(CONFIG="$cc" bash -c 'source <(sed -n "/^placeholders()/,/^}/p" "$1"); placeholders' _ "$ENTRY" 2>/dev/null | sort)"
+dp_out="$(bash -c 'source <(sed -n "/^config_placeholders()/,/^}/p" "$1"); config_placeholders "$2"' _ "$DP_SRC" "$cc" 2>/dev/null | sort)"
+[ -n "$ep_out" ] && [ "$ep_out" = "$dp_out" ] \
+	&& ok "deploy.sh and entrypoint.sh extract the same placeholder names" \
+	|| bad "deploy.sh and entrypoint.sh extract the same placeholder names" "entrypoint=[$ep_out] deploy=[$dp_out]"
 
 # ---------- mise declaration vs lock ----------
 group "mise toolchain declaration"
@@ -449,7 +473,6 @@ grep -qxF '.claude/skills/*/.env' "$ROOT/.gitignore" && ok "skill .env files are
 # environment and flags always win, and with no source at all the script must stop instead of
 # operating on an empty path.
 group "deploy skill"
-DP_SRC="$ROOT/.claude/skills/deploy/scripts/deploy.sh"
 dp="$TMP/dp"; mkdir -p "$dp/skill/scripts"; cp "$DP_SRC" "$dp/skill/scripts/"
 mkdir -p "$dp/repo/hosts/h1/instances/a1" "$dp/other/hosts/h2/instances/a2"
 printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\n' > "$dp/repo/hosts/h1/host.env"
