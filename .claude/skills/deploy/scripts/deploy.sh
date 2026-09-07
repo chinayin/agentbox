@@ -6,9 +6,6 @@
 # Per-host connection details live in the deploy repo at hosts/<host>/host.env and never in here.
 # Exit codes: 0 ok / 1 usage error or remote failure / 2 precondition (unreachable, missing tools)
 
-# shellcheck disable=SC2034  # LOG_DIR/DRY_RUN are consumed once later tasks add the
-# plan/deploy/status bodies; this skeleton only parses and stores them.
-
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -246,6 +243,107 @@ check_repo_clean() {
 	exit 1
 }
 
+# All remote commands go through here; ssh exit code passes through.
+rssh() {
+	vlog "ssh ${DEPLOY_HOST}: $*"
+	if [ "${DRY_RUN}" -eq 1 ]; then
+		echo "plan: ssh ${DEPLOY_HOST} -- $*" >&2
+		return 0
+	fi
+	ssh "${SSH_OPTS[@]}" "${DEPLOY_HOST}" "$@"
+}
+
+# rsync -e takes one string; options with spaces (ProxyCommand) need a wrapper script.
+make_rsync_ssh() {
+	local wrapper="$1" opt
+	{
+		echo '#!/usr/bin/env bash'
+		printf 'exec ssh'
+		for opt in "${SSH_OPTS[@]}"; do printf ' %q' "${opt}"; done
+		echo ' "$@"'
+	} > "${wrapper}"
+	chmod 0700 "${wrapper}"
+}
+
+# Whitelist transport, one direction only: the host directory's compose file and instances/. The
+# agentbox source tree is never involved, and nothing is ever pulled back from the server.
+sync_host() {
+	local compose="${HOST_DIR}/docker-compose.yaml"
+	[ -f "${compose}" ] || die "missing ${compose}"
+	step "syncing ${HOST} config to ${DEPLOY_HOST}:${DEPLOY_DIR}"
+	local tmp
+	tmp="$(mktemp -d)"
+	# shellcheck disable=SC2064  # expand tmp now, on purpose
+	trap "rm -rf '${tmp}'" RETURN
+	make_rsync_ssh "${tmp}/ssh"
+	local -a args=(-a --delete)
+	[ "${VERBOSE}" -eq 1 ] && args+=(-v)
+	if [ "${DRY_RUN}" -eq 1 ]; then
+		echo "plan: rsync ${args[*]} ${HOST_DIR}/docker-compose.yaml ${HOST_DIR}/instances ${DEPLOY_HOST}:${DEPLOY_DIR}/" >&2
+	else
+		rssh "install -d -m 0755 '${DEPLOY_DIR}'"
+		rsync "${args[@]}" -e "${tmp}/ssh" \
+			"${HOST_DIR}/docker-compose.yaml" "${HOST_DIR}/instances" \
+			"${DEPLOY_HOST}:${DEPLOY_DIR}/"
+	fi
+	# The remote .env is derived from host.env, never synced: connection fields stay local.
+	if [ "${DRY_RUN}" -eq 1 ]; then
+		echo "plan: write ${DEPLOY_DIR}/.env with AGENTBOX_VERSION=${AGENTBOX_VERSION}" >&2
+		echo "plan: chmod 600 ${DEPLOY_DIR}/instances/*/env and chown to UID 1000" >&2
+	else
+		rssh "printf 'AGENTBOX_VERSION=%s\n' '${AGENTBOX_VERSION}' > '${DEPLOY_DIR}/.env'"
+		rssh "chmod 600 '${DEPLOY_DIR}'/instances/*/env"
+		rssh "install -d -o 1000 -g 1000 -m 0755 '${DEPLOY_DIR}/workspaces'"
+	fi
+}
+
+# Workspaces must exist and be owned by the image's AGENT_UID before compose binds them: docker
+# creates a missing bind-mount directory as root, and the agent then cannot write to it.
+prepare_workspaces() {
+	local n
+	while IFS= read -r n; do
+		[ -n "${n}" ] || continue
+		rssh "install -d -o 1000 -g 1000 -m 0755 '${DEPLOY_DIR}/workspaces/${n}'"
+		rssh "chown 1000:1000 '${DEPLOY_DIR}/instances/${n}/env'"
+	done < <(list_instances)
+}
+
+# Pull the pinned version, start containers, then read the entrypoint precheck out of the logs.
+remote_up() {
+	local ts log svc=""
+	[ -n "${INSTANCE}" ] && svc=" ${INSTANCE}"
+	ts="$(date +%Y%m%d-%H%M%S)"
+	log="${LOG_DIR}/${ts}-deploy-${HOST}.log"
+	install -d -m 0755 "${LOG_DIR}"
+	step "starting containers on ${DEPLOY_HOST} (log: ${log})"
+	local cmd="cd '${DEPLOY_DIR}' && docker compose pull${svc} && docker compose up -d${svc} && docker compose ps"
+	if [ "${DRY_RUN}" -eq 1 ]; then
+		echo "plan: ssh ${DEPLOY_HOST} -- ${cmd}" >&2
+		return 0
+	fi
+	local rc=0
+	ssh "${SSH_OPTS[@]}" "${DEPLOY_HOST}" "${cmd}" 2>&1 | tee "${log}" || rc=$?
+	if [ "${rc}" -ne 0 ]; then
+		echo "错误: remote compose failed (rc=${rc}); full log at ${log}" >&2
+		echo "if the pull was denied, log in on the server once: docker login ghcr.io" >&2
+		return 1
+	fi
+	# The entrypoint lists unset placeholders and exits 2; surface that instead of a bare "started".
+	local logs
+	logs="$(ssh "${SSH_OPTS[@]}" "${DEPLOY_HOST}" "cd '${DEPLOY_DIR}' && docker compose logs --tail 40${svc}" 2>&1 | tee -a "${log}")"
+	if grep -q 'references unset environment variables' <<<"${logs}"; then
+		echo "错误: a container failed its precheck; see ${log}" >&2
+		return 1
+	fi
+	echo "${log}"
+}
+
+do_deploy() {
+	sync_host
+	[ "${DRY_RUN}" -eq 1 ] || prepare_workspaces
+	remote_up
+}
+
 main() {
 	load_host_env
 	case "${ACTION}" in
@@ -260,6 +358,7 @@ main() {
 			check_repo_clean
 			check_all_instances
 			print_plan
+			do_deploy
 			;;
 		status) step "querying ${HOST} (${DEPLOY_HOST}) from ${REPO}" ;;
 	esac

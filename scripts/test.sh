@@ -564,6 +564,27 @@ env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" plan h1 >/dev/nul
 printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\n' > "$dp/repo/hosts/h1/host.env"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm hostenv ) 2>/dev/null
 
+# deploy actually pushes config: sync a whitelist, derive the remote .env, fix permissions, then
+# start containers. All of this must show up in --dry-run output without ever connecting.
+cat > "$dp/repo/hosts/h1/docker-compose.yaml" <<'YML'
+services:
+  a1:
+    image: ghcr.io/owner/agentbox:${AGENTBOX_VERSION}
+    env_file: [./instances/a1/env]
+YML
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm compose ) 2>/dev/null
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "deploy --dry-run exits 0" || bad "deploy --dry-run exits 0" "rc=$rc $out"
+grep -q 'rsync' <<<"$out" && grep -q 'compose' <<<"$out" && grep -q 'chmod 600' <<<"$out" \
+	&& ok "dry-run shows rsync, compose and the 0600 step" || bad "dry-run shows rsync, compose and the 0600 step" "$out"
+# the transport is a whitelist: nothing from the agentbox source tree may appear in the rsync source
+grep -q "$dp/repo/hosts/h1/" <<<"$out" && ! grep -qE 'Dockerfile|entrypoint\.sh|mise\.toml' <<<"$out" \
+	&& ok "rsync source is the host directory only, no agentbox source" || bad "rsync source is the host directory only, no agentbox source" "$out"
+grep -q 'AGENTBOX_VERSION=0.1.0' <<<"$out" \
+	&& ok "the remote .env is derived, not synced" || bad "the remote .env is derived, not synced" "$out"
+! grep -qE 'DEPLOY_KEY|DEPLOY_SOCKS|DEPLOY_HOST=' <<<"$out" \
+	&& ok "connection fields never reach the remote .env" || bad "connection fields never reach the remote .env" "$out"
+
 group "template hygiene"
 for f in "$ROOT"/examples/*/config.toml; do
 	n="$(basename "$f")"
