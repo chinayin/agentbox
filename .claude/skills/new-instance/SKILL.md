@@ -52,13 +52,19 @@ under `volumes:` in `docker-compose.yaml`, then confirm the file still parses:
 docker compose config -q
 ```
 
+`examples/<name>/` stays a template: it goes in git with only `env.example`, never a filled-in
+`env`. A real, running instance lives in the private deploy repository instead, and is published
+there by the `deploy` skill, not by this one.
+
 ## Step 3: hand off
 
 Read `references/checklist.md` and give the user the steps they must do themselves: copying the
-env template to `env`, `chmod 600`, filling in values, setting `allow_from` to explicit ids,
-verifying the model gateway, starting the service and reading the precheck output. Do not do
-those steps for them, and do not put placeholders for real values into the chat; the values go
-straight from the user into the `env` file on the host.
+template into the deploy repo, filling in values there, setting `allow_from` to explicit ids, and
+verifying the model gateway. Workspace ownership, the `agentbox` network and starting the service
+are the `deploy` skill's job now, not a manual step; point the user at it rather than describing
+them as something to do by hand. Do not do the human steps for them, and do not put placeholders
+for real values into the chat; the values go straight from the user into the `env` file in the
+deploy repo.
 
 ## Guardrails
 

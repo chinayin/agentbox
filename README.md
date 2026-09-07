@@ -28,7 +28,7 @@ docker compose up -d
 | `/refs/<name>` | ro | 只读引用别的工作区 | 否 |
 | `/knowledge` | ro | 共享知识库 | 否 |
 
-环境变量型密钥走 `env_file`；kubeconfig、SSH 私钥这类文件型凭据逐个 `:ro` 挂到 `/agent/<name>`，映射见 [TOOLS](docs/TOOLS.md)。entrypoint 启动前校验配置文件存在、state 可写、全部占位符有值，缺什么一次性列全后退出 2；配置结构本身的对错由 cc-connect 报。
+环境变量型密钥走 `env_file`；kubeconfig、SSH 私钥这类文件型凭据逐个 `:ro` 挂到 `/agent/<name>`，映射见 [TOOLS](docs/TOOLS.md)。entrypoint 启动前校验配置文件存在、state 可写、全部占位符有值，缺什么一次性列全后退出 2；配置结构本身的对错由 cc-connect 报。本地开发用根目录的这份 compose，发布到服务器走 `deploy` 技能与独立的部署仓库，镜像按版本从 GHCR 拉取。
 
 ## 镜像
 
