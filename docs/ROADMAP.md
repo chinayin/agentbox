@@ -8,7 +8,7 @@
 |---|---|---|---|
 | 1 | `linux/arm64` 镜像 | lock 已含双架构 URL，只在 x86_64 真实构建过 | `make image PLATFORM=linux/arm64 && make smoke PLATFORM=linux/arm64` 通过 |
 | 2 | `relay send --data-dir` 跨容器 | `MULTI_PROJECT.md` §3 的"挂对端 socket"建立在未验证前提上 | 两容器实验；不通就把该行改为"不可行" |
-| 3 | CI 首跑 | `ci.yml`、`release.yml`、`lock.yml` 已写好，仓库未推送 | 推送后首个 PR 两段全绿；首个 `v*` tag 让 `release.yml` 先跑 ci 再发布；`lock.yml` 手动触发能开 PR，且 PR 分支上出现由 dispatch 触发的 ci 运行 |
+| 3 | CI 首跑 | 2026-09-07 已推送到 GitHub 私有仓库，main 上 `ci.yml` 两段已绿（首跑暴露的 smoke 清理 uid 问题已修）；PR、tag、`lock.yml` 三条尚未跑过 | 推送后首个 PR 两段全绿；首个 `v*` tag 让 `release.yml` 先跑 ci 再发布；`lock.yml` 手动触发能开 PR，且 PR 分支上出现由 dispatch 触发的 ci 运行 |
 
 ## P2 加固
 
