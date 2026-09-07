@@ -1,0 +1,9 @@
+# allowlist: only what the Dockerfile COPYs
+*
+!Dockerfile
+!entrypoint.sh
+!etc/
+!mise.toml
+!mise.lock
+!mise.pi.toml
+!mise.pi.lock

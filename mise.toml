@@ -1,0 +1,56 @@
+min_version = "2026.9.1"
+
+[settings]
+lockfile = true
+lockfile_platforms = ["linux-x64", "linux-arm64"]
+# Resolve "latest" against GitHub directly; the shared versions host lags a release behind.
+use_versions_host = false
+registry_floating = false
+not_found_auto_install = false
+not_found_system_fallback = false
+
+[tool_config]
+locked = true
+
+# Versions here are update policies only; exact versions, URLs and upstream checksums live in mise.lock.
+# Builds run in locked mode, so "latest" cannot drift. Upgrade: `make lock`, then review the lock diff.
+# Prefix pins only where an external version matters: kubectl (±1 minor of the cluster), helm (major breaks charts).
+[tools]
+# Language runtimes
+"core:node" = "26"
+"core:go" = "prefix:1.26"
+"core:python" = "3.14"
+
+# Kubernetes delivery
+"aqua:kubernetes/kubernetes/kubectl" = "prefix:1.37"
+"aqua:helm/helm" = "prefix:4"
+"aqua:helmfile/helmfile" = "latest"
+"aqua:kubernetes-sigs/kustomize" = "latest"
+"github:databus23/helm-diff" = "latest"
+
+# Cloud CLIs (credentials come from mounts only)
+"aqua:aws/aws-cli" = "latest"
+"github:aliyun/aliyun-cli" = "latest"
+"aqua:cloudflare/cloudflared" = "latest"
+
+# Code hosting CLIs
+"aqua:cli/cli" = "latest"
+"gitlab:gitlab-org/cli" = "latest"
+
+# General tools
+"aqua:BurntSushi/ripgrep" = "latest"
+"aqua:sharkdp/fd" = "latest"
+"aqua:jqlang/jq" = "latest"
+"aqua:astral-sh/uv" = "latest"
+"aqua:bats-core/bats-core" = "latest"
+"aqua:koalaman/shellcheck" = "latest"
+"aqua:google/yamlfmt" = "latest"
+
+# AI agent (cc-connect bridges chat platforms to it; see below)
+"aqua:anthropics/claude-code" = "latest"
+
+# Not in the aqua registry: mise picks the linux tar.gz assets itself.
+# The archive binary is named cc-connect-v<ver>-linux-<arch>; rename so the shim is "cc-connect".
+[tools."github:chenhg5/cc-connect"]
+version = "latest"
+rename_exe = "cc-connect"

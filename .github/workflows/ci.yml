@@ -1,0 +1,59 @@
+# CI: every PR and push to main runs the gate (test / lint), builds the images and smoke-tests them.
+# Nothing here publishes. release.yml calls this workflow on vX.Y.Z tags and publishes only after
+# both jobs are green, so the gate is written once and runs identically for PRs and releases.
+#
+# workflow_dispatch exists for lock.yml: a branch pushed with the default GITHUB_TOKEN does not
+# trigger pull_request events, but a dispatch is exempt from that recursion guard.
+# The jobs build with the Makefile's default `dev` tag and need no version.
+# Build args are left at their Dockerfile defaults (global mirrors, UID/GID 1000).
+# timeout-minutes are ceilings against hung builds, not expected durations.
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+# Successive pushes to one PR cancel the previous run: every run is a full docker build.
+# Runs on main are never cancelled; they are the historical signal.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Gate (test / lint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install shellcheck
+        # `make lint` hard-fails (exit 2) when shellcheck is missing; install it before the gate
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+
+      - name: make check
+        run: make check
+
+  smoke:
+    name: Build amd64 and smoke test
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build both images
+        # Reuse the Makefile so CI and local builds never diverge in build args
+        run: make image
+
+      - name: Smoke test
+        run: make smoke

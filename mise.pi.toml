@@ -1,0 +1,3 @@
+# MISE_ENV=pi overlay: adds pi on top of mise.toml. Exact versions live in mise.pi.lock.
+[tools]
+"aqua:earendil-works/pi" = "latest"

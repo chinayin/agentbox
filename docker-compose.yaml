@@ -1,0 +1,64 @@
+# One service = one trust domain (not one project). Same secrets -> same container, add a
+# [[projects]] block in config.toml. Separate secrets -> separate service. See docs/MULTI_PROJECT.md.
+#
+#   docker network create agentbox
+#   cp .env.example .env
+#   cp examples/demo/env.example examples/demo/env && chmod 600 examples/demo/env
+#   docker compose up -d
+
+x-agentbox: &agentbox
+  image: ${AGENTBOX_IMAGE:-agentbox:dev}
+  restart: unless-stopped
+  environment:
+    - AGENTBOX_PROFILE
+  init: true
+  stop_grace_period: 30s
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  # Only pids is capped; memory/cpu are unbounded on purpose. Rationale: docs/MULTI_PROJECT.md §6.
+  deploy:
+    resources:
+      limits:
+        pids: ${AGENT_PIDS_LIMIT:-512}
+  networks: [agentbox]
+
+services:
+  demo-agent:
+    <<: *agentbox
+    container_name: agentbox-demo
+    env_file:
+      - ./examples/demo/env
+    volumes:
+      - ./examples/demo/config.toml:/agent/config.toml:ro
+      - ${WORKSPACES_ROOT:-./runtime/workspaces}/demo:/workspace
+      - demo-state:/state
+      - demo-cache:/cache
+      # Optional mounts, see the mount contract table in README:
+      # - ${TOOLKIT_DIR:-./runtime/toolkit}:/opt/toolkit:ro
+      # - ./examples/demo/claude:/etc/claude-code:ro
+      # - ./examples/demo/kubeconfig:/agent/kubeconfig:ro
+      # - ${WORKSPACES_ROOT:-./runtime/workspaces}/other:/refs/other:ro
+
+  # Second trust domain: own secrets, state and cache.
+  # ops:
+  #   <<: *agentbox
+  #   container_name: agentbox-ops
+  #   image: ${AGENTBOX_IMAGE_PI:-agentbox:dev-pi}
+  #   env_file: [./examples/ops/env]
+  #   volumes:
+  #     - ./examples/ops/config.toml:/agent/config.toml:ro
+  #     - ${WORKSPACES_ROOT:-./runtime/workspaces}/ops:/workspace
+  #     - ops-state:/state
+  #     - ops-cache:/cache
+
+# Shared across compose projects, so several agentbox stacks (or an unrelated service that an agent
+# must reach) land on one network. Create it once on the host:  docker network create agentbox
+networks:
+  agentbox:
+    external: true
+
+volumes:
+  demo-state:
+  demo-cache:

@@ -1,0 +1,45 @@
+{
+  "skill_name": "new-instance",
+  "evals": [
+    {
+      "id": 1,
+      "eval_name": "new-trust-domain-ops",
+      "prompt": "给运维组再起一个机器人，用他们自己的飞书应用，工作区叫 ops",
+      "expected_output": "examples/ops/config.toml and env.example created from the demo template with name = \"ops\", runtime/workspaces/ops exists, compose snippet for service ops pasted into docker-compose.yaml, no real secret values anywhere, user handed the numbered checklist.",
+      "files": [],
+      "assertions": [
+        "examples/ops/config.toml exists and parses as TOML with projects[0].name == \"ops\" and agent.type == \"claudecode\"",
+        "examples/ops/env.example exists and every ${NAME} placeholder in config.toml has a matching NAME= line in it",
+        "docker-compose.yaml contains a service named ops with volumes ops-state and ops-cache declared, and `docker compose config -q` passes",
+        "no file under examples/ops contains a value that is not an xxxx-shaped placeholder",
+        "the final message lists the user's manual steps including chmod 600 and explicit allow_from ids"
+      ]
+    },
+    {
+      "id": 2,
+      "eval_name": "same-trust-domain-projects-block",
+      "prompt": "demo 那个实例想再接一个项目 billing，密钥和 demo 一样",
+      "expected_output": "No examples/billing directory and no new compose service. examples/demo/config.toml gains a second [[projects]] block named billing with work_dir /workspace/billing and suffixed placeholders; examples/demo/env.example gains the suffixed names with xxxx values.",
+      "files": [],
+      "assertions": [
+        "examples/billing does not exist and docker-compose.yaml has no billing service",
+        "examples/demo/config.toml parses as TOML and has two [[projects]] entries, the second named billing with its own [projects.agent] table",
+        "the billing block references suffixed placeholders (e.g. FEISHU_APP_ID_BILLING) and env.example defines each of them with an xxxx value",
+        "the response explains that shared secrets mean same container, citing the trust-domain rule"
+      ]
+    },
+    {
+      "id": 3,
+      "eval_name": "pi-instance-with-kubeconfig",
+      "prompt": "新建一个实例 data，用 pi 而不是 claude code，还要挂 kubeconfig",
+      "expected_output": "examples/data scaffolded with agent.type = \"pi\", PI_KEY uncommented in env.example, KUBECONFIG=/agent/kubeconfig in the config env block, compose snippet using AGENTBOX_IMAGE_PI and mounting ./examples/data/kubeconfig:/agent/kubeconfig:ro.",
+      "files": [],
+      "assertions": [
+        "examples/data/config.toml has agent.type == \"pi\" and KUBECONFIG = \"/agent/kubeconfig\" under [projects.agent.options.env]",
+        "examples/data/env.example has an uncommented PI_KEY= line with an xxxx value",
+        "the data service in docker-compose.yaml uses ${AGENTBOX_IMAGE_PI...} and mounts ./examples/data/kubeconfig:/agent/kubeconfig:ro",
+        "the final message tells the user the kubeconfig file must be chmod 600 and owned by UID 1000 and that pi is not yet verified end to end"
+      ]
+    }
+  ]
+}

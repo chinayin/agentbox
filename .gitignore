@@ -1,0 +1,17 @@
+# secrets: only *.example is tracked
+/.env
+examples/*/env
+examples/*/kubeconfig
+examples/*/ssh_key
+.claude/skills/*/.env
+*.pem
+id_ed25519*
+
+# local artifacts and tool caches
+runtime/
+.codegraph/
+__pycache__/
+*.pyc
+*.bak
+*.bak.*
+.DS_Store
