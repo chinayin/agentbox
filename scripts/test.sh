@@ -486,7 +486,7 @@ name = "a1"
 [projects.agent]
 type = "claudecode"
 [projects.agent.options]
-work_dir = "/workspace"
+work_dir = "${WORK_DIR}"
 [projects.agent.options.env]
 ANTHROPIC_AUTH_TOKEN = "${ANTHROPIC_AUTH_TOKEN}"
 [[projects.platforms]]
@@ -514,8 +514,9 @@ out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run 
 out="$(AGENTBOX_DEPLOY_REPO="$dp/other" bash "$dp/skill/scripts/deploy.sh" --dry-run plan h2 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q "$dp/other" <<<"$out" && ! grep -q "$dp/repo" <<<"$out" \
 	&& ok "environment overrides the deploy skill .env" || bad "environment overrides the deploy skill .env" "rc=$rc $out"
-out="$(bash "$dp/skill/scripts/deploy.sh" --repo "$dp/other" --dry-run plan h2 2>&1)"
-grep -q "$dp/other" <<<"$out" && ok "flag overrides the deploy skill .env" || bad "flag overrides the deploy skill .env" "$out"
+out="$(bash "$dp/skill/scripts/deploy.sh" --repo "$dp/other" --dry-run plan h2 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "$dp/other" <<<"$out" \
+	&& ok "flag overrides the deploy skill .env" || bad "flag overrides the deploy skill .env" "rc=$rc $out"
 rm "$dp/skill/.env"
 env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" plan h1 >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "deploy without any repo source exits 1" || bad "deploy without any repo source exits 1" "rc=$rc"
@@ -561,7 +562,9 @@ printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VE
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm socks ) 2>/dev/null
 env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" plan h1 >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "plan stays offline even with an unusable proxy" || bad "plan stays offline even with an unusable proxy" "rc=$rc"
-printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\n' > "$dp/repo/hosts/h1/host.env"
+# DEPLOY_KEY and DEPLOY_SOCKS must be present here so the "connection fields never reach the remote
+# .env" assertion below actually exercises those two patterns, not just DEPLOY_HOST=.
+printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\nDEPLOY_KEY=/tmp/nope.pem\nDEPLOY_SOCKS=127.0.0.1:7890\n' > "$dp/repo/hosts/h1/host.env"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm hostenv ) 2>/dev/null
 
 # deploy actually pushes config: sync a whitelist, derive the remote .env, fix permissions, then
@@ -575,7 +578,7 @@ YML
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm compose ) 2>/dev/null
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "deploy --dry-run exits 0" || bad "deploy --dry-run exits 0" "rc=$rc $out"
-grep -q 'rsync' <<<"$out" && grep -q 'compose' <<<"$out" && grep -q 'chmod 600' <<<"$out" \
+grep -q 'rsync' <<<"$out" && grep -q 'docker compose up' <<<"$out" && grep -q 'chmod 600' <<<"$out" \
 	&& ok "dry-run shows rsync, compose and the 0600 step" || bad "dry-run shows rsync, compose and the 0600 step" "$out"
 # the transport is a whitelist: nothing from the agentbox source tree may appear in the rsync source
 grep -q "$dp/repo/hosts/h1/" <<<"$out" && ! grep -qE 'Dockerfile|entrypoint\.sh|mise\.toml' <<<"$out" \
@@ -584,6 +587,10 @@ grep -q 'AGENTBOX_VERSION=0.1.0' <<<"$out" \
 	&& ok "the remote .env is derived, not synced" || bad "the remote .env is derived, not synced" "$out"
 ! grep -qE 'DEPLOY_KEY|DEPLOY_SOCKS|DEPLOY_HOST=' <<<"$out" \
 	&& ok "connection fields never reach the remote .env" || bad "connection fields never reach the remote .env" "$out"
+# a1's env carries ANTHROPIC_AUTH_TOKEN=sk-x; even with -v it must never be echoed to the plan output.
+vout="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run -v deploy h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ! grep -q 'sk-x' <<<"$vout" \
+	&& ok "instance secrets never appear in dry-run -v output" || bad "instance secrets never appear in dry-run -v output" "rc=$rc $vout"
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run status h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'compose ps' <<<"$out" \
 	&& ok "status dry-run shows compose ps" || bad "status dry-run shows compose ps" "rc=$rc $out"

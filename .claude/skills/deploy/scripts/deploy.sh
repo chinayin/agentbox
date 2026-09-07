@@ -87,6 +87,11 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "${ACTION}" ] || { usage >&2; die "an action is required"; }
+
+for t in ssh rsync python3; do
+	command -v "${t}" >/dev/null 2>&1 || pre "${t} is required"
+done
+
 [ -n "${REPO}" ]   || { usage >&2; die "--repo, AGENTBOX_DEPLOY_REPO, or AGENTBOX_DEPLOY_REPO in ${SKILL_DIR}/.env is required"; }
 [ -d "${REPO}" ]   || die "deploy repo ${REPO} is not a directory"
 [ -n "${HOST}" ]   || { usage >&2; die "a host is required"; }
@@ -217,6 +222,7 @@ print_plan() {
 		echo "  compose:   MISSING (${compose})" >&2
 	fi
 	echo "  will sync: docker-compose.yaml, instances/ (config.toml + env, env as 0600)" >&2
+	echo "  instances/ on the server is mirrored: directories no longer in the deploy repo are removed" >&2
 	echo "  will restart these containers, interrupting any session in progress:" >&2
 	while IFS= read -r n; do
 		[ -n "${n}" ] || continue
@@ -319,16 +325,21 @@ remote_up() {
 	[ -n "${INSTANCE}" ] && svc=" ${INSTANCE}"
 	ts="$(date +%Y%m%d-%H%M%S)"
 	log="${LOG_DIR}/${ts}-deploy-${HOST}.log"
-	install -d -m 0755 "${LOG_DIR}"
-	step "starting containers on ${DEPLOY_HOST} (log: ${log})"
 	local cmd="cd '${DEPLOY_DIR}' && docker compose pull${svc} && docker compose up -d${svc} && docker compose ps"
 	if [ "${DRY_RUN}" -eq 1 ]; then
 		echo "plan: ssh ${DEPLOY_HOST} -- ${cmd}" >&2
 		return 0
 	fi
-	local rc=0
+	# 0700, and umask 077 while the log is written: docker compose logs can echo container output
+	# into it, and that output is not ours to make world-readable.
+	install -d -m 0700 "${LOG_DIR}"
+	step "starting containers on ${DEPLOY_HOST} (log: ${log})"
+	local old_umask rc=0
+	old_umask="$(umask)"
+	umask 077
 	ssh "${SSH_OPTS[@]}" "${DEPLOY_HOST}" "${cmd}" 2>&1 | tee "${log}" >&2 || rc=$?
 	if [ "${rc}" -ne 0 ]; then
+		umask "${old_umask}"
 		echo "错误: remote compose failed (rc=${rc}); full log at ${log}" >&2
 		echo "if the pull was denied, log in on the server once: docker login ghcr.io" >&2
 		return 1
@@ -336,6 +347,7 @@ remote_up() {
 	# The entrypoint lists unset placeholders and exits 2; surface that instead of a bare "started".
 	local logs
 	logs="$(ssh "${SSH_OPTS[@]}" "${DEPLOY_HOST}" "cd '${DEPLOY_DIR}' && docker compose logs --tail 40${svc}" 2>&1 | tee -a "${log}")"
+	umask "${old_umask}"
 	if grep -q 'references unset environment variables' <<<"${logs}"; then
 		echo "错误: a container failed its precheck; see ${log}" >&2
 		return 1
