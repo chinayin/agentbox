@@ -1,18 +1,20 @@
 # Image tags default to `dev`; release versions come from git tags via CI (VERSION=X.Y.Z).
-#   make image PLATFORM=linux/amd64 UID=1001 GID=1001
+#   make image PLATFORM=linux/amd64 AGENT_UID=1001 AGENT_GID=1001   # only when the host owner is not 1000
 #   make image BUILD_ARGS='--build-arg HTTPS_PROXY=http://proxy:port'   # build host behind a proxy
 #   MISE=/path/to/mise make lock                                        # mise >= mise.toml min_version
 
 IMAGE      ?= agentbox
 VERSION    ?= dev
 PLATFORM   ?=
-UID        ?= 1000
-GID        ?= 1000
+AGENT_UID  ?=
+AGENT_GID  ?=
 BUILD_ARGS ?=
 MISE       ?= mise
 
+# Build args are passed only when they differ from the Dockerfile defaults (dev / 1000 / 1000).
 BUILD = docker build $(if $(PLATFORM),--platform $(PLATFORM)) \
-        --build-arg AGENTBOX_VERSION=$(VERSION) --build-arg AGENT_UID=$(UID) --build-arg AGENT_GID=$(GID) $(BUILD_ARGS)
+        $(if $(filter-out dev,$(VERSION)),--build-arg AGENTBOX_VERSION=$(VERSION)) \
+        $(if $(AGENT_UID),--build-arg AGENT_UID=$(AGENT_UID)) $(if $(AGENT_GID),--build-arg AGENT_GID=$(AGENT_GID)) $(BUILD_ARGS)
 # MISE_ENV=pi loads mise.toml + mise.pi.toml and writes both lock files in one run.
 LOCK = MISE_ENV=pi MISE_TRUSTED_CONFIG_PATHS=$(CURDIR) $(MISE) lock
 

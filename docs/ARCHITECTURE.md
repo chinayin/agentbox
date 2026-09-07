@@ -47,7 +47,7 @@ Go 与 Kubernetes CLI 没有运行时版本冲突，按能力拆镜像只会制�
 |---|---|---|
 | 构建期向 HOME 写东西 | `HOME=/state` 运行期被卷整个盖掉：`go env -w`、`helm plugin install`、user scope 的 mise 安装全部失效 | `ENV GOPROXY=`；`HELM_PLUGINS=/opt/helm/plugins`；`mise install --system`；构建缓存只用 `/tmp/mise-cache` 并在层内清掉 |
 | 非交互 shell 读不到 profile | agent 是 fork 出来的子进程，不读 `/etc/profile.d`、`~/.bashrc` | 环境变量只走 `env_file` + 占位符；二进制在镜像 `ENV PATH` 里；验证用 `docker compose exec <svc> command -v go`，不要先进容器再敲 |
-| UID 不一致 | bind mount 不做 UID 映射，容器写不进工作区 | 构建时 `--build-arg AGENT_UID=`（`make image UID=`）与宿主工作区属主对齐；发布到 GHCR 的镜像固定 1000，属主不同就本地重建 |
+| UID 不一致 | bind mount 不做 UID 映射，容器写不进工作区 | 构建时 `--build-arg AGENT_UID=`（`make image AGENT_UID=`）与宿主工作区属主对齐；发布到 GHCR 的镜像固定 1000，属主不同就本地重建 |
 | Dockerfile 的 ENV 不能条件分支 | 境内源默认值无法按运行环境切换 | 境内源写成仓库文件 `etc/agentbox/profiles/cn.env` 随镜像带入，entrypoint 在 `AGENTBOX_PROFILE=cn` 时只对未设置的变量导出；global 不存在文件，工具用官方默认值 |
 | mise shim 按 cwd 找配置 | 被托管仓库自带 `mise.toml` 会让 node/go 去找仓库要的版本，离线下失败 | `MISE_IGNORED_CONFIG_PATHS=/workspace:/cache:/refs:/knowledge:/opt/toolkit`；`/state` 不能放进去（会连系统配置一起丢），HOME 下的 mise 配置由 `MISE_GLOBAL_CONFIG_FILE=/etc/mise/config.toml` 封住 |
 | locked mode 靠构建参数 | `MISE_LOCKED=1` 可被绕过 | `mise.toml` 的 `[tool_config] locked = true` 随 lock 入仓；Dockerfile 只跑无参数的 `mise install --system`，显式 `mise install 工具@版本` 不受 locked 约束 |
