@@ -188,7 +188,7 @@ check_instance() {
 		grep -qxF "${v}" <<<"${have}" || missing+=("${v}")
 	done
 	if [ "${#missing[@]}" -gt 0 ]; then
-		echo "error: instance ${name} references environment variables with no value in ${envf}:" >&2
+		echo "错误: instance ${name} references environment variables with no value in ${envf}:" >&2
 		printf '  - %s\n' "${missing[@]}" >&2
 		return 1
 	fi
@@ -221,7 +221,7 @@ check_repo_clean() {
 		warn "deploy repo has uncommitted changes; proceeding because --force was given"
 		return 0
 	fi
-	echo "error: deploy repo ${REPO} has uncommitted changes:" >&2
+	echo "错误: deploy repo ${REPO} has uncommitted changes:" >&2
 	sed 's/^/  /' <<<"${dirty}" >&2
 	echo "commit them so the deployed state maps to a commit, or pass --force" >&2
 	exit 1
