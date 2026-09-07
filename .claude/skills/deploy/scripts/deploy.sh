@@ -6,7 +6,7 @@
 # Per-host connection details live in the deploy repo at hosts/<host>/host.env and never in here.
 # Exit codes: 0 ok / 1 usage error or remote failure / 2 precondition (unreachable, missing tools)
 
-# shellcheck disable=SC2034  # LOG_DIR/FORCE/DRY_RUN are consumed once later tasks add the
+# shellcheck disable=SC2034  # LOG_DIR/DRY_RUN are consumed once later tasks add the
 # plan/deploy/status bodies; this skeleton only parses and stores them.
 
 set -euo pipefail
@@ -208,15 +208,36 @@ check_all_instances() {
 	return 0
 }
 
+# A deploy from a dirty repo cannot be traced back to a commit. Refuse unless --force says otherwise.
+check_repo_clean() {
+	if ! git -C "${REPO}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		warn "deploy repo ${REPO} is not a git repository; there is no commit to trace this deploy to"
+		return 0
+	fi
+	local dirty
+	dirty="$(git -C "${REPO}" status --porcelain)"
+	[ -z "${dirty}" ] && return 0
+	if [ "${FORCE}" -eq 1 ]; then
+		warn "deploy repo has uncommitted changes; proceeding because --force was given"
+		return 0
+	fi
+	echo "error: deploy repo ${REPO} has uncommitted changes:" >&2
+	sed 's/^/  /' <<<"${dirty}" >&2
+	echo "commit them so the deployed state maps to a commit, or pass --force" >&2
+	exit 1
+}
+
 main() {
 	load_host_env
 	case "${ACTION}" in
 		plan)
 			step "planning ${HOST} (${DEPLOY_HOST}) version ${AGENTBOX_VERSION} from ${REPO}"
+			check_repo_clean
 			check_all_instances
 			;;
 		deploy)
 			step "deploying ${HOST} (${DEPLOY_HOST}) version ${AGENTBOX_VERSION} from ${REPO}"
+			check_repo_clean
 			check_all_instances
 			;;
 		status) step "querying ${HOST} (${DEPLOY_HOST}) from ${REPO}" ;;

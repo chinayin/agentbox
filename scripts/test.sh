@@ -540,6 +540,19 @@ out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run 
 printf 'ANTHROPIC_AUTH_TOKEN=sk-x\nFEISHU_APP_ID=cli_x\nFEISHU_APP_SECRET=x\n' > "$dp/repo/hosts/h1/instances/a1/env"
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "deploy plan passes once every placeholder has a value" || bad "deploy plan passes once every placeholder has a value" "rc=$rc $out"
+# A dirty deploy repo cannot be traced to a commit; plan/deploy must refuse unless --force says
+# otherwise. Make the fixture a real git repo here, so this and every later assertion in this
+# group runs against git-tracked state.
+( cd "$dp/repo" && git init -q && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm init ) 2>/dev/null
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "deploy plan passes on a clean deploy repo" || bad "deploy plan passes on a clean deploy repo" "rc=$rc $out"
+printf 'dirty\n' >> "$dp/repo/hosts/h1/instances/a1/env"
+env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "deploy refuses a dirty deploy repo (exit 1)" || bad "deploy refuses a dirty deploy repo (exit 1)" "rc=$rc"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'uncommitted' <<<"$out" \
+	&& ok "--force proceeds on a dirty repo and says so" || bad "--force proceeds on a dirty repo and says so" "rc=$rc $out"
+( cd "$dp/repo" && git checkout -q -- hosts/h1/instances/a1/env ) 2>/dev/null
 
 group "template hygiene"
 for f in "$ROOT"/examples/*/config.toml; do
