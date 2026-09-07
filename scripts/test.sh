@@ -452,6 +452,7 @@ group "deploy skill"
 DP_SRC="$ROOT/.claude/skills/deploy/scripts/deploy.sh"
 dp="$TMP/dp"; mkdir -p "$dp/skill/scripts"; cp "$DP_SRC" "$dp/skill/scripts/"
 mkdir -p "$dp/repo/hosts/h1/instances/a1" "$dp/other/hosts/h2"
+printf 'DEPLOY_HOST=user@h2.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\n' > "$dp/other/hosts/h2/host.env"
 printf 'AGENTBOX_DEPLOY_REPO=%s\n' "$dp/repo" > "$dp/skill/.env"
 bash "$dp/skill/scripts/deploy.sh" --help >/dev/null 2>&1 \
 	&& ok "deploy --help exits 0" || bad "deploy --help exits 0" ""
@@ -469,6 +470,15 @@ env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" plan h1 >/dev/nul
 printf 'AGENTBOX_DEPLOY_REPO=%s\n' "$dp/repo" > "$dp/skill/.env"
 [ -f "$ROOT/.claude/skills/deploy/.env.example" ] && ! grep -v '127\.0\.0\.1' "$ROOT/.claude/skills/deploy/.env.example" | grep -qE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' \
 	&& ok "deploy .env.example carries no real address" || bad "deploy .env.example carries no real address" ""
+env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan nosuchhost >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "deploy rejects an unknown host (exit 1)" || bad "deploy rejects an unknown host (exit 1)" "rc=$rc"
+printf 'DEPLOY_DIR=/data/agentbox\n' > "$dp/repo/hosts/h1/host.env"
+env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "deploy rejects a host.env without DEPLOY_HOST (exit 1)" || bad "deploy rejects a host.env without DEPLOY_HOST (exit 1)" "rc=$rc"
+printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\n' > "$dp/repo/hosts/h1/host.env"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"
+grep -q 'user@h1.example.test' <<<"$out" && grep -q '0.1.0' <<<"$out" \
+	&& ok "deploy reads host and version from host.env" || bad "deploy reads host and version from host.env" "$out"
 
 group "template hygiene"
 for f in "$ROOT"/examples/*/config.toml; do

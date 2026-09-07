@@ -94,11 +94,60 @@ done
 [ -d "${REPO}" ]   || die "deploy repo ${REPO} is not a directory"
 [ -n "${HOST}" ]   || { usage >&2; die "a host is required"; }
 
+HOST_DIR="${REPO}/hosts/${HOST}"
+DEPLOY_HOST=""
+DEPLOY_KEY=""
+DEPLOY_HOST_KEY_ALIAS=""
+DEPLOY_SOCKS=""
+DEPLOY_DIR="/data/agentbox"
+AGENTBOX_VERSION=""
+declare -a SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
+
+# hosts/<host>/host.env: connection fields stay local, AGENTBOX_VERSION is derived to the remote.
+load_host_env() {
+	local f="${HOST_DIR}/host.env" line name val
+	[ -d "${HOST_DIR}" ] || die "host ${HOST} not found in ${REPO}/hosts"
+	[ -f "${f}" ] || die "missing ${f}"
+	while IFS= read -r line || [ -n "${line}" ]; do
+		case "${line}" in ''|\#*) continue ;; esac
+		name="${line%%=*}"; val="${line#*=}"
+		case "${name}" in
+			DEPLOY_HOST|DEPLOY_KEY|DEPLOY_HOST_KEY_ALIAS|DEPLOY_SOCKS|DEPLOY_DIR|AGENTBOX_VERSION) ;;
+			*) continue ;;
+		esac
+		# shellcheck disable=SC2088  # matching a literal leading ~/ from the file is the point here
+		case "${val}" in "~/"*) val="${HOME}/${val#\~/}" ;; esac
+		printf -v "${name}" '%s' "${val}"
+	done < "${f}"
+	[ -n "${DEPLOY_HOST}" ] || die "${f} does not set DEPLOY_HOST"
+	[ -n "${AGENTBOX_VERSION}" ] || die "${f} does not set AGENTBOX_VERSION"
+	[ -n "${DEPLOY_KEY}" ] && SSH_OPTS+=(-i "${DEPLOY_KEY}")
+	# BSD nc SOCKS5 syntax; ssh substitutes %h %p.
+	[ -n "${DEPLOY_SOCKS}" ] && SSH_OPTS+=(-o "ProxyCommand=nc -X 5 -x ${DEPLOY_SOCKS} %h %p")
+	[ -n "${DEPLOY_HOST_KEY_ALIAS}" ] && SSH_OPTS+=(-o "HostKeyAlias=${DEPLOY_HOST_KEY_ALIAS}")
+	return 0
+}
+
+# Instances to act on: the one named on the command line, or every directory under instances/.
+list_instances() {
+	local d
+	if [ -n "${INSTANCE}" ]; then
+		[ -d "${HOST_DIR}/instances/${INSTANCE}" ] || die "instance ${INSTANCE} not found under ${HOST_DIR}/instances"
+		echo "${INSTANCE}"
+		return 0
+	fi
+	for d in "${HOST_DIR}"/instances/*/; do
+		[ -d "${d}" ] || continue
+		basename "${d}"
+	done
+}
+
 main() {
+	load_host_env
 	case "${ACTION}" in
-		plan)   step "planning ${HOST} from ${REPO}" ;;
-		deploy) step "deploying ${HOST} from ${REPO}" ;;
-		status) step "querying ${HOST} from ${REPO}" ;;
+		plan)   step "planning ${HOST} (${DEPLOY_HOST}) version ${AGENTBOX_VERSION} from ${REPO}" ;;
+		deploy) step "deploying ${HOST} (${DEPLOY_HOST}) version ${AGENTBOX_VERSION} from ${REPO}" ;;
+		status) step "querying ${HOST} (${DEPLOY_HOST}) from ${REPO}" ;;
 	esac
 }
 
