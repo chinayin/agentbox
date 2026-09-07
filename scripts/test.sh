@@ -452,16 +452,17 @@ group "deploy skill"
 DP_SRC="$ROOT/.claude/skills/deploy/scripts/deploy.sh"
 dp="$TMP/dp"; mkdir -p "$dp/skill/scripts"; cp "$DP_SRC" "$dp/skill/scripts/"
 mkdir -p "$dp/repo/hosts/h1/instances/a1" "$dp/other/hosts/h2"
+printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\n' > "$dp/repo/hosts/h1/host.env"
 printf 'DEPLOY_HOST=user@h2.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\n' > "$dp/other/hosts/h2/host.env"
 printf 'AGENTBOX_DEPLOY_REPO=%s\n' "$dp/repo" > "$dp/skill/.env"
 bash "$dp/skill/scripts/deploy.sh" --help >/dev/null 2>&1 \
 	&& ok "deploy --help exits 0" || bad "deploy --help exits 0" ""
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
-grep -q "$dp/repo" <<<"$out" \
+[ "$rc" -eq 0 ] && grep -q "$dp/repo" <<<"$out" \
 	&& ok "deploy reads the repo path from the skill .env" || bad "deploy reads the repo path from the skill .env" "rc=$rc $out"
-out="$(AGENTBOX_DEPLOY_REPO="$dp/other" bash "$dp/skill/scripts/deploy.sh" --dry-run plan h2 2>&1)"
-grep -q "$dp/other" <<<"$out" && ! grep -q "$dp/repo" <<<"$out" \
-	&& ok "environment overrides the deploy skill .env" || bad "environment overrides the deploy skill .env" "$out"
+out="$(AGENTBOX_DEPLOY_REPO="$dp/other" bash "$dp/skill/scripts/deploy.sh" --dry-run plan h2 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "$dp/other" <<<"$out" && ! grep -q "$dp/repo" <<<"$out" \
+	&& ok "environment overrides the deploy skill .env" || bad "environment overrides the deploy skill .env" "rc=$rc $out"
 out="$(bash "$dp/skill/scripts/deploy.sh" --repo "$dp/other" --dry-run plan h2 2>&1)"
 grep -q "$dp/other" <<<"$out" && ok "flag overrides the deploy skill .env" || bad "flag overrides the deploy skill .env" "$out"
 rm "$dp/skill/.env"
