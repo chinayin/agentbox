@@ -134,6 +134,16 @@ last_line() {
 	printf '%s\n' "${1##*$'\n'}"
 }
 
+# Remove a temp dir the containers wrote into. Their files belong to uid 1000 while the host user
+# may be someone else (GitHub's runner is 1001), so a plain rm -rf fails on the entries. Empty it
+# from inside the image as root, then drop the host-owned top directory.
+scrub_dir() {
+	local dir="$1"
+	[ -d "${dir}" ] || return 0
+	run_container "${IMAGE}" --user 0 --entrypoint find -v "${dir}:/scrub" -- /scrub -mindepth 1 -delete
+	rmdir "${dir}"
+}
+
 group "base image"
 
 run_capture "${IMAGE}" -- --version
@@ -291,7 +301,7 @@ if [ "${RUN_RC}" -eq 0 ] && printf '%s\n' "${RUN_OUT}" | grep -Fq "${node_expect
 else
 	bad "a workspace mise.toml does not affect image tool resolution" "rc=${RUN_RC} output=${RUN_OUT}"
 fi
-rm -rf "${WS_TMP}"
+scrub_dir "${WS_TMP}"
 
 # Nor may a mise config written into /state (HOME).
 ST_TMP="$(mktemp -d)"
@@ -304,7 +314,7 @@ if [ "${RUN_RC}" -eq 0 ] && printf '%s\n' "${RUN_OUT}" | grep -Fq "${node_expect
 else
 	bad "a mise global config in the state volume does not affect image tool resolution" "rc=${RUN_RC} output=${RUN_OUT}"
 fi
-rm -rf "${ST_TMP}"
+scrub_dir "${ST_TMP}"
 
 group "runtime profile"
 
@@ -329,7 +339,7 @@ fi
 group "instance contract"
 
 TMP="$(mktemp -d)"
-trap 'rm -rf "${TMP}"' EXIT
+trap 'scrub_dir "${TMP}"' EXIT
 mkdir -p "${TMP}/state" "${TMP}/workspace"
 chmod 0777 "${TMP}/state" "${TMP}/workspace"
 printf 'fixture\n' > "${TMP}/workspace/README"
@@ -395,7 +405,7 @@ fi
 	|| bad "cc-connect state lands in /state/.cc-connect" "$(ls -A "${BR_TMP}/state" | tr '\n' ' ')"
 if [ -n "${PI_IMAGE}" ]; then
 	sed -i.bak 's/type = "claudecode"/type = "pi"/' "${BR_TMP}/config.toml" && rm -f "${BR_TMP}/config.toml.bak"
-	rm -rf "${BR_TMP}/state" && mkdir -p "${BR_TMP}/state" && chmod 0777 "${BR_TMP}/state"
+	scrub_dir "${BR_TMP}/state" && mkdir "${BR_TMP}/state" && chmod 0777 "${BR_TMP}/state"
 	run_capture "${PI_IMAGE}" "${BR_ENV[@]}" \
 		-v "${BR_TMP}/config.toml:/agent/config.toml:ro" \
 		-v "${BR_TMP}/state:/state" \
@@ -408,7 +418,7 @@ if [ -n "${PI_IMAGE}" ]; then
 		bad "cc-connect accepts agent.type = pi" "output=$(printf '%s\n' "${RUN_OUT}" | tail -5)"
 	fi
 fi
-rm -rf "${BR_TMP}"
+scrub_dir "${BR_TMP}"
 
 group "image metadata"
 

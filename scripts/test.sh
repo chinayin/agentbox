@@ -335,6 +335,9 @@ grep -nE '@[0-9]+\.[0-9]+' "$DF" | grep -v '^[0-9]*:#' | grep -q . && bad "the D
 grep -nE 'grep -Fq "(v[0-9]+\.[0-9]+\.[0-9]+|go1\.[0-9]+)' "$ROOT/scripts/smoke.sh" | grep -q . && bad "smoke.sh expected versions come from the lock" "a hardcoded version number was found" || ok "smoke.sh expected versions come from the lock"
 # smoke keeps no second tool list; it loops over the lock
 grep -c 'check_version "' "$ROOT/scripts/smoke.sh" | awk '{exit !($1 <= 6)}' && ok "smoke.sh version-checks only the runtime-critical shims (the rest loop over the lock)" || bad "smoke.sh version-checks only the runtime-critical shims (the rest loop over the lock)" "too many check_version lines"
+# containers write into the smoke temp dirs as uid 1000; a host user with another uid (GitHub's
+# runner is 1001) cannot rm -rf those entries, so every cleanup must go through scrub_dir
+grep -nE '^[^#]*rm -rf' "$ROOT/scripts/smoke.sh" | grep -q . && bad "smoke.sh removes container-written temp dirs only via scrub_dir" "a plain rm -rf was found" || ok "smoke.sh removes container-written temp dirs only via scrub_dir"
 
 # runtime profile: one cn.env file copied into the image, no global file
 CN_ENV="$ROOT/etc/agentbox/profiles/cn.env"
