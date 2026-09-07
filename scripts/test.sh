@@ -444,6 +444,32 @@ env -u AGENTBOX_REMOTE bash "$rb/skill/scripts/remote-build.sh" --dry-run build 
 	&& ok "remote-build .env.example carries no real address" || bad "remote-build .env.example carries no real address" ""
 grep -qxF '.claude/skills/*/.env' "$ROOT/.gitignore" && ok "skill .env files are gitignored" || bad "skill .env files are gitignored" ""
 
+# ---------- deploy skill ----------
+# Same three-level override as remote-build: the skill .env only fills what is still unset, so the
+# environment and flags always win, and with no source at all the script must stop instead of
+# operating on an empty path.
+group "deploy skill"
+DP_SRC="$ROOT/.claude/skills/deploy/scripts/deploy.sh"
+dp="$TMP/dp"; mkdir -p "$dp/skill/scripts"; cp "$DP_SRC" "$dp/skill/scripts/"
+mkdir -p "$dp/repo/hosts/h1/instances/a1" "$dp/other/hosts/h2"
+printf 'AGENTBOX_DEPLOY_REPO=%s\n' "$dp/repo" > "$dp/skill/.env"
+bash "$dp/skill/scripts/deploy.sh" --help >/dev/null 2>&1 \
+	&& ok "deploy --help exits 0" || bad "deploy --help exits 0" ""
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+grep -q "$dp/repo" <<<"$out" \
+	&& ok "deploy reads the repo path from the skill .env" || bad "deploy reads the repo path from the skill .env" "rc=$rc $out"
+out="$(AGENTBOX_DEPLOY_REPO="$dp/other" bash "$dp/skill/scripts/deploy.sh" --dry-run plan h2 2>&1)"
+grep -q "$dp/other" <<<"$out" && ! grep -q "$dp/repo" <<<"$out" \
+	&& ok "environment overrides the deploy skill .env" || bad "environment overrides the deploy skill .env" "$out"
+out="$(bash "$dp/skill/scripts/deploy.sh" --repo "$dp/other" --dry-run plan h2 2>&1)"
+grep -q "$dp/other" <<<"$out" && ok "flag overrides the deploy skill .env" || bad "flag overrides the deploy skill .env" "$out"
+rm "$dp/skill/.env"
+env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" plan h1 >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "deploy without any repo source exits 1" || bad "deploy without any repo source exits 1" "rc=$rc"
+printf 'AGENTBOX_DEPLOY_REPO=%s\n' "$dp/repo" > "$dp/skill/.env"
+[ -f "$ROOT/.claude/skills/deploy/.env.example" ] && ! grep -v '127\.0\.0\.1' "$ROOT/.claude/skills/deploy/.env.example" | grep -qE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' \
+	&& ok "deploy .env.example carries no real address" || bad "deploy .env.example carries no real address" ""
+
 group "template hygiene"
 for f in "$ROOT"/examples/*/config.toml; do
 	n="$(basename "$f")"
