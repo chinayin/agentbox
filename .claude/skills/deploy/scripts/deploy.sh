@@ -281,7 +281,12 @@ sync_host() {
 	if [ "${DRY_RUN}" -eq 1 ]; then
 		echo "plan: rsync ${args[*]} ${HOST_DIR}/docker-compose.yaml ${HOST_DIR}/instances ${DEPLOY_HOST}:${DEPLOY_DIR}/" >&2
 	else
-		rssh "install -d -m 0755 '${DEPLOY_DIR}'"
+		# 0700, not 0755: rsync -a preserves the source file mode, so instances/*/env can land
+		# briefly world-readable before the chmod 600 below runs. Closing the directory to the
+		# owner means that window never exposes secrets to another user on the host, regardless
+		# of what mode a file arrives with. dockerd (root) and docker compose (run as the owning
+		# ssh user) can both still traverse it; see the Task 8 fix report for the full reasoning.
+		rssh "install -d -m 0700 '${DEPLOY_DIR}'"
 		rsync "${args[@]}" -e "${tmp}/ssh" \
 			"${HOST_DIR}/docker-compose.yaml" "${HOST_DIR}/instances" \
 			"${DEPLOY_HOST}:${DEPLOY_DIR}/"
@@ -322,7 +327,7 @@ remote_up() {
 		return 0
 	fi
 	local rc=0
-	ssh "${SSH_OPTS[@]}" "${DEPLOY_HOST}" "${cmd}" 2>&1 | tee "${log}" || rc=$?
+	ssh "${SSH_OPTS[@]}" "${DEPLOY_HOST}" "${cmd}" 2>&1 | tee "${log}" >&2 || rc=$?
 	if [ "${rc}" -ne 0 ]; then
 		echo "错误: remote compose failed (rc=${rc}); full log at ${log}" >&2
 		echo "if the pull was denied, log in on the server once: docker login ghcr.io" >&2
