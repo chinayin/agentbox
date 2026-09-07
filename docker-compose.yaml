@@ -41,6 +41,17 @@ services:
       # - ./examples/demo/kubeconfig:/agent/kubeconfig:ro
       # - ${WORKSPACES_ROOT:-./runtime/workspaces}/other:/refs/other:ro
 
+  aliyun:
+    <<: *agentbox
+    container_name: agentbox-aliyun
+    env_file:
+      - ./examples/aliyun/env
+    volumes:
+      - ./examples/aliyun/config.toml:/agent/config.toml:ro
+      - ${WORKSPACES_ROOT:-./runtime/workspaces}/aliyun:/workspace
+      - aliyun-state:/state
+      - aliyun-cache:/cache
+
   # Second trust domain: own secrets, state and cache.
   # ops:
   #   <<: *agentbox
@@ -62,3 +73,5 @@ networks:
 volumes:
   demo-state:
   demo-cache:
+  aliyun-state:
+  aliyun-cache:

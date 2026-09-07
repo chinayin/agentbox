@@ -1,0 +1,73 @@
+# Instance declaration, mounted read-only at /agent/config.toml. Safe to commit: values are
+# ${PLACEHOLDER} only, resolved from the env file. Missing placeholders fail at startup (exit 2).
+
+language = "zh"
+
+[log]
+level = "info"
+
+[display]
+mode = "quiet"
+hide_agent_footer = true
+
+[instant_reply]
+enabled = false
+
+[[projects]]
+name = "aliyun"
+admin_from = "${ADMIN_FROM}"
+
+[projects.agent]
+# claudecode | pi (pi needs the -pi image variant)
+type = "claudecode"
+
+[projects.agent.options]
+work_dir = "${WORK_DIR}"
+# acceptEdits: agent may edit files, commands still need confirmation.
+# bypassPermissions only with an explicit allow_from list. See docs/SECRETS.md §3.
+mode = "acceptEdits"
+
+[projects.agent.options.env]
+ANTHROPIC_BASE_URL = "${ANTHROPIC_BASE_URL}"
+ANTHROPIC_AUTH_TOKEN = "${ANTHROPIC_AUTH_TOKEN}"
+# Alibaba Cloud CLI reads these directly; no credential file is mounted (docs/TOOLS.md §2).
+ALIBABA_CLOUD_ACCESS_KEY_ID = "${ALIBABA_CLOUD_ACCESS_KEY_ID}"
+ALIBABA_CLOUD_ACCESS_KEY_SECRET = "${ALIBABA_CLOUD_ACCESS_KEY_SECRET}"
+ALIBABA_CLOUD_REGION_ID = "${ALIBABA_CLOUD_REGION_ID}"
+# Non-Anthropic model behind the gateway: uncomment together with the same names in the env file.
+# ANTHROPIC_MODEL = "${ANTHROPIC_MODEL}"
+# ANTHROPIC_DEFAULT_HAIKU_MODEL = "${ANTHROPIC_DEFAULT_HAIKU_MODEL}"
+# ANTHROPIC_DEFAULT_SONNET_MODEL = "${ANTHROPIC_DEFAULT_SONNET_MODEL}"
+# ANTHROPIC_DEFAULT_OPUS_MODEL = "${ANTHROPIC_DEFAULT_OPUS_MODEL}"
+# CLAUDE_CODE_SUBAGENT_MODEL = "${CLAUDE_CODE_SUBAGENT_MODEL}"
+# CLAUDE_CODE_AUTO_COMPACT_WINDOW = "${CLAUDE_CODE_AUTO_COMPACT_WINDOW}"
+
+[[projects.platforms]]
+type = "feishu"
+
+[projects.platforms.options]
+app_id = "${FEISHU_APP_ID}"
+app_secret = "${FEISHU_APP_SECRET}"
+# open_id is per user x app; values from another app never match (fails closed).
+allow_from = "${ALLOW_FROM}"
+
+# Second project in the same trust domain: uncomment. Table names carry no project name
+# ([projects.agent], not [projects.demo-ops.agent]). scripts/test.sh validates this block.
+# [[projects]]
+# name = "demo-ops"
+# admin_from = "${ADMIN_FROM}"
+#
+# [projects.agent]
+# type = "claudecode"
+#
+# [projects.agent.options]
+# work_dir = "/workspace/ops"
+# mode = "acceptEdits"
+#
+# [[projects.platforms]]
+# type = "feishu"
+#
+# [projects.platforms.options]
+# app_id = "${FEISHU_APP_ID_OPS}"
+# app_secret = "${FEISHU_APP_SECRET_OPS}"
+# allow_from = "${ALLOW_FROM_OPS}"
