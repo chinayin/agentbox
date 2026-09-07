@@ -12,7 +12,9 @@
 
 ## Global Constraints
 
-- 脚本内的注释、帮助文本、报错、日志、测试用例名**一律英文**。项目 `CLAUDE.md` 的这条要求覆盖 `gox-code-rules:shell` 技能里的中文要求，现有 `remote-build.sh` 即是范例。文档类（`docs/`、`README.md`）保持中文。
+- **语言：新建脚本按 `gox-code-rules:shell` 用中文。** 2026-09-07 用户明确指示以 gox 团队标准优先于本仓库 `CLAUDE.md` 的英文条款。因此 `deploy.sh` 的注释、帮助文本、报错、日志一律中文，错误前缀用 `错误:`，警告用 `警告:`。
+- **例外：`scripts/test.sh` 里新增的断言名保持英文**，与该文件既有的一百多条断言一致，避免同一份 `[PASS]` 输出中英混杂。现有脚本（`entrypoint.sh`、`smoke.sh`、`remote-build.sh`、`scaffold.sh`）一律不动，本计划不做语言迁移。
+- 文档类（`docs/`、`README.md`、`SKILL.md`）中文，与仓库现状一致。
 - 每个脚本以 `#!/usr/bin/env bash` 开头，紧跟 `set -euo pipefail`。所有展开加引号。
 - 退出码固定为：`0` 成功 / `1` 用法错误或远端命令失败 / `2` 前置条件不满足（缺 ssh、rsync、主机不可达）。帮助文本里要列出这三条。
 - stdout 只放数据，本技能里就是日志路径。进度、警告、诊断全部到 stderr。无 emoji 无颜色。
@@ -168,9 +170,9 @@ FORCE=0
 VERBOSE=0
 DRY_RUN=0
 
-die()  { echo "error: $*" >&2; exit 1; }
-pre()  { echo "error: $*" >&2; exit 2; }
-warn() { echo "warning: $*" >&2; }
+die()  { echo "错误: $*" >&2; exit 1; }
+pre()  { echo "错误: $*" >&2; exit 2; }
+warn() { echo "警告: $*" >&2; }
 step() { echo "==> $*" >&2; }
 vlog() { [ "${VERBOSE}" -eq 1 ] && echo "verbose: $*" >&2 || true; }
 
