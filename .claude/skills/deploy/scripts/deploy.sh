@@ -349,6 +349,10 @@ do_deploy() {
 	remote_up
 }
 
+do_status() {
+	rssh "cd '${DEPLOY_DIR}' && docker compose ps && docker compose logs --tail 20"
+}
+
 main() {
 	load_host_env
 	case "${ACTION}" in
@@ -365,7 +369,10 @@ main() {
 			print_plan
 			do_deploy
 			;;
-		status) step "querying ${HOST} (${DEPLOY_HOST}) from ${REPO}" ;;
+		status)
+			step "querying ${HOST} (${DEPLOY_HOST}) from ${REPO}"
+			do_status
+			;;
 	esac
 }
 

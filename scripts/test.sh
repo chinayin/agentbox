@@ -584,6 +584,11 @@ grep -q 'AGENTBOX_VERSION=0.1.0' <<<"$out" \
 	&& ok "the remote .env is derived, not synced" || bad "the remote .env is derived, not synced" "$out"
 ! grep -qE 'DEPLOY_KEY|DEPLOY_SOCKS|DEPLOY_HOST=' <<<"$out" \
 	&& ok "connection fields never reach the remote .env" || bad "connection fields never reach the remote .env" "$out"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run status h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'compose ps' <<<"$out" \
+	&& ok "status dry-run shows compose ps" || bad "status dry-run shows compose ps" "rc=$rc $out"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run status 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && ok "status without a host exits 1" || bad "status without a host exits 1" "rc=$rc"
 
 group "template hygiene"
 for f in "$ROOT"/examples/*/config.toml; do
