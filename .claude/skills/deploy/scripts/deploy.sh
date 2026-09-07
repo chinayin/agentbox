@@ -142,11 +142,83 @@ list_instances() {
 	done
 }
 
+# ${VAR} names referenced by string values in the config (real TOML parse: comments do not count).
+# The regex must stay identical to the placeholders() function in entrypoint.sh; scripts/test.sh
+# asserts the two agree, because a mismatch here means deploy passes and the container then fails.
+config_placeholders() {
+	python3 - "$1" <<'PY'
+import re, sys, tomllib
+
+def walk(node):
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for v in node.values():
+            yield from walk(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from walk(v)
+
+try:
+    with open(sys.argv[1], "rb") as fh:
+        cfg = tomllib.load(fh)
+except tomllib.TOMLDecodeError as e:
+    print(f"invalid TOML: {e}", file=sys.stderr)
+    sys.exit(1)
+names = set()
+for s in walk(cfg):
+    names.update(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", s))
+print("\n".join(sorted(names)))
+PY
+}
+
+# WORK_DIR comes from the compose file, not the env file, so it is not required here.
+check_instance() {
+	local name="$1" dir toml envf want have missing=()
+	dir="${HOST_DIR}/instances/${name}"
+	toml="${dir}/config.toml"
+	envf="${dir}/env"
+	[ -f "${toml}" ] || die "missing ${toml}"
+	[ -f "${envf}" ] || die "missing ${envf}"
+	want="$(config_placeholders "${toml}")" || die "config ${toml} is not valid TOML (see above)"
+	have="$(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "${envf}" | tr -d '=' | sort -u)"
+	local v
+	for v in ${want}; do
+		[ "${v}" = WORK_DIR ] && continue
+		grep -qxF "${v}" <<<"${have}" || missing+=("${v}")
+	done
+	if [ "${#missing[@]}" -gt 0 ]; then
+		echo "error: instance ${name} references environment variables with no value in ${envf}:" >&2
+		printf '  - %s\n' "${missing[@]}" >&2
+		return 1
+	fi
+	vlog "instance ${name}: $(wc -w <<<"${want}") placeholders all resolved"
+	return 0
+}
+
+check_all_instances() {
+	local n rc=0 count=0
+	while IFS= read -r n; do
+		[ -n "${n}" ] || continue
+		count=$((count+1))
+		check_instance "${n}" || rc=1
+	done < <(list_instances)
+	[ "${count}" -gt 0 ] || die "no instances found under ${HOST_DIR}/instances"
+	[ "${rc}" -eq 0 ] || die "fix the env files above before deploying"
+	return 0
+}
+
 main() {
 	load_host_env
 	case "${ACTION}" in
-		plan)   step "planning ${HOST} (${DEPLOY_HOST}) version ${AGENTBOX_VERSION} from ${REPO}" ;;
-		deploy) step "deploying ${HOST} (${DEPLOY_HOST}) version ${AGENTBOX_VERSION} from ${REPO}" ;;
+		plan)
+			step "planning ${HOST} (${DEPLOY_HOST}) version ${AGENTBOX_VERSION} from ${REPO}"
+			check_all_instances
+			;;
+		deploy)
+			step "deploying ${HOST} (${DEPLOY_HOST}) version ${AGENTBOX_VERSION} from ${REPO}"
+			check_all_instances
+			;;
 		status) step "querying ${HOST} (${DEPLOY_HOST}) from ${REPO}" ;;
 	esac
 }

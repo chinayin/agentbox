@@ -451,9 +451,37 @@ grep -qxF '.claude/skills/*/.env' "$ROOT/.gitignore" && ok "skill .env files are
 group "deploy skill"
 DP_SRC="$ROOT/.claude/skills/deploy/scripts/deploy.sh"
 dp="$TMP/dp"; mkdir -p "$dp/skill/scripts"; cp "$DP_SRC" "$dp/skill/scripts/"
-mkdir -p "$dp/repo/hosts/h1/instances/a1" "$dp/other/hosts/h2"
+mkdir -p "$dp/repo/hosts/h1/instances/a1" "$dp/other/hosts/h2/instances/a2"
 printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\n' > "$dp/repo/hosts/h1/host.env"
 printf 'DEPLOY_HOST=user@h2.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\n' > "$dp/other/hosts/h2/host.env"
+# Every host needs a complete, valid instance once check_all_instances validates locally: config.toml
+# plus an env that supplies every placeholder the config references (WORK_DIR excepted; compose
+# supplies it, not the env file).
+cat > "$dp/repo/hosts/h1/instances/a1/config.toml" <<'TOML'
+[[projects]]
+name = "a1"
+[projects.agent]
+type = "claudecode"
+[projects.agent.options]
+work_dir = "/workspace"
+[projects.agent.options.env]
+ANTHROPIC_AUTH_TOKEN = "${ANTHROPIC_AUTH_TOKEN}"
+[[projects.platforms]]
+type = "feishu"
+[projects.platforms.options]
+app_id = "${FEISHU_APP_ID}"
+app_secret = "${FEISHU_APP_SECRET}"
+TOML
+printf 'ANTHROPIC_AUTH_TOKEN=sk-x\nFEISHU_APP_ID=cli_x\nFEISHU_APP_SECRET=x\n' > "$dp/repo/hosts/h1/instances/a1/env"
+cat > "$dp/other/hosts/h2/instances/a2/config.toml" <<'TOML'
+[[projects]]
+name = "a2"
+[projects.agent]
+type = "claudecode"
+[projects.agent.options]
+work_dir = "/workspace"
+TOML
+: > "$dp/other/hosts/h2/instances/a2/env"
 printf 'AGENTBOX_DEPLOY_REPO=%s\n' "$dp/repo" > "$dp/skill/.env"
 bash "$dp/skill/scripts/deploy.sh" --help >/dev/null 2>&1 \
 	&& ok "deploy --help exits 0" || bad "deploy --help exits 0" ""
@@ -480,6 +508,15 @@ printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VE
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"
 grep -q 'user@h1.example.test' <<<"$out" && grep -q '0.1.0' <<<"$out" \
 	&& ok "deploy reads host and version from host.env" || bad "deploy reads host and version from host.env" "$out"
+# a1's config.toml (set up above) references ANTHROPIC_AUTH_TOKEN, FEISHU_APP_ID, FEISHU_APP_SECRET;
+# drop the last one from env and confirm plan fails locally, naming it, before ever touching a network.
+printf 'ANTHROPIC_AUTH_TOKEN=sk-x\nFEISHU_APP_ID=cli_x\n' > "$dp/repo/hosts/h1/instances/a1/env"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'FEISHU_APP_SECRET' <<<"$out" \
+	&& ok "deploy names the missing placeholder and exits 1" || bad "deploy names the missing placeholder and exits 1" "rc=$rc $out"
+printf 'ANTHROPIC_AUTH_TOKEN=sk-x\nFEISHU_APP_ID=cli_x\nFEISHU_APP_SECRET=x\n' > "$dp/repo/hosts/h1/instances/a1/env"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "deploy plan passes once every placeholder has a value" || bad "deploy plan passes once every placeholder has a value" "rc=$rc $out"
 
 group "template hygiene"
 for f in "$ROOT"/examples/*/config.toml; do
