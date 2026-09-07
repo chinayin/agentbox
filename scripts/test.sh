@@ -553,6 +553,16 @@ out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --
 [ "$rc" -eq 0 ] && grep -q 'uncommitted' <<<"$out" \
 	&& ok "--force proceeds on a dirty repo and says so" || bad "--force proceeds on a dirty repo and says so" "rc=$rc $out"
 ( cd "$dp/repo" && git checkout -q -- hosts/h1/instances/a1/env ) 2>/dev/null
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'a1' <<<"$out" && grep -q '0.1.0' <<<"$out" && grep -q 'restart' <<<"$out" \
+	&& ok "plan lists the instances, the version and what will restart" || bad "plan lists the instances, the version and what will restart" "rc=$rc $out"
+# plan must never dial the host: a bogus proxy would make any connection attempt fail loudly
+printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\nDEPLOY_SOCKS=127.0.0.1:1\n' > "$dp/repo/hosts/h1/host.env"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm socks ) 2>/dev/null
+env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" plan h1 >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "plan stays offline even with an unusable proxy" || bad "plan stays offline even with an unusable proxy" "rc=$rc"
+printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\n' > "$dp/repo/hosts/h1/host.env"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm hostenv ) 2>/dev/null
 
 group "template hygiene"
 for f in "$ROOT"/examples/*/config.toml; do

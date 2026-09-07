@@ -208,6 +208,25 @@ check_all_instances() {
 	return 0
 }
 
+# Everything print_plan reports is computed from local files; it must not connect.
+print_plan() {
+	local n compose="${HOST_DIR}/docker-compose.yaml"
+	echo "  repo:      ${REPO}" >&2
+	echo "  host:      ${DEPLOY_HOST}  dir ${DEPLOY_DIR}" >&2
+	echo "  version:   ${AGENTBOX_VERSION}" >&2
+	if [ -f "${compose}" ]; then
+		echo "  compose:   ${compose}" >&2
+	else
+		echo "  compose:   MISSING (${compose})" >&2
+	fi
+	echo "  will sync: docker-compose.yaml, instances/ (config.toml + env, env as 0600)" >&2
+	echo "  will restart these containers, interrupting any session in progress:" >&2
+	while IFS= read -r n; do
+		[ -n "${n}" ] || continue
+		echo "    - ${n}" >&2
+	done < <(list_instances)
+}
+
 # A deploy from a dirty repo cannot be traced back to a commit. Refuse unless --force says otherwise.
 check_repo_clean() {
 	if ! git -C "${REPO}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -234,11 +253,13 @@ main() {
 			step "planning ${HOST} (${DEPLOY_HOST}) version ${AGENTBOX_VERSION} from ${REPO}"
 			check_repo_clean
 			check_all_instances
+			print_plan
 			;;
 		deploy)
 			step "deploying ${HOST} (${DEPLOY_HOST}) version ${AGENTBOX_VERSION} from ${REPO}"
 			check_repo_clean
 			check_all_instances
+			print_plan
 			;;
 		status) step "querying ${HOST} (${DEPLOY_HOST}) from ${REPO}" ;;
 	esac
