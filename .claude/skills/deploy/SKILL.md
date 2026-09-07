@@ -39,11 +39,12 @@ derived into the remote `.env`.
 
 ## Reading results
 
-On success the log path is the only thing on stdout; everything else is progress on stderr. Read
-the last 40 lines of the log first. A `denied` or `unauthorized` line from the pull means the
-server is not logged in to GHCR (`docker login ghcr.io`, a human step). A precheck line naming
-unset environment variables means that instance's `env` is incomplete on the server, which
-normally cannot happen because `plan` checks it locally first.
+On a normal run, the log path is the only thing on stdout; everything else is progress on stderr.
+With `-v`, the flag also passes through to `rsync`, so its own file list lands on stdout alongside
+the log path. Read the last 40 lines of the log first. A `denied` or `unauthorized` line from the
+pull means the server is not logged in to GHCR (`docker login ghcr.io`, a human step). A precheck
+line naming unset environment variables means that instance's `env` is incomplete on the server,
+which normally cannot happen because `plan` checks it locally first.
 
 Always report which action ran, the host as configured, the version, pass or fail, and the log
 path. Never paste the deploy repo's env contents or the full log into the reply.
