@@ -10,4 +10,4 @@
 | `mise install` fails with a checksum or 404 | Lock is stale for that tool | Run `make lock-refresh` locally, review the diff, re-sync; never edit the lock by hand |
 | smoke `[FAIL]` on a tool version | Image built from an older sync or a stale layer | Re-run `build` (rsync `--delete` is on); check the lock line for that tool in the log |
 | rsync complains about `ProxyCommand` | rsync `-e` takes one string | The script writes a wrapper for ssh options; do not pass `-e` yourself |
-| Remote `make smoke` passes but a real instance misbehaves | Smoke uses bare `docker run`, not compose | Compose hardening is untested by smoke (`docs/ROADMAP.md` item 4); inspect the running container |
+| Remote `make smoke` passes but a real instance misbehaves | Smoke uses bare `docker run`, not compose | Compose hardening is untested by smoke (`docs/ROADMAP.md` item 6); inspect the running container |

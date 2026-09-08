@@ -19,6 +19,7 @@ ENTRY="$ROOT/entrypoint.sh"
 DF="$ROOT/Dockerfile"
 DEMO_TOML="$ROOT/examples/demo/config.toml"
 DEMO_ENV="$ROOT/examples/demo/env.example"
+DP_SRC="$ROOT/.claude/skills/deploy/scripts/deploy.sh"
 
 # Controlled PATH: cc-connect is a stub; only python3 (>= 3.11 for tomllib) is linked in, never its
 # whole directory, which may contain real CLIs and break "not installed" assertions.
@@ -215,6 +216,29 @@ else
 	[ -z "$gone" ] && ok "every repo path named in the docs exists" \
 		|| bad "every repo path named in the docs exists" "${gone}"
 fi
+
+# deploy.sh gates on placeholders locally, entrypoint.sh gates on them inside the container. If the
+# two disagree, a deploy passes and the container then exits 2. Same config in, same names out.
+cc="$TMP/cc.toml"
+cat > "$cc" <<'TOML'
+[[projects]]
+name = "c"
+[projects.agent.options]
+work_dir = "${WORK_DIR}"
+[projects.agent.options.env]
+UPPER_NAME = "${UPPER_NAME}"
+lower_key = "${lower_name}"
+mixed = "prefix-${Mixed_9}-suffix"
+[[projects.platforms]]
+type = "feishu"
+[projects.platforms.options]
+app_id = "${FEISHU_APP_ID}"
+TOML
+ep_out="$(CONFIG="$cc" bash -c 'source <(sed -n "/^placeholders()/,/^}/p" "$1"); placeholders' _ "$ENTRY" 2>/dev/null | sort)"
+dp_out="$(bash -c 'source <(sed -n "/^config_placeholders()/,/^}/p" "$1"); config_placeholders "$2"' _ "$DP_SRC" "$cc" 2>/dev/null | sort)"
+[ -n "$ep_out" ] && [ "$ep_out" = "$dp_out" ] \
+	&& ok "deploy.sh and entrypoint.sh extract the same placeholder names" \
+	|| bad "deploy.sh and entrypoint.sh extract the same placeholder names" "entrypoint=[$ep_out] deploy=[$dp_out]"
 
 # ---------- mise declaration vs lock ----------
 group "mise toolchain declaration"
@@ -443,6 +467,135 @@ env -u AGENTBOX_REMOTE bash "$rb/skill/scripts/remote-build.sh" --dry-run build 
 [ -f "$ROOT/.claude/skills/remote-build/.env.example" ] && ! grep -v '127\.0\.0\.1' "$ROOT/.claude/skills/remote-build/.env.example" | grep -qE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' \
 	&& ok "remote-build .env.example carries no real address" || bad "remote-build .env.example carries no real address" ""
 grep -qxF '.claude/skills/*/.env' "$ROOT/.gitignore" && ok "skill .env files are gitignored" || bad "skill .env files are gitignored" ""
+
+# ---------- deploy skill ----------
+# Same three-level override as remote-build: the skill .env only fills what is still unset, so the
+# environment and flags always win, and with no source at all the script must stop instead of
+# operating on an empty path.
+group "deploy skill"
+dp="$TMP/dp"; mkdir -p "$dp/skill/scripts"; cp "$DP_SRC" "$dp/skill/scripts/"
+mkdir -p "$dp/repo/hosts/h1/instances/a1" "$dp/other/hosts/h2/instances/a2"
+printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\n' > "$dp/repo/hosts/h1/host.env"
+printf 'DEPLOY_HOST=user@h2.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\n' > "$dp/other/hosts/h2/host.env"
+# Every host needs a complete, valid instance once check_all_instances validates locally: config.toml
+# plus an env that supplies every placeholder the config references (WORK_DIR excepted; compose
+# supplies it, not the env file).
+cat > "$dp/repo/hosts/h1/instances/a1/config.toml" <<'TOML'
+[[projects]]
+name = "a1"
+[projects.agent]
+type = "claudecode"
+[projects.agent.options]
+work_dir = "${WORK_DIR}"
+[projects.agent.options.env]
+ANTHROPIC_AUTH_TOKEN = "${ANTHROPIC_AUTH_TOKEN}"
+[[projects.platforms]]
+type = "feishu"
+[projects.platforms.options]
+app_id = "${FEISHU_APP_ID}"
+app_secret = "${FEISHU_APP_SECRET}"
+TOML
+printf 'ANTHROPIC_AUTH_TOKEN=sk-x\nFEISHU_APP_ID=cli_x\nFEISHU_APP_SECRET=x\n' > "$dp/repo/hosts/h1/instances/a1/env"
+cat > "$dp/other/hosts/h2/instances/a2/config.toml" <<'TOML'
+[[projects]]
+name = "a2"
+[projects.agent]
+type = "claudecode"
+[projects.agent.options]
+work_dir = "/workspace"
+TOML
+: > "$dp/other/hosts/h2/instances/a2/env"
+printf 'AGENTBOX_DEPLOY_REPO=%s\n' "$dp/repo" > "$dp/skill/.env"
+bash "$dp/skill/scripts/deploy.sh" --help >/dev/null 2>&1 \
+	&& ok "deploy --help exits 0" || bad "deploy --help exits 0" ""
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "$dp/repo" <<<"$out" \
+	&& ok "deploy reads the repo path from the skill .env" || bad "deploy reads the repo path from the skill .env" "rc=$rc $out"
+out="$(AGENTBOX_DEPLOY_REPO="$dp/other" bash "$dp/skill/scripts/deploy.sh" --dry-run plan h2 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "$dp/other" <<<"$out" && ! grep -q "$dp/repo" <<<"$out" \
+	&& ok "environment overrides the deploy skill .env" || bad "environment overrides the deploy skill .env" "rc=$rc $out"
+out="$(bash "$dp/skill/scripts/deploy.sh" --repo "$dp/other" --dry-run plan h2 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "$dp/other" <<<"$out" \
+	&& ok "flag overrides the deploy skill .env" || bad "flag overrides the deploy skill .env" "rc=$rc $out"
+rm "$dp/skill/.env"
+env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" plan h1 >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "deploy without any repo source exits 1" || bad "deploy without any repo source exits 1" "rc=$rc"
+printf 'AGENTBOX_DEPLOY_REPO=%s\n' "$dp/repo" > "$dp/skill/.env"
+[ -f "$ROOT/.claude/skills/deploy/.env.example" ] && ! grep -v '127\.0\.0\.1' "$ROOT/.claude/skills/deploy/.env.example" | grep -qE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' \
+	&& ok "deploy .env.example carries no real address" || bad "deploy .env.example carries no real address" ""
+env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan nosuchhost >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "deploy rejects an unknown host (exit 1)" || bad "deploy rejects an unknown host (exit 1)" "rc=$rc"
+printf 'DEPLOY_DIR=/data/agentbox\n' > "$dp/repo/hosts/h1/host.env"
+env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "deploy rejects a host.env without DEPLOY_HOST (exit 1)" || bad "deploy rejects a host.env without DEPLOY_HOST (exit 1)" "rc=$rc"
+printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\n' > "$dp/repo/hosts/h1/host.env"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"
+grep -q 'user@h1.example.test' <<<"$out" && grep -q '0.1.0' <<<"$out" \
+	&& ok "deploy reads host and version from host.env" || bad "deploy reads host and version from host.env" "$out"
+# a1's config.toml (set up above) references ANTHROPIC_AUTH_TOKEN, FEISHU_APP_ID, FEISHU_APP_SECRET;
+# drop the last one from env and confirm plan fails locally, naming it, before ever touching a network.
+printf 'ANTHROPIC_AUTH_TOKEN=sk-x\nFEISHU_APP_ID=cli_x\n' > "$dp/repo/hosts/h1/instances/a1/env"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'FEISHU_APP_SECRET' <<<"$out" \
+	&& ok "deploy names the missing placeholder and exits 1" || bad "deploy names the missing placeholder and exits 1" "rc=$rc $out"
+printf 'ANTHROPIC_AUTH_TOKEN=sk-x\nFEISHU_APP_ID=cli_x\nFEISHU_APP_SECRET=x\n' > "$dp/repo/hosts/h1/instances/a1/env"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "deploy plan passes once every placeholder has a value" || bad "deploy plan passes once every placeholder has a value" "rc=$rc $out"
+# A dirty deploy repo cannot be traced to a commit; plan/deploy must refuse unless --force says
+# otherwise. Make the fixture a real git repo here, so this and every later assertion in this
+# group runs against git-tracked state.
+( cd "$dp/repo" && git init -q && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm init ) 2>/dev/null
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "deploy plan passes on a clean deploy repo" || bad "deploy plan passes on a clean deploy repo" "rc=$rc $out"
+printf 'dirty\n' >> "$dp/repo/hosts/h1/instances/a1/env"
+env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "deploy refuses a dirty deploy repo (exit 1)" || bad "deploy refuses a dirty deploy repo (exit 1)" "rc=$rc"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'uncommitted' <<<"$out" \
+	&& ok "--force proceeds on a dirty repo and says so" || bad "--force proceeds on a dirty repo and says so" "rc=$rc $out"
+( cd "$dp/repo" && git checkout -q -- hosts/h1/instances/a1/env ) 2>/dev/null
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'a1' <<<"$out" && grep -q '0.1.0' <<<"$out" && grep -q 'restart' <<<"$out" \
+	&& ok "plan lists the instances, the version and what will restart" || bad "plan lists the instances, the version and what will restart" "rc=$rc $out"
+# plan must never dial the host: a bogus proxy would make any connection attempt fail loudly
+printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\nDEPLOY_SOCKS=127.0.0.1:1\n' > "$dp/repo/hosts/h1/host.env"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm socks ) 2>/dev/null
+env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" plan h1 >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "plan stays offline even with an unusable proxy" || bad "plan stays offline even with an unusable proxy" "rc=$rc"
+# DEPLOY_KEY and DEPLOY_SOCKS must be present here so the "connection fields never reach the remote
+# .env" assertion below actually exercises those two patterns, not just DEPLOY_HOST=.
+printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\nDEPLOY_KEY=/tmp/nope.pem\nDEPLOY_SOCKS=127.0.0.1:7890\n' > "$dp/repo/hosts/h1/host.env"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm hostenv ) 2>/dev/null
+
+# deploy actually pushes config: sync a whitelist, derive the remote .env, fix permissions, then
+# start containers. All of this must show up in --dry-run output without ever connecting.
+cat > "$dp/repo/hosts/h1/docker-compose.yaml" <<'YML'
+services:
+  a1:
+    image: ghcr.io/owner/agentbox:${AGENTBOX_VERSION}
+    env_file: [./instances/a1/env]
+YML
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm compose ) 2>/dev/null
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "deploy --dry-run exits 0" || bad "deploy --dry-run exits 0" "rc=$rc $out"
+grep -q 'rsync' <<<"$out" && grep -q 'docker compose up' <<<"$out" && grep -q 'chmod 600' <<<"$out" \
+	&& ok "dry-run shows rsync, compose and the 0600 step" || bad "dry-run shows rsync, compose and the 0600 step" "$out"
+# the transport is a whitelist: nothing from the agentbox source tree may appear in the rsync source
+grep -q "$dp/repo/hosts/h1/" <<<"$out" && ! grep -qE 'Dockerfile|entrypoint\.sh|mise\.toml' <<<"$out" \
+	&& ok "rsync source is the host directory only, no agentbox source" || bad "rsync source is the host directory only, no agentbox source" "$out"
+grep -q 'AGENTBOX_VERSION=0.1.0' <<<"$out" \
+	&& ok "the remote .env is derived, not synced" || bad "the remote .env is derived, not synced" "$out"
+! grep -qE 'DEPLOY_KEY|DEPLOY_SOCKS|DEPLOY_HOST=' <<<"$out" \
+	&& ok "connection fields never reach the remote .env" || bad "connection fields never reach the remote .env" "$out"
+# a1's env carries ANTHROPIC_AUTH_TOKEN=sk-x; even with -v it must never be echoed to the plan output.
+vout="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run -v deploy h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ! grep -q 'sk-x' <<<"$vout" \
+	&& ok "instance secrets never appear in dry-run -v output" || bad "instance secrets never appear in dry-run -v output" "rc=$rc $vout"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run status h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'compose ps' <<<"$out" \
+	&& ok "status dry-run shows compose ps" || bad "status dry-run shows compose ps" "rc=$rc $out"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run status 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && ok "status without a host exits 1" || bad "status without a host exits 1" "rc=$rc"
 
 group "template hygiene"
 for f in "$ROOT"/examples/*/config.toml; do

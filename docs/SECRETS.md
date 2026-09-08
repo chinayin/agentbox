@@ -27,6 +27,16 @@ config.toml          →  只写 ${占位符}，进 git
 entrypoint           →  启动前校验每个占位符可解析，缺则 exit 2 并列全
 ```
 
+生产实例的"真值，宿主文件 0600"这一格还有上一级：真值先落在独立的部署仓库里，`deploy`
+技能把它同步到服务器，链路是
+
+```
+部署仓库 hosts/<host>/instances/<name>/env  →  rsync 0600 到服务器  →  compose 的 env_file  →  容器环境变量
+```
+
+本地开发用的 `examples/<name>/env` 不在这条链路上，部署仓库的布局见
+`.claude/skills/deploy/references/deploy-repo.md`。
+
 ```toml
 # config.toml
 [projects.platforms.options]
@@ -82,5 +92,11 @@ L4 只由可信通道直传或人工在宿主写入，不经第三方服务。
 | 网关虚拟 key | 重签 → 换 `env_file` → 查该 key 花费明细 |
 | 上游 master key | 改密钥源 → 滚动重启网关 → 通知依赖方 |
 | git 机器人私钥 | 远端删公钥 → 生成新密钥 → 挂新公钥 → 查账号事件 |
+| 部署仓库泄露 | 轮换该仓库覆盖的全部平台密钥与网关 token；收紧或吊销仓库访问权限；`git rm` 不解决问题，明文已经留在 git 历史里 |
 
 "改了声明式配置"不等于"吊销了远端凭据"，应急时直接调 API 或到控制台操作。
+
+部署仓库把 `env` 明文提交进 git，是在看过 sops/age 一类加密方案后仍然做出的选择：换来克隆即可
+用、diff 能直接看出改了哪个值，不引入额外的加密工具链；代价就是上面这行——仓库一旦泄露，
+`git rm` 清不掉已经进入历史的明文，唯一的止损是把该仓库涉及的全部平台密钥与网关 token 逐一
+轮换。仓库权限是这条代价发生前的唯一防线。

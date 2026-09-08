@@ -15,14 +15,20 @@ new container at all.
 Ask, if the request does not already say: *does the new work share the same secrets (chat app,
 model gateway key) as an existing instance?*
 
-- **Same secrets** → do not scaffold. Add a `[[projects]]` block to that instance's
-  `examples/<existing>/config.toml`, following the commented template at the bottom of
-  `examples/demo/config.toml`. Table names carry no project name (`[projects.agent]`, never
-  `[projects.<name>.agent]`); getting this wrong makes cc-connect start without an agent for the
-  second project. New placeholders use a suffix (`FEISHU_APP_ID_<NAME>`), and the same suffixed
-  names go into that instance's `env.example` with `xxxx` values. The workspace for the second
-  project is a subdirectory of the existing one (`work_dir = "/workspace/<name>"`), so create
-  `runtime/workspaces/<existing>/<name>` on the host.
+- **Same secrets** → do not scaffold. Add a `[[projects]]` block, following the commented
+  template at the bottom of `examples/demo/config.toml`. Which `config.toml` you edit depends on
+  whether `<existing>` is already deployed: **not yet** → the template at
+  `examples/<existing>/config.toml`. **Already live** → editing the template changes nothing
+  running; edit the real `config.toml` in the deploy repo at
+  `hosts/<host>/instances/<existing>/config.toml` instead, and push the change with the `deploy`
+  skill. Table names carry no project name (`[projects.agent]`, never `[projects.<name>.agent]`);
+  getting this wrong makes cc-connect start without an agent for the second project. New
+  placeholders use a suffix (`FEISHU_APP_ID_<NAME>`); put the same suffixed names, with real
+  values, in whichever env file sits next to the `config.toml` you edited — `env.example` (`xxxx`
+  values) for a template, `env` in the deploy repo for a live instance. The workspace for the
+  second project is a subdirectory of the existing one (`work_dir = "/workspace/<name>"`): create
+  `runtime/workspaces/<existing>/<name>` by hand for a template instance; for a live one it lives
+  on the server, and the `deploy` skill creates and owns it.
 - **Different secrets, repo, or team** → new instance. Continue with Step 2.
 
 When in doubt, prefer the new instance: cross-domain calls are meant to have friction.
@@ -52,13 +58,19 @@ under `volumes:` in `docker-compose.yaml`, then confirm the file still parses:
 docker compose config -q
 ```
 
+`examples/<name>/` stays a template: it goes in git with only `env.example`, never a filled-in
+`env`. A real, running instance lives in the private deploy repository instead, and is published
+there by the `deploy` skill, not by this one.
+
 ## Step 3: hand off
 
 Read `references/checklist.md` and give the user the steps they must do themselves: copying the
-env template to `env`, `chmod 600`, filling in values, setting `allow_from` to explicit ids,
-verifying the model gateway, starting the service and reading the precheck output. Do not do
-those steps for them, and do not put placeholders for real values into the chat; the values go
-straight from the user into the `env` file on the host.
+template into the deploy repo, filling in values there, setting `allow_from` to explicit ids, and
+verifying the model gateway. Workspace ownership, the `agentbox` network and starting the service
+are the `deploy` skill's job now, not a manual step; point the user at it rather than describing
+them as something to do by hand. Do not do the human steps for them, and do not put placeholders
+for real values into the chat; the values go straight from the user into the `env` file in the
+deploy repo.
 
 ## Guardrails
 

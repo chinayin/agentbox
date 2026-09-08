@@ -41,6 +41,21 @@ services:
       # - ./examples/demo/kubeconfig:/agent/kubeconfig:ro
       # - ${WORKSPACES_ROOT:-./runtime/workspaces}/other:/refs/other:ro
 
+  # Real instances (aliyun included) are not run from this file: they live in the private deploy
+  # repo and are published to a remote docker host by the `deploy` skill (spec §3). This block is
+  # commented out so a clean clone's `docker compose config` does not fail on the gitignored
+  # examples/aliyun/env this service would otherwise require.
+  # aliyun:
+  #   <<: *agentbox
+  #   container_name: agentbox-aliyun
+  #   env_file:
+  #     - ./examples/aliyun/env
+  #   volumes:
+  #     - ./examples/aliyun/config.toml:/agent/config.toml:ro
+  #     - ${WORKSPACES_ROOT:-./runtime/workspaces}/aliyun:/workspace
+  #     - aliyun-state:/state
+  #     - aliyun-cache:/cache
+
   # Second trust domain: own secrets, state and cache.
   # ops:
   #   <<: *agentbox
@@ -62,3 +77,5 @@ networks:
 volumes:
   demo-state:
   demo-cache:
+  # aliyun-state:
+  # aliyun-cache:
