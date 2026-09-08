@@ -46,7 +46,7 @@ jobs:
         run: |
           case "${GITHUB_REF_NAME}" in
             v[0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "error: tag ${GITHUB_REF_NAME} is not of the form vX.Y.Z" >&2; exit 1 ;;
+            *) echo "Error: tag ${GITHUB_REF_NAME} is not of the form vX.Y.Z" >&2; exit 1 ;;
           esac
           echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 

@@ -10,8 +10,8 @@ CONFIG="${AGENTBOX_CONFIG:-/agent/config.toml}"
 PROFILE_DIR=/etc/agentbox/profiles
 VERSION_FILE=/etc/agentbox/version
 
-die()  { echo "error: $*" >&2; exit 2; }
-warn() { echo "warning: $*" >&2; }
+die()  { echo "Error: $*" >&2; exit 2; }
+warn() { echo "Warning: $*" >&2; }
 info() { echo "agentbox: $*" >&2; }
 
 usage() {
@@ -103,7 +103,7 @@ precheck() {
 		[ -n "${!v:-}" ] || missing+=("${v}")
 	done
 	if [ "${#missing[@]}" -gt 0 ]; then
-		echo "error: config ${CONFIG} references unset environment variables:" >&2
+		echo "Error: config ${CONFIG} references unset environment variables:" >&2
 		printf '  - %s\n' "${missing[@]}" >&2
 		echo "provide them via the compose env_file or -e (never put secrets in config.toml)" >&2
 		exit 2
@@ -111,6 +111,9 @@ precheck() {
 }
 
 main() {
+	# Deliberate deviation from gox-code-rules:shell, which says to reject unknown options: this is a
+	# pass-through wrapper, and every flag it does not claim below belongs to cc-connect. Rejecting
+	# them here would make cc-connect's own CLI unreachable from `docker run`.
 	case "${1:-}" in
 		-h|--help)  usage; exit 0 ;;
 		--version)  echo "agentbox $(cat "${VERSION_FILE}" 2>/dev/null || echo dev)"; exit 0 ;;

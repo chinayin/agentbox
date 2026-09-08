@@ -16,3 +16,9 @@ __pycache__/
 *.bak
 *.bak.*
 .DS_Store
+
+# editors
+.idea/
+.vscode/
+*.swp
+*.swo

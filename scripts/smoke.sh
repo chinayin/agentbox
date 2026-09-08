@@ -35,12 +35,12 @@ USAGE
 
 die_usage() {
 	usage >&2
-	echo "error: $*" >&2
+	echo "Error: $*" >&2
 	exit 1
 }
 
 die_precondition() {
-	echo "error: $*" >&2
+	echo "Error: $*" >&2
 	exit 2
 }
 

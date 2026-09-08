@@ -2,6 +2,7 @@
 #   make image PLATFORM=linux/amd64 AGENT_UID=1001 AGENT_GID=1001   # only when the host owner is not 1000
 #   make image BUILD_ARGS='--build-arg HTTPS_PROXY=http://proxy:port'   # build host behind a proxy
 #   MISE=/path/to/mise make lock                                        # mise >= mise.toml min_version
+# Recipes are silent (gox scaffold rule); `make -n <target>` prints the resolved command.
 
 IMAGE      ?= agentbox
 VERSION    ?= dev
@@ -26,25 +27,25 @@ help: ## Show this help
 image: image-claude image-pi ## Build both images
 
 image-claude: ## Build agentbox:<VERSION> (Claude Code)
-	$(BUILD) --target agentbox-claude -t $(IMAGE):$(VERSION) .
+	@$(BUILD) --target agentbox-claude -t $(IMAGE):$(VERSION) .
 
 image-pi: ## Build agentbox:<VERSION>-pi (pi)
-	$(BUILD) --target agentbox-pi -t $(IMAGE):$(VERSION)-pi .
+	@$(BUILD) --target agentbox-pi -t $(IMAGE):$(VERSION)-pi .
 
 lock: ## Bump every tool to upstream latest and rewrite lock files (network)
-	$(LOCK) --bump
+	@$(LOCK) --bump
 
 lock-refresh: ## Re-resolve URLs/checksums for the locked versions without bumping (network)
-	$(LOCK)
+	@$(LOCK)
 
 test: ## Self-test, no docker, no network
-	bash scripts/test.sh
+	@bash scripts/test.sh
 
 lint: ## shellcheck, warnings block
-	@command -v shellcheck >/dev/null || { echo "error: shellcheck required (brew install shellcheck / apt-get install shellcheck)" >&2; exit 2; }
-	shellcheck -x -S warning entrypoint.sh scripts/*.sh .claude/skills/*/scripts/*.sh
+	@command -v shellcheck >/dev/null || { echo "Error: shellcheck required (brew install shellcheck / apt-get install shellcheck)" >&2; exit 2; }
+	@shellcheck -x -S warning entrypoint.sh scripts/*.sh .claude/skills/*/scripts/*.sh
 
 smoke: ## Runtime smoke test against built images (docker)
-	bash scripts/smoke.sh --image $(IMAGE):$(VERSION) --pi-image $(IMAGE):$(VERSION)-pi $(if $(PLATFORM),--platform $(PLATFORM))
+	@bash scripts/smoke.sh --image $(IMAGE):$(VERSION) --pi-image $(IMAGE):$(VERSION)-pi $(if $(PLATFORM),--platform $(PLATFORM))
 
 check: test lint ## Pre-commit gate, no docker
