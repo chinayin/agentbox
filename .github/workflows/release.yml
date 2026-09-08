@@ -34,10 +34,11 @@ jobs:
     name: Publish multi-arch images to GHCR
     needs: ci
     runs-on: ubuntu-latest
-    # A ceiling against a hung build, not a budget. Baseline: ci.yml builds both images on native
-    # amd64 cold in ~2 min (run 34114631257). This job adds the emulated arm64 half and the gha
-    # cache export, neither of which has been measured yet -- read the real duration off the first
-    # v* run and tighten from there. A trip here is recoverable: re-pushing the tag re-runs this.
+    # A ceiling against a hung build, not a budget. Measured on the v0.1.0 cold run (34254147750):
+    # 13m30s total -- 12m14s for the first variant, whose emulated arm64 half is nearly all of it,
+    # then 31s for -pi, which differs by one tool and hits the cache for everything else. A warm gha
+    # cache is far faster; 20 leaves headroom for the cold case. A trip here is recoverable:
+    # re-pushing the tag re-runs this workflow and overwrites the same image tag.
     timeout-minutes: 20
     permissions:
       contents: read
