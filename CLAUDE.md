@@ -9,6 +9,6 @@
 - 挂载契约有两份（`README.md` 的表 和 `entrypoint.sh --help`），entrypoint 的错误文案还被 `scripts/smoke.sh` 引用。这些重复由 `test.sh` 的 `contract consistency` 组盯着。改单边会红，不要绕过它。
 - 提交前跑 `make check`。`scripts/test.sh` 的断言对应踩过的坑：可以删，但要能说清那个坑为什么不可能再复现；改结构时同步维护。永远 PASS 的断言比没有断言更糟。
 - `make check` 不含 `make smoke`（后者要 docker）。改 entrypoint 的输出后，要么跑 `make smoke`，要么确认 `contract consistency` 已覆盖。
-- 改 `.github/workflows/` 要同步 `docs/TOOLCHAIN.md` §5 的表格和 `docs/ROADMAP.md` 里的 CI 验收项，test.sh 不查这三处。
+- 改 `.github/workflows/` 要同步 `docs/TOOLCHAIN.md` §5 的表格和 `docs/ROADMAP.md` 里的 CI 验收项，test.sh 不查这两处。workflow 本身只被 `workflow invariants` 组盯住并发组和 `workflow_call` 这三条不变量（2026-09-08 的 tag 死锁），其余仍靠人工。
 - 待办只写 `docs/ROADMAP.md`。未经真实环境验证的事项不得在文档里写成已确认。
 - 明文密钥不进 git、文档、对话、报告。模板只放 `xxxx` 占位值，见 `docs/SECRETS.md`。

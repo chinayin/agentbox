@@ -9,7 +9,7 @@
 | 1 | `linux/arm64` 镜像 | lock 已含双架构 URL，只在 x86_64 真实构建过 | `make image PLATFORM=linux/arm64 && make smoke PLATFORM=linux/arm64` 通过 |
 | 2 | `relay send --data-dir` 跨容器 | `MULTI_PROJECT.md` §3 的"挂对端 socket"建立在未验证前提上 | 两容器实验；不通就把该行改为"不可行" |
 | 3 | CI 首跑 | 2026-09-07 已推送到 GitHub 私有仓库，main 上 `ci.yml` 两段已绿（首跑暴露的 smoke 清理 uid 问题已修）；PR、tag、`lock.yml` 三条尚未跑过 | 推送后首个 PR 两段全绿；首个 `v*` tag 让 `release.yml` 先跑 ci 再发布；`lock.yml` 手动触发能开 PR，且 PR 分支上出现由 dispatch 触发的 ci 运行 |
-| 4 | `v*` tag 发布链路首跑 | 从未打过 `v*` tag，GHCR 上目前没有任何 agentbox 镜像；`release.yml` 是否真的先跑 ci 再推镜像未经验证 | 两个多架构镜像在 GHCR 上可被服务器拉取 |
+| 4 | `v*` tag 发布链路首跑 | 2026-09-08 首次推 `v0.1.0`，`release.yml` 秒失败：被调用的 `ci` job 根本没被创建，run 只有 20 秒、无日志。原因是 `ci.yml` 的并发组用了 `${{ github.workflow }}`，而该上下文在 `workflow_call` 里解析成**调用方**的名字，于是父子两个 run 抢同一个组、死锁。已把两边前缀写死并加 `workflow invariants` 三条断言看住；重推 tag 后的结果尚未确认，GHCR 上仍没有任何 agentbox 镜像 | 两个多架构镜像在 GHCR 上可被服务器拉取 |
 | 5 | `deploy` 技能真实主机首跑 | 技能与文档已实现（`.claude/skills/deploy/`），本地测试通过，但从未连过真实主机；依赖上一行先跑通，否则服务器上没有版本可拉 | 在真实主机上 `plan` 与 `deploy` 各跑通一次，且 `status` 能看到容器 running |
 
 ## P2 加固

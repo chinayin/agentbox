@@ -15,8 +15,10 @@ permissions:
   contents: read
 
 # One publish per tag at a time; a re-pushed tag waits for the previous run instead of racing it.
+# Literal prefix, matching ci.yml: the two groups must never collide or the called ci job deadlocks
+# against this run. See the comment in ci.yml.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 env:

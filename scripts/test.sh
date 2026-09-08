@@ -607,6 +607,29 @@ done
 [ -f "$DEMO_ENV" ] && ok "the instance secret template ends in .example" || bad "the instance secret template ends in .example" "missing"
 ls "$ROOT"/examples/*/env "$ROOT/.env" >/dev/null 2>&1 && bad "no real env file in the repo" "an env file without .example was found" || ok "no real env file in the repo"
 
+group "workflow invariants"
+
+WFS=("$ROOT"/.github/workflows/*.yml)
+
+# ${github.workflow} inside a concurrency group resolves to the CALLER's workflow name under
+# workflow_call, so release.yml calling ci.yml produced two identical groups and the called job
+# deadlocked against its own parent run: instant failure, no logs, no ci job. Prefixes stay literal.
+hits="$(grep -n -A2 '^concurrency:' "${WFS[@]}" | grep 'group:' | grep 'github\.workflow' || true)"
+[ -z "$hits" ] && ok "no concurrency group is keyed on github.workflow" \
+	|| bad "no concurrency group is keyed on github.workflow" "use a literal prefix: $hits"
+
+# Even with literal prefixes, the caller and the workflow it calls must not land on the same group.
+ci_grp="$(grep -A1 '^concurrency:' "$ROOT/.github/workflows/ci.yml" | sed -n 's/.*group: *//p')"
+rel_grp="$(grep -A1 '^concurrency:' "$ROOT/.github/workflows/release.yml" | sed -n 's/.*group: *//p')"
+[ -n "$ci_grp" ] && [ -n "$rel_grp" ] && [ "$ci_grp" != "$rel_grp" ] \
+	&& ok "ci.yml and release.yml use different concurrency groups" \
+	|| bad "ci.yml and release.yml use different concurrency groups" "ci=[$ci_grp] release=[$rel_grp]"
+
+# release.yml runs the gate by calling ci.yml, so ci.yml must keep offering workflow_call.
+grep -q '^  workflow_call:' "$ROOT/.github/workflows/ci.yml" \
+	&& ok "ci.yml is callable by release.yml (workflow_call)" \
+	|| bad "ci.yml is callable by release.yml (workflow_call)" "release.yml's needs: ci would never start"
+
 group "shell standards"
 
 # Every shell script in the repo, gitignored skill .env files excluded (they hold no code).

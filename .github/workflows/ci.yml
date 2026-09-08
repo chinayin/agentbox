@@ -22,8 +22,14 @@ permissions:
 
 # Successive pushes to one PR cancel the previous run: every run is a full docker build.
 # Runs on main are never cancelled; they are the historical signal.
+#
+# The prefix is the literal "ci", never ${{ github.workflow }}: inside a workflow_call that context
+# resolves to the CALLER's workflow name, so release.yml calling this file produced the identical
+# group on both sides. The called job then queued behind its own parent run, which holds the group
+# with cancel-in-progress false -- a deadlock GitHub reports as an instant run failure with no logs
+# and no ci job at all. Cost the v0.1.0 tag one attempt on 2026-09-08.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
