@@ -13,7 +13,8 @@ WORKSPACES_ROOT="./runtime/workspaces"
 DRY_RUN=0
 declare -a MOUNTS=()
 
-die()  { echo "error: $*" >&2; exit 1; }
+die()  { echo "Error: $*" >&2; exit 1; }
+warn() { echo "Warning: $*" >&2; }
 info() { echo "scaffold: $*" >&2; }
 
 usage() {
@@ -65,7 +66,7 @@ done
 TEMPLATE="${ROOT}/examples/demo"
 TARGET="${ROOT}/examples/${NAME}"
 [ -f "${TEMPLATE}/config.toml" ] && [ -f "${TEMPLATE}/env.example" ] \
-	|| { echo "error: template ${TEMPLATE} is incomplete (config.toml + env.example required)" >&2; exit 2; }
+	|| { echo "Error: template ${TEMPLATE} is incomplete (config.toml + env.example required)" >&2; exit 2; }
 [ ! -e "${TARGET}" ] || die "${TARGET} already exists; pick another name or remove it first"
 
 WS_DIR="${WORKSPACES_ROOT}/${NAME}"
@@ -109,7 +110,7 @@ info "created ${TARGET}/env.example"
 info "created workspace ${WS_ABS} (owner must match the image's AGENT_UID, default 1000)"
 for m in "${MOUNTS[@]+"${MOUNTS[@]}"}"; do
 	grep -qxF "examples/*/${m}" "${ROOT}/.gitignore" 2>/dev/null \
-		|| info "warning: examples/*/${m} is not in .gitignore; add it before creating the file"
+		|| warn "examples/*/${m} is not in .gitignore; add it before creating the file"
 done
 
 # Snippet on stdout: data only, so it can be redirected or pasted.

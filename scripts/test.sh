@@ -23,7 +23,7 @@ DP_SRC="$ROOT/.claude/skills/deploy/scripts/deploy.sh"
 
 # Controlled PATH: cc-connect is a stub; only python3 (>= 3.11 for tomllib) is linked in, never its
 # whole directory, which may contain real CLIs and break "not installed" assertions.
-python3 -c 'import tomllib' 2>/dev/null || { echo "error: python3 >= 3.11 required (tomllib)" >&2; exit 2; }
+python3 -c 'import tomllib' 2>/dev/null || { echo "Error: python3 >= 3.11 required (tomllib)" >&2; exit 2; }
 mkdir -p "$TMP/bin"
 ln -s "$(command -v python3)" "$TMP/bin/python3"
 printf '#!/bin/sh\nexit 0\n' > "$TMP/bin/cc-connect"; chmod +x "$TMP/bin/cc-connect"
@@ -606,6 +606,41 @@ for f in "$ROOT"/examples/*/config.toml; do
 done
 [ -f "$DEMO_ENV" ] && ok "the instance secret template ends in .example" || bad "the instance secret template ends in .example" "missing"
 ls "$ROOT"/examples/*/env "$ROOT/.env" >/dev/null 2>&1 && bad "no real env file in the repo" "an env file without .example was found" || ok "no real env file in the repo"
+
+group "shell standards"
+
+# Every shell script in the repo, gitignored skill .env files excluded (they hold no code).
+SHELLS=("$ROOT/entrypoint.sh" "$ROOT"/scripts/*.sh "$ROOT"/.claude/skills/*/scripts/*.sh)
+
+# gox-code-rules:shell -- a bare $VAR immediately followed by a non-ASCII byte is read as part of
+# the variable name: with `set -u` the script dies, without it the value silently vanishes. It only
+# bites on paths that print a localized or symbol-bearing string, so it survives every smoke test.
+# Under LC_ALL=C, [^ -~] is exactly "not printable ASCII"; tab is excluded so indentation is ignored.
+hits="$(LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[^\t -~]' "${SHELLS[@]}" 2>/dev/null || true)"
+[ -z "$hits" ] && ok "no bare \$VAR is followed by a non-ASCII byte" \
+	|| bad "no bare \$VAR is followed by a non-ASCII byte" "brace them as \${VAR}: $hits"
+
+# The status prefix has flip-flopped between `error:`, `错误:` and `Error:`. gox-code-rules:shell
+# settles it: capitalized and English, so tools can grep, diff and paste it. Pin it here.
+# The pattern is assembled from ${q} so this line does not match itself -- a self-matching
+# assertion would fail forever and teach nothing.
+q='"'
+pat="${q}error: |${q}warning: |${q}ERR: |${q}WARN: |${q}错误: |${q}警告: "
+hits="$(grep -rnE "${pat}" "${SHELLS[@]}" 2>/dev/null || true)"
+[ -z "$hits" ] && ok "status output uses the Error:/Warning: prefixes" \
+	|| bad "status output uses the Error:/Warning: prefixes" "$hits"
+
+for f in "${SHELLS[@]}"; do
+	n="${f#"$ROOT"/}"
+	[ "$(head -1 "$f")" = "#!/usr/bin/env bash" ] && ok "${n} has the standard shebang" \
+		|| bad "${n} has the standard shebang" "$(head -1 "$f")"
+done
+
+# test.sh is the documented exception: a failing assertion is a counted result, not a fatal error.
+grep -q '^set -euo pipefail$' "$ENTRY" && ok "entrypoint.sh sets -euo pipefail" \
+	|| bad "entrypoint.sh sets -euo pipefail" "missing"
+grep -q '^set -uo pipefail$' "$ROOT/scripts/test.sh" && ok "test.sh sets -uo pipefail (no -e)" \
+	|| bad "test.sh sets -uo pipefail (no -e)" "a failing assertion must not abort the run"
 
 echo
 echo "result: PASS=${PASS} FAIL=${FAIL}"

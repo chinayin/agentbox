@@ -39,8 +39,8 @@ VERBOSE=0
 DRY_RUN=0
 declare -a SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
 
-die()  { echo "error: $*" >&2; exit 1; }
-warn() { echo "warning: $*" >&2; }
+die()  { echo "Error: $*" >&2; exit 1; }
+warn() { echo "Warning: $*" >&2; }
 step() { echo "==> $*" >&2; }
 vlog() { [ "${VERBOSE}" -eq 1 ] && echo "verbose: $*" >&2 || true; }
 
@@ -102,7 +102,7 @@ done
 [ -n "${HOST_KEY_ALIAS}" ] && SSH_OPTS+=(-o "HostKeyAlias=${HOST_KEY_ALIAS}")
 
 for t in ssh rsync; do
-	command -v "${t}" >/dev/null 2>&1 || { echo "error: ${t} is required" >&2; exit 2; }
+	command -v "${t}" >/dev/null 2>&1 || { echo "Error: ${t} is required" >&2; exit 2; }
 done
 
 # All remote commands go through here; ssh exit code passes through.
@@ -122,15 +122,15 @@ probe() {
 		return 0
 	fi
 	if ! ssh "${SSH_OPTS[@]}" "${REMOTE}" true 2>/dev/null; then
-		echo "error: cannot reach ${REMOTE} over SSH (check that the security group allows this machine's egress IP, the port and the key; if direct return traffic is dropped, try --socks)" >&2
+		echo "Error: cannot reach ${REMOTE} over SSH (check that the security group allows this machine's egress IP, the port and the key; if direct return traffic is dropped, try --socks)" >&2
 		exit 2
 	fi
 	rssh 'set -e
 		echo "host: $(hostname) $(uname -m)"
 		. /etc/os-release && echo "os: ${PRETTY_NAME}"
-		command -v docker >/dev/null || { echo "error: no docker on the remote" >&2; exit 2; }
+		command -v docker >/dev/null || { echo "Error: no docker on the remote" >&2; exit 2; }
 		echo "docker: $(docker --version)"
-		docker buildx version 2>/dev/null | head -1 || echo "warning: no buildx; BuildKit secret/--mount may be unavailable" >&2
+		docker buildx version 2>/dev/null | head -1 || echo "Warning: no buildx; BuildKit secret/--mount may be unavailable" >&2
 		echo "CPU: $(nproc)  mem: $(free -g | awk "/Mem/{print \$2}")G  disk: $(df -h / | awk "NR==2{print \$4}") free"
 		for u in https://github.com https://dl.google.com/go/ https://nodejs.org/dist/ https://get.helm.sh/ https://dl.k8s.io/ https://mirrors.aliyun.com/debian/ https://deb.debian.org/debian/ https://npmmirror.com/mirrors/node/; do
 			printf "%-45s " "$u"; curl -sS -m 10 -o /dev/null -w "%{http_code} %{time_total}s\n" "$u" || echo "FAIL"
@@ -186,7 +186,7 @@ remote_make() {
 	local rc=0
 	ssh "${SSH_OPTS[@]}" "${REMOTE}" "${cmd}" 2>&1 | tee "${log}" || rc=$?
 	if [ "${rc}" -ne 0 ]; then
-		echo "error: remote make ${target} failed (rc=${rc}); full log at ${log}" >&2
+		echo "Error: remote make ${target} failed (rc=${rc}); full log at ${log}" >&2
 		return 1
 	fi
 	echo "${log}"

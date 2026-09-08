@@ -33,9 +33,9 @@ FORCE=0
 VERBOSE=0
 DRY_RUN=0
 
-die()  { echo "错误: $*" >&2; exit 1; }
-pre()  { echo "错误: $*" >&2; exit 2; }
-warn() { echo "警告: $*" >&2; }
+die()  { echo "Error: $*" >&2; exit 1; }
+pre()  { echo "Error: $*" >&2; exit 2; }
+warn() { echo "Warning: $*" >&2; }
 step() { echo "==> $*" >&2; }
 vlog() { [ "${VERBOSE}" -eq 1 ] && echo "verbose: $*" >&2 || true; }
 
@@ -190,7 +190,7 @@ check_instance() {
 		grep -qxF "${v}" <<<"${have}" || missing+=("${v}")
 	done
 	if [ "${#missing[@]}" -gt 0 ]; then
-		echo "错误: instance ${name} references environment variables with no value in ${envf}:" >&2
+		echo "Error: instance ${name} references environment variables with no value in ${envf}:" >&2
 		printf '  - %s\n' "${missing[@]}" >&2
 		return 1
 	fi
@@ -243,7 +243,7 @@ check_repo_clean() {
 		warn "deploy repo has uncommitted changes; proceeding because --force was given"
 		return 0
 	fi
-	echo "错误: deploy repo ${REPO} has uncommitted changes:" >&2
+	echo "Error: deploy repo ${REPO} has uncommitted changes:" >&2
 	sed 's/^/  /' <<<"${dirty}" >&2
 	echo "commit them so the deployed state maps to a commit, or pass --force" >&2
 	exit 1
@@ -340,7 +340,7 @@ remote_up() {
 	ssh "${SSH_OPTS[@]}" "${DEPLOY_HOST}" "${cmd}" 2>&1 | tee "${log}" >&2 || rc=$?
 	if [ "${rc}" -ne 0 ]; then
 		umask "${old_umask}"
-		echo "错误: remote compose failed (rc=${rc}); full log at ${log}" >&2
+		echo "Error: remote compose failed (rc=${rc}); full log at ${log}" >&2
 		echo "if the pull was denied, log in on the server once: docker login ghcr.io" >&2
 		return 1
 	fi
@@ -349,7 +349,7 @@ remote_up() {
 	logs="$(ssh "${SSH_OPTS[@]}" "${DEPLOY_HOST}" "cd '${DEPLOY_DIR}' && docker compose logs --tail 40${svc}" 2>&1 | tee -a "${log}")"
 	umask "${old_umask}"
 	if grep -q 'references unset environment variables' <<<"${logs}"; then
-		echo "错误: a container failed its precheck; see ${log}" >&2
+		echo "Error: a container failed its precheck; see ${log}" >&2
 		return 1
 	fi
 	echo "${log}"
