@@ -32,7 +32,11 @@ jobs:
     name: Publish multi-arch images to GHCR
     needs: ci
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # A ceiling against a hung build, not a budget. Baseline: ci.yml builds both images on native
+    # amd64 cold in ~2 min (run 34114631257). This job adds the emulated arm64 half and the gha
+    # cache export, neither of which has been measured yet -- read the real duration off the first
+    # v* run and tighten from there. A trip here is recoverable: re-pushing the tag re-runs this.
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
