@@ -31,7 +31,12 @@ env:
   # image so that agentbox lists only real versions once it goes public -- this one can stay
   # private. Measured payoff: the apt layer alone is 350s of emulated arm64 per cold build, and it
   # is invalidated only by a Dockerfile edit, not by a lock bump.
-  CACHE: ghcr.io/${{ github.repository }}-buildcache
+  # One shared ref, not one per variant: the two variants differ by a single tool and share the
+  # whole toolchain, so per-variant refs would store that bulk twice (~3 GB against Pro's 2 GB
+  # private-package quota; the measured v0.1.0 cache was 1.59 GB deduplicated). The -pi export
+  # overwrites the manifest and drops the claude stage, which costs 12s of arm64 on the next run
+  # and keeps every expensive shared layer.
+  CACHE: ghcr.io/${{ github.repository }}-buildcache:shared
 
 jobs:
   ci:
@@ -88,9 +93,9 @@ jobs:
           tags: ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
           build-args: |
             AGENTBOX_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=registry,ref=${{ env.CACHE }}:claude
+          cache-from: type=registry,ref=${{ env.CACHE }}
           # ignore-error: a registry hiccup must warn, never fail a release that already built.
-          cache-to: type=registry,ref=${{ env.CACHE }}:claude,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
+          cache-to: type=registry,ref=${{ env.CACHE }},mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
 
       - name: Push agentbox:<version>-pi
         uses: docker/build-push-action@v7
@@ -102,5 +107,5 @@ jobs:
           tags: ${{ env.IMAGE }}:${{ steps.version.outputs.version }}-pi
           build-args: |
             AGENTBOX_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=registry,ref=${{ env.CACHE }}:pi
-          cache-to: type=registry,ref=${{ env.CACHE }}:pi,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
+          cache-from: type=registry,ref=${{ env.CACHE }}
+          cache-to: type=registry,ref=${{ env.CACHE }},mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
