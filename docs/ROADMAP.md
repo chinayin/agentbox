@@ -6,7 +6,7 @@
 
 | # | 事项 | 现状 | 验收 |
 |---|---|---|---|
-| 1 | `linux/arm64` 镜像 | 2026-09-08 `v0.1.0` 的 `release.yml` 已在 QEMU 下真实构建出 arm64 层并推上 GHCR，但从未在 arm64 上运行或冒烟过 | `make image PLATFORM=linux/arm64 && make smoke PLATFORM=linux/arm64` 通过 |
+| 1 | `linux/arm64` 镜像 | **2026-09-09 起发布不再构建 arm64**：QEMU 模拟下它是 410 秒构建里的 350 秒（85%），而产物从未在真实 arm64 上运行或冒烟过，等于为未验证的东西付大头。`v0.1.0` 那两个镜像仍含 arm64，之后的版本只有 amd64。**是推迟不是放弃**：`mise.toml` 的 `lockfile_platforms` 仍保留 `linux-arm64`，lock 里 arm64 的 URL 和校验和继续维护（`test.sh` 钉住这条），重开只需改 `release.yml` 的 `PLATFORMS` 一行 | 有真实 arm64 目标机后，`make image PLATFORM=linux/arm64 && make smoke PLATFORM=linux/arm64` 通过 |
 | 2 | `relay send --data-dir` 跨容器 | `MULTI_PROJECT.md` §3 的"挂对端 socket"建立在未验证前提上 | 两容器实验；不通就把该行改为"不可行" |
 | 3 | CI 首跑 | 2026-09-07 推送到 GitHub 私有仓库，main 上 `ci.yml` 两段已绿；2026-09-08 `v0.1.0` 跑通了 tag 这条（第一次因并发组死锁失败，修复见第 4 行）。PR 与 `lock.yml` 两条仍未跑过 | 推送后首个 PR 两段全绿；`lock.yml` 手动触发能开 PR，且 PR 分支上出现由 dispatch 触发的 ci 运行 |
 | 4 | GHCR 镜像被服务器拉取 | 2026-09-08 `v0.1.0` 已发布：`ghcr.io/chinayin/agentbox:0.1.0` 与 `:0.1.0-pi`，两个 manifest list 各含 linux/amd64 与 linux/arm64，publish job 13m30s。首次推 tag 曾秒失败——`ci.yml` 的并发组用了 `${{ github.workflow }}`，该上下文在 `workflow_call` 里解析成**调用方**的名字，父子 run 抢同一个组死锁；已写死前缀并加 `workflow invariants` 三条断言。**但从未有服务器真的拉过这两个镜像**：包默认私有，服务器需要一个带 `read:packages` 的 PAT 做 `docker login ghcr.io`，这是人工步骤，deploy 技能不得自动化 | 目标主机上 `docker pull` 两个镜像成功 |
