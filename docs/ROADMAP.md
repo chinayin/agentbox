@@ -10,7 +10,7 @@
 | 2 | `relay send --data-dir` 跨容器 | `MULTI_PROJECT.md` §3 的"挂对端 socket"建立在未验证前提上 | 两容器实验；不通就把该行改为"不可行" |
 | 3 | CI 首跑 | 2026-09-07 推送到 GitHub 私有仓库，main 上 `ci.yml` 两段已绿；2026-09-08 `v0.1.0` 跑通了 tag 这条（第一次因并发组死锁失败，修复见第 4 行）。PR 与 `lock.yml` 两条仍未跑过 | 推送后首个 PR 两段全绿；`lock.yml` 手动触发能开 PR，且 PR 分支上出现由 dispatch 触发的 ci 运行 |
 | 4 | GHCR 镜像被服务器拉取 | 2026-09-08 `v0.1.0` 已发布：`ghcr.io/chinayin/agentbox:0.1.0` 与 `:0.1.0-pi`，两个 manifest list 各含 linux/amd64 与 linux/arm64，publish job 13m30s。首次推 tag 曾秒失败——`ci.yml` 的并发组用了 `${{ github.workflow }}`，该上下文在 `workflow_call` 里解析成**调用方**的名字，父子 run 抢同一个组死锁；已写死前缀并加 `workflow invariants` 三条断言。**但从未有服务器真的拉过这两个镜像**：包默认私有，服务器需要一个带 `read:packages` 的 PAT 做 `docker login ghcr.io`，这是人工步骤，deploy 技能不得自动化 | 目标主机上 `docker pull` 两个镜像成功 |
-| 5 | registry 构建缓存首跑 | 2026-09-08 把 `release.yml` 的 `type=gha` 换成 `ghcr.io/<repo>-buildcache` 的 registry 缓存，**一次都没跑过**：`GITHUB_TOKEN` 能否创建这个新包、`image-manifest=true` 在 GHCR 上是否被接受，两条都未验证。`ignore-error=true` 保证失败也只是警告，不会让发布变红。另一条未验证的是配额：Pro 的 private 包总配额 2 GB，实测缓存 1.59 GB 加上镜像包本身很可能超出，超了会静默失效 | 一次发版把缓存写进去，下一次发版的日志里出现 `importing cache manifest` 且 apt 层命中，publish job 明显短于 11 分钟 |
+| 5 | registry 构建缓存首跑 | 2026-09-08 把 `release.yml` 的 `type=gha` 换成 `ghcr.io/<repo>-buildcache` 的 registry 缓存，同日仓库与镜像包都已开为 public，配额不再是约束（public 包存储免费无限）。**但这套配置一次都没跑过**：`GITHUB_TOKEN` 能否创建这个新包、`image-manifest=true` 在 GHCR 上是否被接受，两条都未验证。`ignore-error=true` 保证失败也只是警告，不会让发布变红 | 一次发版把缓存写进去，下一次发版的日志里出现 `importing cache manifest` 且 apt 层命中，publish job 明显短于 11 分钟 |
 | 6 | `deploy` 技能真实主机首跑 | 技能与文档已实现（`.claude/skills/deploy/`），本地测试通过，但从未连过真实主机；依赖上一行先跑通，否则服务器上没有版本可拉 | 在真实主机上 `plan` 与 `deploy` 各跑通一次，且 `status` 能看到容器 running |
 
 ## P2 加固

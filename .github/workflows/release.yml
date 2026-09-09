@@ -27,15 +27,13 @@ env:
   # Build cache. type=gha is unusable here: Actions cache is scoped to the ref that wrote it plus
   # the default branch, so a cache written by refs/tags/vX.Y.Z can never be read by the next tag,
   # and ci.yml writes none for main to fall back on. v0.1.0 uploaded 1.59 GB nothing would ever
-  # read. A registry ref is ref-agnostic. It lives in its own package rather than as a tag on the
-  # image so that agentbox lists only real versions once it goes public -- this one can stay
-  # private. Measured payoff: the apt layer alone is 350s of emulated arm64 per cold build, and it
-  # is invalidated only by a Dockerfile edit, not by a lock bump.
+  # read. A registry ref is ref-agnostic, and it lives in its own package so agentbox lists only
+  # real version tags. Measured payoff: the apt layer alone is 350s of emulated arm64 per cold
+  # build, and it is invalidated only by a Dockerfile edit, not by a lock bump.
+  #
   # One shared ref, not one per variant: the two variants differ by a single tool and share the
-  # whole toolchain, so per-variant refs would store that bulk twice (~3 GB against Pro's 2 GB
-  # private-package quota; the measured v0.1.0 cache was 1.59 GB deduplicated). The -pi export
-  # overwrites the manifest and drops the claude stage, which costs 12s of arm64 on the next run
-  # and keeps every expensive shared layer.
+  # whole toolchain, so per-variant refs would store that bulk twice. docker-bake.hcl writes it
+  # from the claude target alone -- one writer, no concurrent pushes racing for the same ref.
   CACHE: ghcr.io/${{ github.repository }}-buildcache:shared
 
 jobs:
@@ -83,29 +81,29 @@ jobs:
       - name: Set up buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Push agentbox:<version>
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          target: agentbox-claude
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
-          build-args: |
-            AGENTBOX_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=registry,ref=${{ env.CACHE }}
-          # ignore-error: a registry hiccup must warn, never fail a release that already built.
-          cache-to: type=registry,ref=${{ env.CACHE }},mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
+      - name: Resolve the build cache
+        id: cache
+        # Only cache while the package is public, where GHCR storage is free and unlimited. Private
+        # packages count against the account's Packages quota (2 GB on Pro, shared by every private
+        # package); going over is refused, and ignore-error turns that into a silent no-op rather
+        # than a visible failure. Better to build cold and say so.
+        run: |
+          if [ "${{ github.event.repository.private }}" = "false" ]; then
+            echo "ref=${CACHE}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=" >> "$GITHUB_OUTPUT"
+            echo "Warning: repository is private, building without a cache to stay inside the Packages quota" >&2
+          fi
 
-      - name: Push agentbox:<version>-pi
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          target: agentbox-pi
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ env.IMAGE }}:${{ steps.version.outputs.version }}-pi
-          build-args: |
-            AGENTBOX_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=registry,ref=${{ env.CACHE }}
-          cache-to: type=registry,ref=${{ env.CACHE }},mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
+      - name: Build and push both images
+        # The same command a developer runs locally, with --push instead of --load. Targets,
+        # platforms and build args all come from docker-bake.hcl, so this file, the Makefile and
+        # ci.yml cannot drift apart. -f is required: without it bake also reads docker-compose.yaml,
+        # whose env_file is gitignored.
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PLATFORMS: linux/amd64,linux/arm64
+          CACHE_FROM: ${{ steps.cache.outputs.ref }}
+          CACHE_TO: ${{ steps.cache.outputs.ref }}
+        run: docker buildx bake -f docker-bake.hcl --push

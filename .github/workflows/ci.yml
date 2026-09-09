@@ -58,7 +58,10 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Build both images
-        # Reuse the Makefile so CI and local builds never diverge in build args
+        # make image drives docker-bake.hcl, the same definition release.yml and local builds use,
+        # so no two of them can diverge on targets, platforms or build args. No cache here: the
+        # amd64-only native build is ~2 min cold, and a read of the release cache would need its own
+        # registry login for a job that PRs from forks also run.
         run: make image
 
       - name: Smoke test
