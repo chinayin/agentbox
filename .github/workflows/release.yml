@@ -24,6 +24,14 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE: ghcr.io/${{ github.repository }}
+  # Build cache. type=gha is unusable here: Actions cache is scoped to the ref that wrote it plus
+  # the default branch, so a cache written by refs/tags/vX.Y.Z can never be read by the next tag,
+  # and ci.yml writes none for main to fall back on. v0.1.0 uploaded 1.59 GB nothing would ever
+  # read. A registry ref is ref-agnostic. It lives in its own package rather than as a tag on the
+  # image so that agentbox lists only real versions once it goes public -- this one can stay
+  # private. Measured payoff: the apt layer alone is 350s of emulated arm64 per cold build, and it
+  # is invalidated only by a Dockerfile edit, not by a lock bump.
+  CACHE: ghcr.io/${{ github.repository }}-buildcache
 
 jobs:
   ci:
@@ -35,10 +43,10 @@ jobs:
     needs: ci
     runs-on: ubuntu-latest
     # A ceiling against a hung build, not a budget. Measured on the v0.1.0 cold run (34254147750):
-    # 13m30s total -- 12m14s for the first variant, whose emulated arm64 half is nearly all of it,
-    # then 31s for -pi, which differs by one tool and hits the cache for everything else. A warm gha
-    # cache is far faster; 20 leaves headroom for the cold case. A trip here is recoverable:
-    # re-pushing the tag re-runs this workflow and overwrites the same image tag.
+    # 13m30s, of which the emulated arm64 apt layer alone was 350s (6.2x its native 57s) and the
+    # dead gha cache export another 165s. With that export replaced by a registry cache a cold run
+    # should land near 11 min and a warm one far below; 20 keeps headroom for the cold case. A trip
+    # here is recoverable: re-pushing the tag re-runs this workflow and overwrites the same tag.
     timeout-minutes: 20
     permissions:
       contents: read
@@ -80,8 +88,9 @@ jobs:
           tags: ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
           build-args: |
             AGENTBOX_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=${{ env.CACHE }}:claude
+          # ignore-error: a registry hiccup must warn, never fail a release that already built.
+          cache-to: type=registry,ref=${{ env.CACHE }}:claude,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
 
       - name: Push agentbox:<version>-pi
         uses: docker/build-push-action@v7
@@ -93,5 +102,5 @@ jobs:
           tags: ${{ env.IMAGE }}:${{ steps.version.outputs.version }}-pi
           build-args: |
             AGENTBOX_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=${{ env.CACHE }}:pi
+          cache-to: type=registry,ref=${{ env.CACHE }}:pi,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true

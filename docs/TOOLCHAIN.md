@@ -67,10 +67,12 @@ lock 永远记上游 URL；构建机出网需要代理时用 docker 的 `HTTPS_P
 |---|---|---|
 | 门禁 | `ci.yml` check | `make check`（test / lint），每个 PR 与 main 推送 |
 | 冒烟 | `ci.yml` smoke | `make image` + `make smoke`，amd64 |
-| 发布 | `release.yml` publish | 只在 `vX.Y.Z` tag：先以 `workflow_call` 跑完 `ci.yml` 两段，再 buildx 双架构推 `ghcr.io/<repo>:X.Y.Z` 与 `-pi` |
+| 发布 | `release.yml` publish | 只在 `vX.Y.Z` tag：先以 `workflow_call` 跑完 `ci.yml` 两段，再 buildx 双架构推 `ghcr.io/<repo>:X.Y.Z` 与 `-pi`；构建缓存走 `ghcr.io/<repo>-buildcache` 的 `:claude` 与 `:pi` 两个 ref |
 | 升级 | `lock.yml` | 每周一或手动 `make lock`，有 diff 开 PR 并 dispatch `ci.yml` 跑该分支，审查后合并 |
 
 版本唯一来源是 git tag：仓库里没有版本文件，也没有版本常量。发版就是在 main 上打 `vX.Y.Z`，CI 把 `X.Y.Z` 作为构建参数写进镜像的 `/etc/agentbox/version` 与 OCI label，`/entrypoint.sh --version` 读它。不打 `latest`，不用 git sha；main 推送不发布。重推同名 tag 会重跑 `release.yml` 并覆盖同名镜像，这是操作者的主动行为。本地 `make image` 固定产出 `dev` tag，`make image VERSION=x` 可以显式指定，但正式版只应由 CI 产出。CI runner 在境外，直连上游。默认 `GITHUB_TOKEN` 推的分支不触发 `pull_request` 事件，`lock.yml` 开完 PR 后用 `gh workflow run ci.yml --ref chore/mise-lock` 补跑（`workflow_dispatch` 不受这条递归限制），不需要 PAT。
+
+构建缓存用 registry 后端而不是 `type=gha`：Actions 缓存的作用域是「写入它的那个 ref 加默认分支」，tag 触发的 run 写进去的缓存下一个 tag 永远读不到，而 `ci.yml` 也不给 main 写任何缓存可供回退——`v0.1.0` 因此白传了 1.59 GB。缓存放在独立的 `-buildcache` 包里而不是镜像的一个 tag 上，这样 `agentbox` 开为 public 后它的 tag 列表里只有真实版本，缓存包本身可以保持私有。两个 `cache-to` 都带 `ignore-error=true`：镜像已经构建并推送成功之后，缓存导出失败不该让发布变红。`test.sh` 的 `workflow invariants` 组盯着这两条，外加并发组和 `workflow_call` 这两条。
 
 手动构建：`make image [PLATFORM=linux/amd64] [BUILD_ARGS='--build-arg HTTPS_PROXY=...']`；本机网络不合适时用 remote-build 技能 `{probe,build,smoke}`（脚本在 `.claude/skills/remote-build/scripts/remote-build.sh`，构建机配置在同目录已忽略的 `.env`），日志落 `runtime/remote-build/`。
 

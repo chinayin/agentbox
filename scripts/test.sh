@@ -625,6 +625,20 @@ rel_grp="$(grep -A1 '^concurrency:' "$ROOT/.github/workflows/release.yml" | sed 
 	&& ok "ci.yml and release.yml use different concurrency groups" \
 	|| bad "ci.yml and release.yml use different concurrency groups" "ci=[$ci_grp] release=[$rel_grp]"
 
+# A cache export that fails (registry hiccup, first run before the package exists, a revoked token)
+# must not fail a release whose images already built and pushed.
+ct="$(grep -h 'cache-to:' "${WFS[@]}" || true)"
+bare="$(printf '%s\n' "$ct" | grep -v 'ignore-error=true' || true)"
+[ -n "$ct" ] && [ -z "$bare" ] && ok "every cache-to carries ignore-error=true" \
+	|| bad "every cache-to carries ignore-error=true" "cache-to=[$ct] missing=[$bare]"
+
+# The cache ref must never be the image ref: mode=max would write cache blobs over the version tag
+# the release just published. Keeping them in separate packages also keeps agentbox's tag list
+# clean once it is public.
+printf '%s\n' "$ct" | grep -q 'env.IMAGE' \
+	&& bad "the build cache never writes to the published image ref" "cache-to targets env.IMAGE" \
+	|| ok "the build cache never writes to the published image ref"
+
 # release.yml runs the gate by calling ci.yml, so ci.yml must keep offering workflow_call.
 grep -q '^  workflow_call:' "$ROOT/.github/workflows/ci.yml" \
 	&& ok "ci.yml is callable by release.yml (workflow_call)" \
