@@ -16,8 +16,9 @@
 |---|---|---|
 | 1 | 对源主机只读 | 源实例在迁移期间继续服务；技能不停它、不改它、不写它 |
 | 2 | 输出写进部署仓库 `hosts/<host>/instances/<name>/`，上线走 `deploy` | 不另造第二条上线路径；`plan` 的占位符校验和脏仓库检查免费获得 |
-| 3 | 技能不复制任何密钥值 | 与 `new-instance` 同一条红线；`.env` 只读键名，密钥值一律 `xxxx` |
-| 4 | 非密钥字面值原样带过去 | 模型名、代理、路径这类 S2 值抄错比抄漏更常见，脚本抄比人抄可靠 |
+| 3 | 密钥与凭据文件原样搬进部署仓库 | 部署仓库本来就持有明文真值（deploy 设计决策 3）；红线只有一条：值不经过 chat、stdout、日志、agentbox 仓库 |
+| 4 | 所有字面值原样带过去 | 模型名、代理、路径抄错比抄漏更常见，脚本抄比人抄可靠 |
+| 7 | 写入范围只有部署仓库 `hosts/<host>/instances/<name>/` | 本机其他目录、agentbox 仓库、源主机一律不写 |
 | 5 | 源侧 `config.toml` 只做行级改写，不重排 | 表结构、注释、顺序都是源侧运维的知识，保留它们，diff 才可读 |
 | 6 | 源可以是本地目录 | 让 `test.sh` 离线跑完全部改写逻辑；也覆盖「先 scp 下来再看」的用法 |
 
@@ -27,17 +28,17 @@
 
 | 采集 | 用途 | 读到什么程度 |
 |---|---|---|
-| `<dir>/config.toml` 全文 | 改写成 agentbox 版 | 全文。它只含占位符与 S2 字面值；若发现形如 `sk-`/`cli_` 开头的长串则报错退出，不落盘 |
-| `<dir>/.env` | 生成目标 `env` 的键清单 | 只读 `=` 左边的键名 |
+| `<dir>/config.toml` 全文 | 改写成 agentbox 版 | 全文；写死在里面的密钥字面值抽到 `env` |
+| `<dir>/.env` 全文 | 原样成为目标 `env` 的基础 | 全文，直接落到目标文件（0600），不经过 stdout |
 | systemd user 单元 | 确认启动方式、日志位置、额外 `Environment=` | 只读键名与路径 |
-| `$HOME/.kube/*`、`$HOME/.ssh/*` | 文件型凭据的挂载清单 | 只读文件名与大小 |
+| `$HOME/.kube/*`、`$HOME/.ssh/*` | 文件型凭据的挂载清单与复制 | 采集阶段只读文件名与大小；`import` 阶段用 rsync 原样复制到实例目录 |
 | `$HOME/.claude/skills/*`、`$HOME/.agents/.skill-lock.json` | 托管层技能清单 | 目录名；lock 里的 `source` 与 `skillPath` |
 | `work_dir` 下 `.claude/skills/*`、`skills/*` | 判断哪些技能随工作区走 | 目录名；`grep -l docker` 统计运行路径是否碰 docker |
 | `work_dir` 的 git 远端 | 工作区如何重建 | URL，去掉 `user:pass@` |
 | 一组常见 CLI 的 `command -v` 与版本 | 工具覆盖对照 | 名字、路径、版本首行 |
 | `id` 与 `$HOME` | UID 对齐提示 | 数字 |
 
-采集脚本里没有 `cat $HOME/.ssh/*`、没有 `/proc/*/environ`、没有 `.env` 的值。这不是靠自觉，`test.sh` 会 grep 脚本源文件断言这些模式不存在。
+采集脚本的 stdout 里没有任何密钥值：`.env` 与凭据文件走 rsync 直接落盘，不进采集输出，也不进 `-v` 诊断。`test.sh` 用带假密钥的 fixture 断言 stdout、stderr 都不含它们。
 
 ## 4. 映射规则
 
@@ -48,31 +49,30 @@
 | 源侧写法 | 目标写法 | 值去哪 |
 |---|---|---|
 | `work_dir = "/data/agents/x"` | `work_dir = "${WORK_DIR}"` | 不进 `env`，compose 提供 |
-| `KEY = "${KEY}"` | 不变 | `env` 里 `KEY=xxxx` |
-| `KEY = "literal"`，KEY 命中密钥名模式 `(TOKEN\|SECRET\|PASSWORD\|_KEY$\|^KEY_)` | `KEY = "${KEY}"` | `env` 里 `KEY=xxxx`，规划表标红「源侧把密钥写死在 config 里」 |
-| `KEY = "literal"`，其余 | `KEY = "${KEY}"` | `env` 里 `KEY=literal` |
+| `KEY = "${KEY}"` | 不变 | `env` 里沿用源侧 `.env` 的值 |
+| `KEY = "literal"` | `KEY = "${KEY}"` | `env` 里 `KEY=literal`，原值；KEY 命中密钥名模式 `(TOKEN\|SECRET\|PASSWORD\|_KEY$\|^KEY_)` 时规划表额外提醒「源侧把密钥写死在 config 里，已抽到 env」 |
 | `KUBECONFIG = "/home/agent/.kube/a.yaml:/home/agent/.kube/b.yaml"` | `KUBECONFIG = "/agent/kubeconfig-a.yaml:/agent/kubeconfig-b.yaml"` | 字面值；每个文件产生一条 `:ro` 挂载 |
 | `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` 字面值 | `${HTTP_PROXY}` 等 | `env` 里带原值，规划表提醒「目标主机的出网路径可能不同，确认后再保留」 |
 
 `allow_from` / `admin_from` 不在这两个表里，原样保留；规划表提醒 open_id 是「用户 × 应用」的组合，换聊天应用必须重新取值。
 
-`.env` 里有而 `config.toml` 没有引用的键（源侧的 `WORK_DIR` 就是一例）不进目标 `env`，规划表列为「丢弃」。
+`.env` 里有而 `config.toml` 没有引用的键（源侧的 `WORK_DIR` 就是一例）不进目标 `env`，规划表列为「丢弃」。目标 `env` 的键序：先源侧 `.env` 的原有顺序，再追加从 config 抽出来的字面值。
 
 ### 4.2 文件型凭据
 
 | 源侧 | 目标挂载 | 配套 |
 |---|---|---|
-| `KUBECONFIG` 引用的每个文件 | `./instances/<name>/kubeconfig-<basename>:/agent/kubeconfig-<basename>:ro` | 见 4.1 |
-| `$HOME/.ssh/` 下的私钥（无 `.pub` 的同名文件） | 第一把挂 `/agent/ssh_key:ro`，多于一把时规划表列出并只挂第一把 | env 表加 `GIT_SSH_COMMAND = "ssh -i /agent/ssh_key -o IdentitiesOnly=yes"`。`known_hosts` 落 `/state/.ssh/`，`HOME` 可写，首连自动写入，不需要进容器初始化 |
+| `KUBECONFIG` 引用的每个文件 | 复制到 `./instances/<name>/kubeconfig-<basename>`（0600），挂 `/agent/kubeconfig-<basename>:ro` | 见 4.1 |
+| `$HOME/.ssh/` 下的私钥（无 `.pub` 的同名文件） | 复制到 `./instances/<name>/ssh_key`（0600）；第一把挂 `/agent/ssh_key:ro`，多于一把时规划表列出并只挂第一把 | env 表加 `GIT_SSH_COMMAND = "ssh -i /agent/ssh_key -o IdentitiesOnly=yes"`。`known_hosts` 落 `/state/.ssh/`，`HOME` 可写，首连自动写入，不需要进容器初始化 |
 | `$HOME/.gnupg` | 不迁 | 规划表说明：签名密钥若需要，另行按 `docs/TOOLS.md` 通道提供 |
 
-凭据文件本身不复制，只在规划表里给出源路径和目标路径，附 `chmod 600` 与属主 UID 提醒。
+复制用 rsync 一次拉取，落地即 `chmod 600`；属主对齐 UID 1000 是 `deploy` 在目标主机上做的事，本机不改属主。规划表列出源路径与目标路径。
 
 ### 4.3 技能
 
 | 源侧 | 去向 |
 |---|---|
-| `$HOME/.claude/skills/<x>`（用户级，`npx skills` 安装） | 复制到 `./instances/<name>/claude/.claude/skills/<x>`，compose 加 `./instances/<name>/claude:/etc/claude-code:ro`。技能是代码不是密钥，复制在决策 3 之外；`.skill-lock.json` 一并复制，供日后 `npx skills update` |
+| `$HOME/.claude/skills/<x>`（用户级，`npx skills` 安装） | 复制到 `./instances/<name>/claude/.claude/skills/<x>`，compose 加 `./instances/<name>/claude:/etc/claude-code:ro`。`.skill-lock.json` 一并复制，供日后 `npx skills update` |
 | `work_dir/.claude/skills/*`、`work_dir/skills/*` | 不动，随工作区 |
 | `$HOME/.claude/settings.json`、`$HOME/.claude.json`、会话 | 不迁，state 卷从空开始 |
 
@@ -94,9 +94,9 @@ import-instance.sh import <source-dir>  --host <host> --name <name>
 ```
 
 - `<source-dir>` 是源实例目录，即含 `config.toml` 与 `.env` 的那个目录。默认它是源主机上的路径，配合技能 `.env` 里的连接信息读取；加 `--local` 则同一个路径参数指向本地目录，不建立任何连接。
-- `import` 复制用户级技能目录时用一次只读的 rsync 拉取（`--local` 时是本地 cp），这是技能对源主机除采集脚本之外唯一的一次访问。
+- `import` 用一次只读的 rsync 拉取 `.env`、凭据文件和用户级技能目录（`--local` 时是本地 cp），这是技能对源主机除采集脚本之外唯一的一次访问。
 - `plan` 只打规划表到 stdout，不写文件。远程形式会连源主机一次（只读）。
-- `import` 先跑 `plan`，再写 `hosts/<host>/instances/<name>/{config.toml,env}` 与 `claude/`，最后把 compose service 片段打到 stdout。目标目录已存在则 exit 1，不覆盖。
+- `import` 先跑 `plan`，再写 `hosts/<host>/instances/<name>/{config.toml,env,kubeconfig-*,ssh_key}` 与 `claude/`，最后把 compose service 片段打到 stdout。目标目录已存在则 exit 1，不覆盖。除这个目录外不写本机任何位置；日志不落盘，因为 `import` 没有需要事后翻阅的远端输出。
 - 部署仓库路径与 `deploy` 共用 `AGENTBOX_DEPLOY_REPO`：flag `--repo` > 环境变量 > `.claude/skills/deploy/.env`。不另起一个变量。
 - 源主机连接信息放 `.claude/skills/import-instance/.env`（gitignored，`.env.example` 入仓）：`AGENTBOX_IMPORT_SOURCE`、`AGENTBOX_IMPORT_KEY`、`AGENTBOX_IMPORT_SOCKS`、`AGENTBOX_IMPORT_HOST_KEY_ALIAS`，形状与 `remote-build` 一致。
 - `--dry-run` 打出将执行的 ssh 与将写的文件路径，不连接、不写。
@@ -105,14 +105,14 @@ import-instance.sh import <source-dir>  --host <host> --name <name>
 
 ## 6. 与 `new-instance` 的分工
 
-两者都产出 `config.toml` + `env` + compose 片段，差别在输入：`new-instance` 输入是意图（叫什么、用哪个 agent、挂哪些文件），从 `examples/demo` 模板出发；`import-instance` 输入是现状，从源侧 `config.toml` 出发。前者写进 `examples/`（模板，入 git），后者写进部署仓库（真值目录，密钥值为 `xxxx` 待填）。
+两者都产出 `config.toml` + `env` + compose 片段，差别在输入：`new-instance` 输入是意图（叫什么、用哪个 agent、挂哪些文件），从 `examples/demo` 模板出发；`import-instance` 输入是现状，从源侧 `config.toml` 出发。前者写进 `examples/`（模板，入 git），后者写进部署仓库（真值目录，值已带到）。
 
 不合并成一个脚本：模板派生与现状改写共享的只有「打 compose 片段」这一小段，合并换来的是双倍 flag 和两套互斥的前置检查。compose 片段格式两处各写一份，`test.sh` 对两份输出做同一组结构断言（service 名、volumes、`env_file`、GHCR 镜像形式），漂移会红。
 
 ## 7. 护栏
 
 1. **源侧只读。** 采集脚本没有任何写操作；`test.sh` 对脚本源文件断言不含 `>`、`tee`、`rm`、`chmod`、`systemctl`（`--help` 的 heredoc 除外，用行首标记跳过）。
-2. **密钥不落盘不上屏。** `.env` 只取键名；`config.toml` 若含形如密钥的长串直接 exit 1 并指出行号，不落盘；`-v` 输出同样过这条检查。`test.sh` 用含假密钥的 fixture 断言。
+2. **密钥只落目标目录，不上屏。** 真值只出现在 `instances/<name>/` 下的文件里（0600）；规划表、compose 片段、`-v` 诊断、stderr 都不含任何值。`test.sh` 用含假密钥的 fixture 断言全部输出不含它们。
 3. **不覆盖。** 目标实例目录已存在 exit 1。
 4. **不碰 compose。** 片段只打 stdout，`hosts/<host>/docker-compose.yaml` 仍由人维护，与 `deploy` 文档一致。
 5. **地址不进仓库。** `.env.example` 只放 `xxxx` 形式，`test.sh` 沿用 `deploy` 组那条「无真实 IP」断言。
@@ -124,10 +124,11 @@ import-instance.sh import <source-dir>  --host <host> --name <name>
 - `--help` exit 0
 - `--local` 的 `plan` 不建立网络连接（给一个不可用的 SOCKS 仍成功）
 - 部署仓库路径三级覆盖与 `deploy` 一致
-- `work_dir` 改成 `${WORK_DIR}`；密钥名字面值改占位符且 `env` 里为 `xxxx`；非密钥字面值改占位符且 `env` 里带原值；`KUBECONFIG` 改成两个 `/agent/` 路径且片段里有两条 `:ro` 挂载
+- `work_dir` 改成 `${WORK_DIR}`；所有字面值改占位符且 `env` 里带原值；源侧 `.env` 的值原样出现在目标 `env`；假 kubeconfig 与 ssh 私钥复制到位且为 0600；`KUBECONFIG` 改成两个 `/agent/` 路径且片段里有两条 `:ro` 挂载
 - 源侧表结构与注释行保留（改写前后非目标表的行逐行相同）
 - `.env` 里多余的 `WORK_DIR` 不进目标 `env`，规划表列为丢弃
-- config 里出现 `sk-` 长串时 exit 1 且不产生文件
+- 假密钥值不出现在 stdout、stderr 与 `-v` 输出
+- 不在 `instances/<name>/` 之外产生任何文件（对临时 HOME 与 agentbox 根做前后快照比对）
 - 目标目录已存在 exit 1
 - 规划表红项含 `bypassPermissions`、`not in lock`、docker 自测三类
 - compose 片段与 `new-instance` 的片段通过同一组结构断言
@@ -141,7 +142,7 @@ import-instance.sh import <source-dir>  --host <host> --name <name>
 
 1. 本机新建私有部署仓库 `agentbox-deploy`，第一个 host 是构建机，`DEPLOY_DIR=/data/agentbox-demo`，`AGENTBOX_VERSION=0.2.0`，镜像 `ghcr.io/chinayin/agentbox`。
 2. `import-instance import /data/agents/litellm-gateway/.cc-connect --host hk-build --name litellm-gateway`。
-3. 人工：飞书用 demo 应用的 id / secret，`allow_from` / `admin_from` 换成该应用下的 open_id；模型网关地址与 token 填入；代理三件在构建机上清空或按需保留；dev kubeconfig 放到位并 `chmod 600`；把 compose 片段贴进 `hosts/hk-build/docker-compose.yaml`；提交。
+3. 人工：飞书那一对换成 demo 应用的 id / secret，`allow_from` / `admin_from` 换成该应用下的 open_id；代理三件在构建机上清空或按需保留；prod kubeconfig 从实例目录删掉，只留 dev；把 compose 片段贴进 `hosts/hk-build/docker-compose.yaml`；提交。其余值已由 import 原样带到。
 4. `deploy plan hk-build litellm-gateway`，看输出；`deploy deploy hk-build litellm-gateway`；`status`。
 5. 在构建机上 clone 工作区仓库到 `workspaces/litellm-gateway/`，属主 1000。
 6. 验收见 §8 末段。
@@ -164,7 +165,7 @@ import-instance.sh import <source-dir>  --host <host> --name <name>
 ## 11. 非目标
 
 - 不迁会话历史与 `~/.claude.json`。state 卷从空开始，这是 `ARCHITECTURE.md` §3 对会话状态的生命周期定义。
-- 不复制任何密钥值，不停源实例，不写源主机。
+- 不停源实例，不写源主机。
 - 不迁 LiteLLM 网关本身，它在 k8s 上。
 - 不处理同一主机上无关的容器栈。
 - 不生成 `docker-compose.yaml`，只打片段。
