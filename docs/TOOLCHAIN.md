@@ -67,7 +67,7 @@ lock 永远记上游 URL；构建机出网需要代理时用 docker 的 `HTTPS_P
 |---|---|---|
 | 门禁 | `ci.yml` check | `make check`（test / lint），每个 PR 与 main 推送 |
 | 冒烟 | `ci.yml` smoke | `make image` + `make smoke`，amd64；无缓存 |
-| 发布 | `release.yml` publish | 只在 `vX.Y.Z` tag：先以 `workflow_call` 跑完 `ci.yml` 两段，再 bake 推 `ghcr.io/<repo>:X.Y.Z` 与 `-pi`，**当前只建 linux/amd64**；构建缓存走 `ghcr.io/<repo>-buildcache:shared` 单个 ref |
+| 发布 | `release.yml` publish | 只在 `vX.Y.Z` tag：先以 `workflow_call` 跑完 `ci.yml` 两段，再 bake 推 `ghcr.io/<repo>:X.Y.Z` 与 `-pi`，linux/amd64 + linux/arm64；构建缓存走 `ghcr.io/<repo>-buildcache:shared` 单个 ref |
 | 升级 | `lock.yml` | 每周一或手动 `make lock`，有 diff 开 PR 并 dispatch `ci.yml` 跑该分支，审查后合并 |
 
 版本唯一来源是 git tag：仓库里没有版本文件，也没有版本常量。发版就是在 main 上打 `vX.Y.Z`，CI 把 `X.Y.Z` 作为构建参数写进镜像的 `/etc/agentbox/version` 与 OCI label，`/entrypoint.sh --version` 读它。不打 `latest`，不用 git sha；main 推送不发布。重推同名 tag 会重跑 `release.yml` 并覆盖同名镜像，这是操作者的主动行为。本地 `make image` 固定产出 `dev` tag，`make image VERSION=x` 可以显式指定，但正式版只应由 CI 产出。CI runner 在境外，直连上游。默认 `GITHUB_TOKEN` 推的分支不触发 `pull_request` 事件，`lock.yml` 开完 PR 后用 `gh workflow run ci.yml --ref chore/mise-lock` 补跑（`workflow_dispatch` 不受这条递归限制），不需要 PAT。
