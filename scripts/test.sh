@@ -300,6 +300,14 @@ else
 	bad "mise config carries update policy only; lock pins exact versions and matches the toml" "TOML does not conform, or the lock and toml tool sets disagree"
 fi
 
+# arm64 builds are deferred, not abandoned (docs/ROADMAP.md row 1): release.yml builds amd64 only
+# because emulating arm64 cost 85% of the build. The lock must keep resolving arm64 URLs anyway, so
+# that re-enabling is one line in release.yml and not a lock regeneration. Dropping linux-arm64
+# from lockfile_platforms would leave the assertion above green while quietly making that true.
+grep -q 'lockfile_platforms = \["linux-x64", "linux-arm64"\]' "$ROOT/mise.toml" \
+	&& ok "the lock still covers linux-arm64 even though it is not built" \
+	|| bad "the lock still covers linux-arm64 even though it is not built" "re-enabling arm64 would need a lock regeneration"
+
 # ---------- image structure invariants ----------
 group "image structure invariants"
 

@@ -1,4 +1,4 @@
-# Release: a vX.Y.Z tag publishes multi-arch images to GHCR, and only after ci.yml is green.
+# Release: a vX.Y.Z tag publishes images to GHCR, and only after ci.yml is green.
 #
 # The version has a single source of truth: the git tag. v1.2.3 -> ghcr.io/<repo>:1.2.3 and :1.2.3-pi.
 # No git-sha tags, no `latest`, no image for main: running instances pin a version, and a floating
@@ -42,7 +42,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   publish:
-    name: Publish multi-arch images to GHCR
+    name: Publish images to GHCR
     needs: ci
     runs-on: ubuntu-latest
     # A ceiling against a hung build, not a budget. Measured on the v0.1.0 cold run (34254147750):
@@ -103,7 +103,11 @@ jobs:
         env:
           IMAGE: ${{ env.IMAGE }}
           VERSION: ${{ steps.version.outputs.version }}
-          PLATFORMS: linux/amd64,linux/arm64
+          # amd64 only, deliberately. arm64 has to be emulated on a GitHub runner and was 350s of
+          # the 410s build -- 85% of the cost -- for a layer that had never been run or smoke
+          # tested on real arm64 hardware. Deferred, not abandoned: mise.lock still resolves
+          # linux-arm64 URLs (test.sh pins that), so re-enabling is this one line.
+          PLATFORMS: linux/amd64
           CACHE_FROM: ${{ steps.cache.outputs.ref }}
           CACHE_TO: ${{ steps.cache.outputs.ref }}
         run: docker buildx bake -f docker-bake.hcl --push
