@@ -9,7 +9,7 @@
 境内构建机出网困难时，用 docker 预定义的代理构建参数，apt、curl、mise 全部认这组变量，且不进入镜像层与历史：
 
 ```bash
-make image BUILD_ARGS='--build-arg HTTPS_PROXY=http://proxy:port --build-arg HTTP_PROXY=http://proxy:port --build-arg NO_PROXY=localhost,127.0.0.1'
+make image BUILD_HTTPS_PROXY=http://proxy:port BUILD_HTTP_PROXY=http://proxy:port BUILD_NO_PROXY=localhost,127.0.0.1
 ```
 
 代理只改传输路径，下载结果仍按 lock 里的 URL 与校验和验证；不能因为下载慢而关 lock。

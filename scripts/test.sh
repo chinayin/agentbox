@@ -625,19 +625,48 @@ rel_grp="$(grep -A1 '^concurrency:' "$ROOT/.github/workflows/release.yml" | sed 
 	&& ok "ci.yml and release.yml use different concurrency groups" \
 	|| bad "ci.yml and release.yml use different concurrency groups" "ci=[$ci_grp] release=[$rel_grp]"
 
-# A cache export that fails (registry hiccup, first run before the package exists, a revoked token)
-# must not fail a release whose images already built and pushed.
-ct="$(grep -h 'cache-to:' "${WFS[@]}" || true)"
-bare="$(printf '%s\n' "$ct" | grep -v 'ignore-error=true' || true)"
+BAKE="$ROOT/docker-bake.hcl"
+
+# A cache export that fails (registry hiccup, a quota refusal, a revoked token) must not fail a
+# release whose images already built and pushed.
+ct="$(grep -h 'cache-to' "$BAKE" || true)"
+bare="$(printf '%s\n' "$ct" | grep -v 'ignore-error=true' | grep 'type=registry' || true)"
 [ -n "$ct" ] && [ -z "$bare" ] && ok "every cache-to carries ignore-error=true" \
 	|| bad "every cache-to carries ignore-error=true" "cache-to=[$ct] missing=[$bare]"
 
 # The cache ref must never be the image ref: mode=max would write cache blobs over the version tag
-# the release just published. Keeping them in separate packages also keeps agentbox's tag list
-# clean once it is public.
-printf '%s\n' "$ct" | grep -q 'env.IMAGE' \
-	&& bad "the build cache never writes to the published image ref" "cache-to targets env.IMAGE" \
+# the release just published.
+grep -q 'CACHE_TO.*IMAGE\|ref=${IMAGE}' "$BAKE" \
+	&& bad "the build cache never writes to the published image ref" "cache-to derives from IMAGE" \
 	|| ok "the build cache never writes to the published image ref"
+
+# Private packages share the account's Packages quota and a refused write degrades to a warning
+# because of ignore-error, so the cache must be switched off while the repository is private.
+grep -q 'github.event.repository.private' "$ROOT/.github/workflows/release.yml" \
+	&& ok "release.yml disables the cache while the repo is private" \
+	|| bad "release.yml disables the cache while the repo is private" "no visibility check found"
+
+# Every bake target must name a stage that exists in the Dockerfile.
+bake_targets="$(sed -n 's/^  target *= *"\([a-z0-9-]*\)".*/\1/p' "$BAKE" | sort -u)"
+[ -n "$bake_targets" ] || bad "bake targets name real Dockerfile stages" "no target = line found in docker-bake.hcl"
+missing=""
+for t in $bake_targets; do
+	grep -qE "^FROM .* AS ${t}\$" "$DF" || missing="${missing}${t} "
+done
+[ -n "$bake_targets" ] && [ -z "$missing" ] && ok "bake targets name real Dockerfile stages" \
+	|| bad "bake targets name real Dockerfile stages" "not a stage in the Dockerfile: ${missing}"
+
+# bake auto-loads docker-compose.yaml when no -f is given, and that file's env_file is gitignored,
+# so every invocation must be explicit or it breaks on a clean clone.
+callers="$(grep -rn 'buildx bake' "$ROOT/Makefile" "${WFS[@]}" | grep -v '\-f docker-bake.hcl' | grep -v '^\s*#' || true)"
+[ -z "$callers" ] && ok "every buildx bake invocation passes -f" \
+	|| bad "every buildx bake invocation passes -f" "$callers"
+
+# Bake populates variables from the environment, so a variable named after a common shell variable
+# silently absorbs it. A developer's HTTPS_PROXY on 127.0.0.1 would point at the build container.
+captured="$(grep -nE '^variable "(HTTP_PROXY|HTTPS_PROXY|NO_PROXY|http_proxy|https_proxy|no_proxy|PATH|HOME|USER)"' "$BAKE" || true)"
+[ -z "$captured" ] && ok "no bake variable is named after a common environment variable" \
+	|| bad "no bake variable is named after a common environment variable" "prefix it with BUILD_: $captured"
 
 # release.yml runs the gate by calling ci.yml, so ci.yml must keep offering workflow_call.
 grep -q '^  workflow_call:' "$ROOT/.github/workflows/ci.yml" \

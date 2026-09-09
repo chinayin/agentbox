@@ -66,17 +66,19 @@ lock 永远记上游 URL；构建机出网需要代理时用 docker 的 `HTTPS_P
 | 阶段 | 位置 | 内容 |
 |---|---|---|
 | 门禁 | `ci.yml` check | `make check`（test / lint），每个 PR 与 main 推送 |
-| 冒烟 | `ci.yml` smoke | `make image` + `make smoke`，amd64 |
+| 冒烟 | `ci.yml` smoke | `make image` + `make smoke`，amd64；无缓存 |
 | 发布 | `release.yml` publish | 只在 `vX.Y.Z` tag：先以 `workflow_call` 跑完 `ci.yml` 两段，再 buildx 双架构推 `ghcr.io/<repo>:X.Y.Z` 与 `-pi`；构建缓存走 `ghcr.io/<repo>-buildcache` 的 `:claude` 与 `:pi` 两个 ref |
 | 升级 | `lock.yml` | 每周一或手动 `make lock`，有 diff 开 PR 并 dispatch `ci.yml` 跑该分支，审查后合并 |
 
 版本唯一来源是 git tag：仓库里没有版本文件，也没有版本常量。发版就是在 main 上打 `vX.Y.Z`，CI 把 `X.Y.Z` 作为构建参数写进镜像的 `/etc/agentbox/version` 与 OCI label，`/entrypoint.sh --version` 读它。不打 `latest`，不用 git sha；main 推送不发布。重推同名 tag 会重跑 `release.yml` 并覆盖同名镜像，这是操作者的主动行为。本地 `make image` 固定产出 `dev` tag，`make image VERSION=x` 可以显式指定，但正式版只应由 CI 产出。CI runner 在境外，直连上游。默认 `GITHUB_TOKEN` 推的分支不触发 `pull_request` 事件，`lock.yml` 开完 PR 后用 `gh workflow run ci.yml --ref chore/mise-lock` 补跑（`workflow_dispatch` 不受这条递归限制），不需要 PAT。
 
+构建定义只有一份：`docker-bake.hcl`。`make image`、`ci.yml` 和 `release.yml` 都调它，target、平台、build args 不会在三处各写一遍。本地是 `docker buildx bake -f docker-bake.hcl --load`，发布是同一条命令换成 `--push`。**`-f` 不能省**：不带 `-f` 时 bake 会连 `docker-compose.yaml` 一起自动加载，而后者的 `env_file` 指向被 gitignore 的路径，干净克隆上会直接失败。代理变量叫 `BUILD_HTTP_PROXY` 而不是 `HTTP_PROXY`，因为 bake 的 variable 会从环境自动取值，同名就会把开发机 shell 里的代理静默烤进构建——而 `127.0.0.1` 在构建容器里指的是容器自己。这几条都由 `test.sh` 的 `workflow invariants` 组看着。
+
 构建缓存用 registry 后端而不是 `type=gha`：Actions 缓存的作用域是「写入它的那个 ref 加默认分支」，tag 触发的 run 写进去的缓存下一个 tag 永远读不到，而 `ci.yml` 也不给 main 写任何缓存可供回退——`v0.1.0` 因此白传了 1.59 GB。缓存放在独立的 `-buildcache` 包里而不是镜像的一个 tag 上，这样 `agentbox` 开为 public 后它的 tag 列表里只有真实版本，缓存包本身可以保持私有。两个变体共用**同一个** ref：它们只差一个工具、共享整条 toolchain，拆成两个 ref 会把这块体积存两份。
 
-配额是这套方案的真实约束。GitHub Packages 只对 **private** 包计费，Pro 档是 2 GB 存储 / 10 GB 月流量，而这 2 GB 是账户下所有 private 包的总和。实测 `v0.1.0` 的缓存去重后 1.59 GB，`agentbox` 镜像包本身又是同一量级，两者相加大概率顶到 2 GB。超额后默认消费上限 $0 会拒绝写入，但 `cache-to` 的 `ignore-error=true` 会让它变成一条警告——**发布照常绿，缓存静默不生效**。看到发版时间没有下降就先查这里。Actions 内部触发的传输不计流量，所以流量不是约束。`agentbox` 开为 public 之后镜像包不再计费，缓存包留在 private 也装得下，这才是这套方案成立的前提。两个 `cache-to` 都带 `ignore-error=true`：镜像已经构建并推送成功之后，缓存导出失败不该让发布变红。`test.sh` 的 `workflow invariants` 组盯着这两条，外加并发组和 `workflow_call` 这两条。
+配额是这套方案的真实约束。GitHub Packages 只对 **private** 包计费，Pro 档是 2 GB 存储 / 10 GB 月流量，而这 2 GB 是账户下所有 private 包的总和。实测 `v0.1.0` 的缓存去重后 1.59 GB，`agentbox` 镜像包本身又是同一量级，两者相加大概率顶到 2 GB。超额后默认消费上限 $0 会拒绝写入，但 `cache-to` 的 `ignore-error=true` 会让它变成一条警告——**发布照常绿，缓存静默不生效**。看到发版时间没有下降就先查这里。Actions 内部触发的传输不计流量，所以流量不是约束。`agentbox` 开为 public 之后镜像包不再计费，缓存包留在 private 也装得下，这才是这套方案成立的前提。`cache-to` 带 `ignore-error=true`：镜像已经构建并推送成功之后，缓存导出失败不该让发布变红。**缓存只在仓库 public 时启用**——private 包共用账户的 Packages 配额（Pro 2 GB），超额写入会被拒，而 `ignore-error` 会把这个拒绝变成静默的空操作。`release.yml` 里有一步显式读 `github.event.repository.private` 来决定开关，private 时打印一行 warning 并冷构建。`test.sh` 的 `workflow invariants` 组盯着这两条，外加并发组和 `workflow_call` 这两条。
 
-手动构建：`make image [PLATFORM=linux/amd64] [BUILD_ARGS='--build-arg HTTPS_PROXY=...']`；本机网络不合适时用 remote-build 技能 `{probe,build,smoke}`（脚本在 `.claude/skills/remote-build/scripts/remote-build.sh`，构建机配置在同目录已忽略的 `.env`），日志落 `runtime/remote-build/`。
+手动构建：`make image [PLATFORM=linux/arm64] [BUILD_HTTPS_PROXY=http://proxy:port]`；本机网络不合适时用 remote-build 技能 `{probe,build,smoke}`（脚本在 `.claude/skills/remote-build/scripts/remote-build.sh`，构建机配置在同目录已忽略的 `.env`），日志落 `runtime/remote-build/`。
 
 ## 6. 镜像结构不变量
 
