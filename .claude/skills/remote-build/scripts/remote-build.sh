@@ -122,7 +122,18 @@ probe() {
 		return 0
 	fi
 	if ! ssh "${SSH_OPTS[@]}" "${REMOTE}" true 2>/dev/null; then
-		echo "Error: cannot reach ${REMOTE} over SSH (check that the security group allows this machine's egress IP, the port and the key; if direct return traffic is dropped, try --socks)" >&2
+		echo "Error: cannot reach ${REMOTE} over SSH" >&2
+		if [ -n "${SOCKS}" ]; then
+			# Suggesting --socks here would be advice to keep doing what just failed. A proxy that
+			# stops routing to this host looks exactly like an unreachable host, and the direct
+			# path may well be working: 2026-09-09 the Clash SOCKS path timed out during banner
+			# exchange while a direct connection succeeded.
+			echo "  the SOCKS proxy ${SOCKS} is in use; try again without it (comment out" >&2
+			echo "  AGENTBOX_REMOTE_SOCKS in ${SKILL_DIR}/.env) to see whether the direct path works" >&2
+		else
+			echo "  check the security group, the port and the key; if direct return traffic is" >&2
+			echo "  dropped, set AGENTBOX_REMOTE_SOCKS or pass --socks" >&2
+		fi
 		exit 2
 	fi
 	rssh 'set -e
