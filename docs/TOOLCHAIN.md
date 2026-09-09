@@ -80,7 +80,9 @@ lock 永远记上游 URL；构建机出网需要代理时用 docker 的 `HTTPS_P
 
 2026-09-09 实测（`v0.2.0`，amd64-only）：冷缓存 publish job **2m12s**，暖缓存 **1m17s**，缓存包 776 MB / 14 层，导出耗时 16s。作为对比，`v0.1.0`（含模拟 arm64、缓存实际无效）是 **13m30s**。首次跑时 `cache-from` 报 `failed to configure registry cache importer: ... not found` 并继续构建——未命中是非致命的。`GITHUB_TOKEN` 能创建 `-buildcache` 这个新包，`image-manifest=true` 被 GHCR 接受，两条原先未验证的都已确认。
 
-**注意收益已经很小**：去掉 arm64 后缓存只省 55 秒，却要每次导出 16 秒并占 776 MB。转为 private 时缓存会自动关闭，冷构建 2m12s 完全可接受，不必为 private 另建预热方案。`cache-to` 带 `ignore-error=true`：镜像已经构建并推送成功之后，缓存导出失败不该让发布变红。**缓存只在仓库 public 时启用**——private 包共用账户的 Packages 配额（Pro 2 GB），超额写入会被拒，而 `ignore-error` 会把这个拒绝变成静默的空操作。`release.yml` 里有一步显式读 `github.event.repository.private` 来决定开关，private 时打印一行 warning 并冷构建。`test.sh` 的 `workflow invariants` 组盯着这两条，外加并发组和 `workflow_call` 这两条。
+`v0.3.0` 把 arm64 加回来之后（Apple Silicon 开发机是真实目标），缓存重新变得值钱：那次 publish 是 **7m50s**，其中 `#20 DONE 334.3s` 就是冷的 arm64 apt 层，而 amd64 那半 20 层全部 CACHED。也就是说缓存的价值几乎完全等于**它能不能省掉模拟 arm64 的那 350 秒**——只建 amd64 时它只值 55 秒，建双架构时它值大头。
+
+换算成决策：只要还发布 arm64，缓存就该留着；哪天只剩 amd64，缓存可以直接删掉不心疼。转为 private 时缓存自动关闭，双架构冷构建约 13 分钟、单架构约 2 分钟，都在可接受范围，不必为 private 另建预热方案。`cache-to` 带 `ignore-error=true`：镜像已经构建并推送成功之后，缓存导出失败不该让发布变红。**缓存只在仓库 public 时启用**——private 包共用账户的 Packages 配额（Pro 2 GB），超额写入会被拒，而 `ignore-error` 会把这个拒绝变成静默的空操作。`release.yml` 里有一步显式读 `github.event.repository.private` 来决定开关，private 时打印一行 warning 并冷构建。`test.sh` 的 `workflow invariants` 组盯着这两条，外加并发组和 `workflow_call` 这两条。
 
 手动构建：`make image [PLATFORM=linux/arm64] [BUILD_HTTPS_PROXY=http://proxy:port]`；本机网络不合适时用 remote-build 技能 `{probe,build,smoke}`（脚本在 `.claude/skills/remote-build/scripts/remote-build.sh`，构建机配置在同目录已忽略的 `.env`），日志落 `runtime/remote-build/`。
 
