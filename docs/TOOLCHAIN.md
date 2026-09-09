@@ -76,7 +76,11 @@ lock 永远记上游 URL；构建机出网需要代理时用 docker 的 `HTTPS_P
 
 构建缓存用 registry 后端而不是 `type=gha`：Actions 缓存的作用域是「写入它的那个 ref 加默认分支」，tag 触发的 run 写进去的缓存下一个 tag 永远读不到，而 `ci.yml` 也不给 main 写任何缓存可供回退——`v0.1.0` 因此白传了 1.59 GB。缓存放在独立的 `-buildcache` 包里而不是镜像的一个 tag 上，这样 `agentbox` 开为 public 后它的 tag 列表里只有真实版本，缓存包本身可以保持私有。两个变体共用**同一个** ref：它们只差一个工具、共享整条 toolchain，拆成两个 ref 会把这块体积存两份。
 
-配额是这套方案的真实约束。GitHub Packages 只对 **private** 包计费，Pro 档是 2 GB 存储 / 10 GB 月流量，而这 2 GB 是账户下所有 private 包的总和。实测 `v0.1.0` 的缓存去重后 1.59 GB，`agentbox` 镜像包本身又是同一量级，两者相加大概率顶到 2 GB。超额后默认消费上限 $0 会拒绝写入，但 `cache-to` 的 `ignore-error=true` 会让它变成一条警告——**发布照常绿，缓存静默不生效**。看到发版时间没有下降就先查这里。Actions 内部触发的传输不计流量，所以流量不是约束。`agentbox` 开为 public 之后镜像包不再计费，缓存包留在 private 也装得下，这才是这套方案成立的前提。`cache-to` 带 `ignore-error=true`：镜像已经构建并推送成功之后，缓存导出失败不该让发布变红。**缓存只在仓库 public 时启用**——private 包共用账户的 Packages 配额（Pro 2 GB），超额写入会被拒，而 `ignore-error` 会把这个拒绝变成静默的空操作。`release.yml` 里有一步显式读 `github.event.repository.private` 来决定开关，private 时打印一行 warning 并冷构建。`test.sh` 的 `workflow invariants` 组盯着这两条，外加并发组和 `workflow_call` 这两条。
+配额是这套方案的真实约束。GitHub Packages 只对 **private** 包计费，Pro 档是 2 GB 存储 / 10 GB 月流量，而这 2 GB 是账户下所有 private 包的总和。实测 `v0.1.0` 的缓存去重后 1.59 GB，`agentbox` 镜像包本身又是同一量级，两者相加大概率顶到 2 GB。超额后默认消费上限 $0 会拒绝写入，但 `cache-to` 的 `ignore-error=true` 会让它变成一条警告——**发布照常绿，缓存静默不生效**。看到发版时间没有下降就先查这里。Actions 内部触发的传输不计流量，所以流量不是约束。`agentbox` 开为 public 之后镜像包不再计费，缓存包留在 private 也装得下，这才是这套方案成立的前提。
+
+2026-09-09 实测（`v0.2.0`，amd64-only）：冷缓存 publish job **2m12s**，暖缓存 **1m17s**，缓存包 776 MB / 14 层，导出耗时 16s。作为对比，`v0.1.0`（含模拟 arm64、缓存实际无效）是 **13m30s**。首次跑时 `cache-from` 报 `failed to configure registry cache importer: ... not found` 并继续构建——未命中是非致命的。`GITHUB_TOKEN` 能创建 `-buildcache` 这个新包，`image-manifest=true` 被 GHCR 接受，两条原先未验证的都已确认。
+
+**注意收益已经很小**：去掉 arm64 后缓存只省 55 秒，却要每次导出 16 秒并占 776 MB。转为 private 时缓存会自动关闭，冷构建 2m12s 完全可接受，不必为 private 另建预热方案。`cache-to` 带 `ignore-error=true`：镜像已经构建并推送成功之后，缓存导出失败不该让发布变红。**缓存只在仓库 public 时启用**——private 包共用账户的 Packages 配额（Pro 2 GB），超额写入会被拒，而 `ignore-error` 会把这个拒绝变成静默的空操作。`release.yml` 里有一步显式读 `github.event.repository.private` 来决定开关，private 时打印一行 warning 并冷构建。`test.sh` 的 `workflow invariants` 组盯着这两条，外加并发组和 `workflow_call` 这两条。
 
 手动构建：`make image [PLATFORM=linux/arm64] [BUILD_HTTPS_PROXY=http://proxy:port]`；本机网络不合适时用 remote-build 技能 `{probe,build,smoke}`（脚本在 `.claude/skills/remote-build/scripts/remote-build.sh`，构建机配置在同目录已忽略的 `.env`），日志落 `runtime/remote-build/`。
 
