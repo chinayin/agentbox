@@ -67,7 +67,7 @@ lock 永远记上游 URL；构建机出网需要代理时用 docker 的 `HTTPS_P
 |---|---|---|
 | 门禁 | `ci.yml` check | `make check`（test / lint），每个 PR 与 main 推送 |
 | 冒烟 | `ci.yml` smoke | `make image` + `make smoke`，amd64；无缓存 |
-| 发布 | `release.yml` publish | 只在 `vX.Y.Z` tag：先以 `workflow_call` 跑完 `ci.yml` 两段，再 bake 推 `ghcr.io/<repo>:X.Y.Z` 与 `-pi`，linux/amd64 + linux/arm64；构建缓存走 `ghcr.io/<repo>-buildcache:shared` 单个 ref |
+| 发布 | `release.yml` publish | 只在 `vX.Y.Z` tag：先以 `workflow_call` 跑完 `ci.yml` 两段，再 bake 推 `ghcr.io/<repo>:X.Y.Z` 与 `-pi`，**只建 linux/amd64**；构建缓存走 `ghcr.io/<repo>-buildcache:shared` 单个 ref |
 | 升级 | `lock.yml` | 每周一或手动 `make lock`，有 diff 开 PR 并 dispatch `ci.yml` 跑该分支，审查后合并 |
 
 版本唯一来源是 git tag：仓库里没有版本文件，也没有版本常量。发版就是在 main 上打 `vX.Y.Z`，CI 把 `X.Y.Z` 作为构建参数写进镜像的 `/etc/agentbox/version` 与 OCI label，`/entrypoint.sh --version` 读它。不打 `latest`，不用 git sha；main 推送不发布。重推同名 tag 会重跑 `release.yml` 并覆盖同名镜像，这是操作者的主动行为。本地 `make image` 固定产出 `dev` tag，`make image VERSION=x` 可以显式指定，但正式版只应由 CI 产出。CI runner 在境外，直连上游。默认 `GITHUB_TOKEN` 推的分支不触发 `pull_request` 事件，`lock.yml` 开完 PR 后用 `gh workflow run ci.yml --ref chore/mise-lock` 补跑（`workflow_dispatch` 不受这条递归限制），不需要 PAT。
@@ -80,9 +80,9 @@ lock 永远记上游 URL；构建机出网需要代理时用 docker 的 `HTTPS_P
 
 2026-09-09 实测（`v0.2.0`，amd64-only）：冷缓存 publish job **2m12s**，暖缓存 **1m17s**，缓存包 776 MB / 14 层，导出耗时 16s。作为对比，`v0.1.0`（含模拟 arm64、缓存实际无效）是 **13m30s**。首次跑时 `cache-from` 报 `failed to configure registry cache importer: ... not found` 并继续构建——未命中是非致命的。`GITHUB_TOKEN` 能创建 `-buildcache` 这个新包，`image-manifest=true` 被 GHCR 接受，两条原先未验证的都已确认。
 
-`v0.3.0` 把 arm64 加回来之后（Apple Silicon 开发机是真实目标），缓存重新变得值钱：那次 publish 是 **7m50s**，其中 `#20 DONE 334.3s` 就是冷的 arm64 apt 层，而 amd64 那半 20 层全部 CACHED。也就是说缓存的价值几乎完全等于**它能不能省掉模拟 arm64 的那 350 秒**——只建 amd64 时它只值 55 秒，建双架构时它值大头。
+`v0.3.0` 把 arm64 加回来那一次，缓存重新变得值钱：那次 publish 是 **7m50s**，其中 `#20 DONE 334.3s` 就是冷的 arm64 apt 层，而 amd64 那半 20 层全部 CACHED。也就是说缓存的价值几乎完全等于**它能不能省掉模拟 arm64 的那 350 秒**——只建 amd64 时它只值 55 秒，建双架构时它值大头。
 
-换算成决策：只要还发布 arm64，缓存就该留着；哪天只剩 amd64，缓存可以直接删掉不心疼。转为 private 时缓存自动关闭，双架构冷构建约 13 分钟、单架构约 2 分钟，都在可接受范围，不必为 private 另建预热方案。`cache-to` 带 `ignore-error=true`：镜像已经构建并推送成功之后，缓存导出失败不该让发布变红。**缓存只在仓库 public 时启用**——private 包共用账户的 Packages 配额（Pro 2 GB），超额写入会被拒，而 `ignore-error` 会把这个拒绝变成静默的空操作。`release.yml` 里有一步显式读 `github.event.repository.private` 来决定开关，private 时打印一行 warning 并冷构建。`test.sh` 的 `workflow invariants` 组盯着这两条，外加并发组和 `workflow_call` 这两条。
+换算成决策：只要还发布 arm64，缓存就该留着；哪天只剩 amd64，缓存可以直接删掉不心疼。**2026-09-09 起就是后一种情况**——`v0.4.0` 之后只建 amd64，缓存只值 55 秒，留着主要是因为它不花钱（public 包免费），而不是因为它重要。转为 private 时缓存自动关闭，双架构冷构建约 13 分钟、单架构约 2 分钟，都在可接受范围，不必为 private 另建预热方案。`cache-to` 带 `ignore-error=true`：镜像已经构建并推送成功之后，缓存导出失败不该让发布变红。**缓存只在仓库 public 时启用**——private 包共用账户的 Packages 配额（Pro 2 GB），超额写入会被拒，而 `ignore-error` 会把这个拒绝变成静默的空操作。`release.yml` 里有一步显式读 `github.event.repository.private` 来决定开关，private 时打印一行 warning 并冷构建。`test.sh` 的 `workflow invariants` 组盯着这两条，外加并发组和 `workflow_call` 这两条。
 
 手动构建：`make image [PLATFORM=linux/arm64] [BUILD_HTTPS_PROXY=http://proxy:port]`；本机网络不合适时用 remote-build 技能 `{probe,build,smoke}`（脚本在 `.claude/skills/remote-build/scripts/remote-build.sh`，构建机配置在同目录已忽略的 `.env`），日志落 `runtime/remote-build/`。
 

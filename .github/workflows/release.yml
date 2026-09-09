@@ -1,4 +1,4 @@
-# Release: a vX.Y.Z tag publishes multi-arch images to GHCR, and only after ci.yml is green.
+# Release: a vX.Y.Z tag publishes images to GHCR, and only after ci.yml is green.
 #
 # The version has a single source of truth: the git tag. v1.2.3 -> ghcr.io/<repo>:1.2.3 and :1.2.3-pi.
 # No git-sha tags, no `latest`, no image for main: running instances pin a version, and a floating
@@ -42,7 +42,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   publish:
-    name: Publish multi-arch images to GHCR
+    name: Publish images to GHCR
     needs: ci
     runs-on: ubuntu-latest
     # A ceiling against a hung build, not a budget. Measured on the v0.1.0 cold run (34254147750):
@@ -103,11 +103,14 @@ jobs:
         env:
           IMAGE: ${{ env.IMAGE }}
           VERSION: ${{ steps.version.outputs.version }}
-          # arm64 is back as of v0.3.0: Apple Silicon dev machines are a real target, which is
-          # what row 1 of docs/ROADMAP.md was waiting for. It is still the expensive half -- 350s
-          # of emulated apt against 57s native on the v0.1.0 run -- so the registry cache earns its
-          # keep again. Drop back to linux/amd64 alone if that ever stops being true.
-          PLATFORMS: linux/amd64,linux/arm64
+          # amd64 only. This line flipped three times on 2026-09-09; the measurements that settled
+          # it, all from real runs: amd64 alone publishes in 2m12s cold and 1m17s warm, while adding
+          # arm64 costs 334s of emulated apt for 7m50s total. That is 6x the wall clock and a 2x
+          # cache (776 MB -> 1523 MB) for an architecture with no deployment target -- a developer
+          # Mac can pull v0.3.0, which keeps its arm64 layers, or build natively with make image.
+          # Re-enable by adding linux/arm64 here; the lock still carries arm64 URLs (test.sh pins
+          # that), so nothing else has to change.
+          PLATFORMS: linux/amd64
           CACHE_FROM: ${{ steps.cache.outputs.ref }}
           CACHE_TO: ${{ steps.cache.outputs.ref }}
         run: docker buildx bake -f docker-bake.hcl --push
