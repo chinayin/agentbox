@@ -6,7 +6,7 @@
 
 | # | 事项 | 现状 | 验收 |
 |---|---|---|---|
-| 1 | `linux/arm64` 镜像 | **2026-09-09 起发布不再构建 arm64**：QEMU 模拟下它是 410 秒构建里的 350 秒（85%），而产物从未在真实 arm64 上运行或冒烟过，等于为未验证的东西付大头。`v0.1.0` 那两个镜像仍含 arm64，之后的版本只有 amd64。**是推迟不是放弃**：`mise.toml` 的 `lockfile_platforms` 仍保留 `linux-arm64`，lock 里 arm64 的 URL 和校验和继续维护（`test.sh` 钉住这条），重开只需改 `release.yml` 的 `PLATFORMS` 一行 | 有真实 arm64 目标机后，`make image PLATFORM=linux/arm64 && make smoke PLATFORM=linux/arm64` 通过 |
+| 1 | `linux/arm64` 镜像在 arm64 上跑通 | arm64 构建 2026-09-09 短暂关闭过一次（当时没有 arm64 目标，而它占 85% 构建成本），同日因 Apple Silicon 开发机是真实目标而在 `v0.3.0` 重新打开。**但产物仍从未在真实 arm64 上运行或冒烟过**——`v0.1.0`/`v0.3.0` 的 arm64 层都是 QEMU 里构建的，没人跑过 | 在 Apple Silicon 上 `docker run --platform linux/arm64 ghcr.io/<repo>:<ver> --version` 成功，并且 `make image PLATFORM=linux/arm64 && make smoke PLATFORM=linux/arm64` 通过 |
 | 2 | `relay send --data-dir` 跨容器 | `MULTI_PROJECT.md` §3 的"挂对端 socket"建立在未验证前提上 | 两容器实验；不通就把该行改为"不可行" |
 | 3 | CI 首跑 | 2026-09-07 推送到 GitHub 私有仓库，main 上 `ci.yml` 两段已绿；2026-09-08 `v0.1.0` 跑通了 tag 这条（第一次因并发组死锁失败，修复见第 4 行）。PR 与 `lock.yml` 两条仍未跑过 | 推送后首个 PR 两段全绿；`lock.yml` 手动触发能开 PR，且 PR 分支上出现由 dispatch 触发的 ci 运行 |
 | 4 | GHCR 镜像被服务器拉取 | 2026-09-09 `v0.2.0` 已发布并**验证过匿名可拉**（仓库与包当前 public，`ghcr.io/v2/.../tags/list` 无凭据可读，manifest 只含 amd64）。发布链路本身已验证：bake `--push`、registry 缓存、amd64-only 三条都跑通。**但仍没有服务器真的拉过**，且若转为 private，服务器会重新需要一个带 `read:packages` 的 PAT 做 `docker login ghcr.io`——这是人工步骤，deploy 技能不得自动化 | 目标主机上 `docker pull` 两个镜像成功 |
