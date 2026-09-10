@@ -160,7 +160,19 @@ chmod 0700 "${TMP}"
 # shellcheck disable=SC2064  # expand TMP now, on purpose
 trap "rm -rf '${TMP}'" EXIT
 
-run_collect() { :; }   # Task 2
+INVENTORY="${TMP}/inventory"
+run_collect() {
+	if [ "${LOCAL}" -eq 1 ]; then
+		step "collecting from local directory ${SRC_DIR}"
+		[ -n "${HOME_DIR}" ] || warn "--home not given; the owner's home will be derived, which usually fails off the source host"
+		bash "${SKILL_DIR}/scripts/collect.sh" ${HOME_DIR:+--home "${HOME_DIR}"} "${SRC_DIR}" > "${INVENTORY}"
+	else
+		step "collecting from ${SOURCE}:${SRC_DIR} (read-only)"
+		vlog "ssh ${SOURCE}: bash -s -- ${SRC_DIR} < collect.sh"
+		ssh "${SSH_OPTS[@]}" "${SOURCE}" "bash -s -- ${HOME_DIR:+--home '${HOME_DIR}' }'${SRC_DIR}'" \
+			< "${SKILL_DIR}/scripts/collect.sh" > "${INVENTORY}"
+	fi
+}
 run_render()  { :; }   # Task 3
 do_import()   { :; }   # Task 4
 

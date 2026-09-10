@@ -650,6 +650,92 @@ bash "$IMPORT" --dry-run frobnicate /srv/x >/dev/null 2>&1; rc=$?
 [ -f "$ROOT/.claude/skills/import-instance/.env.example" ] && ! grep -v '127\.0\.0\.1' "$ROOT/.claude/skills/import-instance/.env.example" | grep -qE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' \
 	&& ok "import-instance .env.example carries no real address" || bad "import-instance .env.example carries no real address" ""
 
+# Fake source: an instance dir, an owner home with credentials and user skills, a workspace with
+# project skills. Values are fixtures and must never show up in any output of the skill.
+src="$im/src/inst"; shome="$im/src/home"; sws="$im/src/ws"
+mkdir -p "$src" "$shome/.kube" "$shome/.ssh" "$shome/.claude/skills/alpha" "$shome/.claude/skills/beta" "$shome/.agents" \
+	"$shome/.config/systemd/user" "$sws/.claude/skills/gamma" "$sws/skills/delta"
+cat > "$src/config.toml" <<TOML
+language = "zh"
+
+[log]
+level = "info"
+
+[[projects]]
+name = "src-ops"
+admin_from = "ou_fixture_admin"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+work_dir = "$sws" # keep this comment
+mode = "bypassPermissions"
+
+[projects.agent.options.env]
+ANTHROPIC_BASE_URL = "\${ANTHROPIC_BASE_URL}"
+ANTHROPIC_AUTH_TOKEN = "\${ANTHROPIC_AUTH_TOKEN}"
+ANTHROPIC_MODEL = "vendor/model-x"
+GATEWAY_ADMIN_TOKEN = "sk-fixture-secret-in-config"
+KUBECONFIG = "$shome/.kube/dev.yaml:$shome/.kube/prod.yaml"
+HTTPS_PROXY = "http://proxy.example.test:7890"
+NO_PROXY = "localhost,127.0.0.1"
+
+[[projects.platforms]]
+type = "feishu"
+
+[projects.platforms.options]
+app_id = "\${FEISHU_APP_ID}"
+app_secret = "\${FEISHU_APP_SECRET}"
+allow_from = "ou_fixture_user"
+TOML
+printf 'FEISHU_APP_ID=cli_fixture\nFEISHU_APP_SECRET=fixture-feishu-secret\nANTHROPIC_BASE_URL=https://gw.example.test\nANTHROPIC_AUTH_TOKEN=sk-fixture-env-secret\nWORK_DIR=%s\n' "$sws" > "$src/.env"
+chmod 600 "$src/.env"
+printf 'apiVersion: v1\nkind: Config\nfixture-kube-dev\n' > "$shome/.kube/dev.yaml"
+printf 'apiVersion: v1\nkind: Config\nfixture-kube-prod\n' > "$shome/.kube/prod.yaml"
+printf -- '-----BEGIN FIXTURE KEY-----\nfixture-ssh-private\n-----END FIXTURE KEY-----\n' > "$shome/.ssh/id_fixture"
+printf 'ssh-ed25519 AAAAfixture user@host\n' > "$shome/.ssh/id_fixture.pub"
+printf 'Host git.example.test\n  IdentityFile ~/.ssh/id_fixture\n' > "$shome/.ssh/config"
+printf 'git.example.test ssh-ed25519 AAAAfixture\n' > "$shome/.ssh/known_hosts"
+chmod 600 "$shome/.kube"/* "$shome/.ssh/id_fixture"
+printf -- '---\nname: alpha\n---\nRuns curl only.\n' > "$shome/.claude/skills/alpha/SKILL.md"
+printf -- '---\nname: beta\n---\nRuns kubectl.\n' > "$shome/.claude/skills/beta/SKILL.md"
+printf '#!/usr/bin/env bash\ndocker compose up -d\n' > "$shome/.claude/skills/beta/test.sh"
+printf '{"skills":{"alpha":{"source":"owner/repo","skillPath":"skills/alpha"}}}\n' > "$shome/.agents/.skill-lock.json"
+printf -- '---\nname: gamma\n---\nThis skill shells out to docker at runtime.\n' > "$sws/.claude/skills/gamma/SKILL.md"
+printf -- '---\nname: delta\n---\nPure helm.\n' > "$sws/skills/delta/SKILL.md"
+printf '[Service]\nExecStart=/usr/lib/node_modules/cc-connect/bin/cc-connect\nEnvironmentFile=%s/.env\nEnvironment="CC_LOG_FILE=/var/log/x"\n' "$src" > "$shome/.config/systemd/user/cc-connect.service"
+COLLECT="$im/skills/import-instance/scripts/collect.sh"
+inv="$(bash "$COLLECT" --home "$shome" "$src" 2>"$im/collect.err")"; rc=$?
+[ "$rc" -eq 0 ] && ok "collect exits 0 on the fixture" || bad "collect exits 0 on the fixture" "rc=$rc $(cat "$im/collect.err")"
+grep -q "^home	$shome$" <<<"$inv" && grep -q "^work_dir	$sws$" <<<"$inv" \
+	&& ok "collect reports home and work_dir" || bad "collect reports home and work_dir" "$inv"
+grep -q '^env_key	FEISHU_APP_SECRET$' <<<"$inv" && ! grep -q 'fixture-feishu-secret' <<<"$inv" \
+	&& ok "collect lists .env key names and no values" || bad "collect lists .env key names and no values" ""
+grep -q '^kube_file	dev.yaml	' <<<"$inv" && grep -q '^kube_file	prod.yaml	' <<<"$inv" \
+	&& ok "collect lists kubeconfig files" || bad "collect lists kubeconfig files" "$inv"
+grep -q '^ssh_key	id_fixture$' <<<"$inv" && grep -q '^ssh_pub	id_fixture.pub$' <<<"$inv" && ! grep -qE '^ssh_key	(config|known_hosts)$' <<<"$inv" \
+	&& ok "collect tells private keys from public keys, config and known_hosts" || bad "collect tells private keys from public keys, config and known_hosts" "$inv"
+! grep -q 'fixture-ssh-private' <<<"$inv" && ! grep -q 'fixture-kube-dev' <<<"$inv" \
+	&& ok "collect never prints credential file contents" || bad "collect never prints credential file contents" ""
+grep -q '^user_skill	alpha	-$' <<<"$inv" && grep -q '^user_skill	beta	test.sh$' <<<"$inv" && grep -q "^skill_lock	$shome/.agents/.skill-lock.json$" <<<"$inv" \
+	&& ok "collect lists user-level skills with docker hits and the skill lock" || bad "collect lists user-level skills with docker hits and the skill lock" "$inv"
+grep -q '^ws_skill	.claude/skills/gamma	SKILL.md$' <<<"$inv" && grep -q '^ws_skill	skills/delta	-$' <<<"$inv" \
+	&& ok "collect lists workspace skills with their docker hits" || bad "collect lists workspace skills with their docker hits" "$inv"
+grep -q '^unit	EnvironmentFile	' <<<"$inv" && grep -q '^unit	Environment	CC_LOG_FILE$' <<<"$inv" \
+	&& ok "collect reads the systemd unit keys, not the values" || bad "collect reads the systemd unit keys, not the values" "$inv"
+grep -q '^tool	git	' <<<"$inv" && ok "collect reports tool versions" || bad "collect reports tool versions" "$inv"
+sed -n '/^__AGENTBOX_CONFIG_BEGIN__$/,/^__AGENTBOX_CONFIG_END__$/p' <<<"$inv" | grep -q '^mode = "bypassPermissions"$' \
+	&& ok "collect embeds config.toml between the markers" || bad "collect embeds config.toml between the markers" ""
+bash "$COLLECT" --home "$shome" "$im/nosuch" >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 2 ] && ok "collect exits 2 when config.toml is missing" || bad "collect exits 2 when config.toml is missing" "rc=$rc"
+# Read-only by construction: no redirection other than to stderr or /dev/null, and none of the
+# commands that change a file system. Comment lines are skipped; the help heredoc must avoid them.
+hits="$(grep -vE '^[[:space:]]*#' "$IM_SRC/collect.sh" | grep -E '(^|[^0-9&])>' | grep -vE '2>/dev/null|>&2|2>&1|</dev/null' || true)"
+[ -z "$hits" ] && ok "collect.sh has no redirection that could write a file" || bad "collect.sh has no redirection that could write a file" "$hits"
+hits="$(grep -vE '^[[:space:]]*#' "$IM_SRC/collect.sh" | grep -nwE 'tee|rm|chmod|chown|systemctl|mkdir|install|mv|cp|truncate|sed -i' || true)"
+[ -z "$hits" ] && ok "collect.sh calls no command that writes" || bad "collect.sh calls no command that writes" "$hits"
+
 group "template hygiene"
 for f in "$ROOT"/examples/*/config.toml; do
 	n="$(basename "$f")"
