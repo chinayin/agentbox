@@ -740,6 +740,9 @@ hits="$(grep -vE '^[[:space:]]*#' "$IM_SRC/collect.sh" | sed -E 's#2>/dev/null|>
 [ -z "$hits" ] && ok "collect.sh has no redirection that could write a file" || bad "collect.sh has no redirection that could write a file" "$hits"
 hits="$(grep -vE '^[[:space:]]*#' "$IM_SRC/collect.sh" | grep -nwE 'tee|rm|chmod|chown|systemctl|mkdir|install|mv|cp|truncate|sed -i' || true)"
 [ -z "$hits" ] && ok "collect.sh calls no command that writes" || bad "collect.sh calls no command that writes" "$hits"
+grep -q 'HOME=/dev/null' "$IM_SRC/collect.sh" \
+	&& ok "collect.sh probes tools with an unwritable HOME so third-party binaries cannot write on the source" \
+	|| bad "collect.sh probes tools with an unwritable HOME so third-party binaries cannot write on the source" ""
 
 # plan on the fixture: read-only, offline, and every mapping decision visible in the text
 AGENTBOX_IMPORT_SOCKS=127.0.0.1:1 bash "$IMPORT" --local --home "$shome" plan "$src" > "$im/plan.out" 2>"$im/plan.err"; rc=$?
@@ -837,6 +840,14 @@ bash "$IMPORT" --local --home "$shome" --repo "$im/repo" import --host h1 --name
 # the imported instance satisfies the deploy skill's local validation as-is
 env -u AGENTBOX_DEPLOY_REPO bash "$DP_SRC" --repo "$im/repo" --dry-run plan h1 srcops >/dev/null 2>"$im/dp.err"; rc=$?
 [ "$rc" -eq 0 ] && ok "deploy plan accepts the imported instance without edits" || bad "deploy plan accepts the imported instance without edits" "rc=$rc $(cat "$im/dp.err")"
+
+# a render failure (unparseable rewritten config.toml) must not leave a half-written target
+mkdir -p "$im/src/broken"
+cp "$src/config.toml" "$src/.env" "$im/src/broken/"
+printf 'broken =\n' >> "$im/src/broken/config.toml"
+bash "$IMPORT" --local --home "$shome" --repo "$im/repo" import --host h1 --name broken "$im/src/broken" >/dev/null 2>"$im/broken.err"; rc=$?
+[ "$rc" -ne 0 ] && grep -q 'Error:' "$im/broken.err" && grep -q 'does not parse' "$im/broken.err" && [ ! -e "$im/repo/hosts/h1/instances/broken" ] \
+	&& ok "a render failure leaves no half-written target directory" || bad "a render failure leaves no half-written target directory" "rc=$rc $(cat "$im/broken.err") $(find "$im/repo/hosts/h1/instances/broken" 2>/dev/null)"
 
 group "template hygiene"
 for f in "$ROOT"/examples/*/config.toml; do

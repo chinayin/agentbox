@@ -165,10 +165,7 @@ run_collect() {
 	if [ "${LOCAL}" -eq 1 ]; then
 		step "collecting from local directory ${SRC_DIR}"
 		[ -n "${HOME_DIR}" ] || warn "--home not given; the owner's home will be derived, which usually fails off the source host"
-		# HOME is scoped to TMP for this call: collect.sh takes the source owner's home via --home,
-		# never $HOME, but the tool-version probes it shells out to (e.g. `go version`) write their
-		# own local telemetry under $HOME as a side effect. Keep that off the real home directory.
-		HOME="${TMP}" bash "${SKILL_DIR}/scripts/collect.sh" ${HOME_DIR:+--home "${HOME_DIR}"} "${SRC_DIR}" > "${INVENTORY}"
+		bash "${SKILL_DIR}/scripts/collect.sh" ${HOME_DIR:+--home "${HOME_DIR}"} "${SRC_DIR}" > "${INVENTORY}"
 	else
 		step "collecting from ${SOURCE}:${SRC_DIR} (read-only)"
 		vlog "ssh ${SOURCE}: bash -s -- ${SRC_DIR} < collect.sh"

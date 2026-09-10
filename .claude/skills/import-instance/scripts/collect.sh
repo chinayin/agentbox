@@ -103,13 +103,17 @@ fi
 PATH="${PATH}:${HOME_DIR}/.local/bin:${HOME_DIR}/go/bin:/usr/local/go/bin:/usr/local/bin"
 declare -a tmo=()
 command -v timeout >/dev/null 2>&1 && tmo=(timeout 10)
+# HOME=/dev/null (a path nothing, not even root, can create a directory under) so a probed
+# binary's own first-run side effects (e.g. go's local telemetry init) fail silently instead of
+# writing under the source host login user's real home; the source host stays read-only throughout.
+declare -a noh=(env HOME=/dev/null XDG_CONFIG_HOME=/dev/null XDG_CACHE_HOME=/dev/null)
 for t in node npm go python3 pip3 uv kubectl helm helmfile kustomize aws aliyun gh glab git jq yq rg fd mise claude cc-connect pi codex cloudflared docker; do
 	p="$(command -v "${t}" 2>/dev/null)" || continue
 	case "${t}" in
-		go)      v="$("${tmo[@]+"${tmo[@]}"}" go version 2>&1 | head -1)" ;;
-		kubectl) v="$("${tmo[@]+"${tmo[@]}"}" kubectl version --client 2>/dev/null | head -1)" ;;
-		helm)    v="$("${tmo[@]+"${tmo[@]}"}" helm version --short 2>&1 | head -1)" ;;
-		*)       v="$("${tmo[@]+"${tmo[@]}"}" "${t}" --version 2>&1 | head -1)" ;;
+		go)      v="$("${tmo[@]+"${tmo[@]}"}" "${noh[@]}" go version 2>&1 | head -1)" ;;
+		kubectl) v="$("${tmo[@]+"${tmo[@]}"}" "${noh[@]}" kubectl version --client 2>/dev/null | head -1)" ;;
+		helm)    v="$("${tmo[@]+"${tmo[@]}"}" "${noh[@]}" helm version --short 2>&1 | head -1)" ;;
+		*)       v="$("${tmo[@]+"${tmo[@]}"}" "${noh[@]}" "${t}" --version 2>&1 | head -1)" ;;
 	esac || v="?"
 	rec tool "${t}" "${p}" "${v:0:80}"
 done
