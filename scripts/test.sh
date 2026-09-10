@@ -605,6 +605,51 @@ out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run 
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run status 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && ok "status without a host exits 1" || bad "status without a host exits 1" "rc=$rc"
 
+# ---------- import-instance skill ----------
+# Reverse of new-instance: reads a running bare-metal cc-connect instance and writes the agentbox
+# shape into the deploy repo. Fixture is a fake source instance under mktemp; nothing dials out.
+group "import-instance skill"
+IM_SRC="$ROOT/.claude/skills/import-instance/scripts"
+im="$TMP/im"; mkdir -p "$im/skills/import-instance/scripts" "$im/skills/deploy" "$im/repo/hosts/h1/instances" "$im/other/hosts/h2/instances"
+cp "$IM_SRC"/* "$im/skills/import-instance/scripts/"
+printf 'AGENTBOX_IMPORT_SOURCE=user@src.example.test\nAGENTBOX_IMPORT_KEY=~/nope.pem\n' > "$im/skills/import-instance/.env"
+printf 'AGENTBOX_DEPLOY_REPO=%s\n' "$im/repo" > "$im/skills/deploy/.env"
+printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.2.0\n' > "$im/repo/hosts/h1/host.env"
+printf 'DEPLOY_HOST=user@h2.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.2.0\n' > "$im/other/hosts/h2/host.env"
+IMPORT="$im/skills/import-instance/scripts/import-instance.sh"
+bash "$IMPORT" --help >/dev/null 2>&1 && ok "import-instance --help exits 0" || bad "import-instance --help exits 0" ""
+out="$(env -u AGENTBOX_IMPORT_SOURCE -u AGENTBOX_DEPLOY_REPO bash "$IMPORT" --dry-run plan /srv/x 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'user@src.example.test' <<<"$out" && grep -q 'collect.sh' <<<"$out" \
+	&& ok "import-instance reads the source host from the skill .env and plans an ssh collect" || bad "import-instance reads the source host from the skill .env and plans an ssh collect" "rc=$rc $out"
+out="$(AGENTBOX_IMPORT_SOURCE=other@env.example.test bash "$IMPORT" --dry-run plan /srv/x 2>&1)"
+grep -q 'other@env.example.test' <<<"$out" && ! grep -q 'src.example.test' <<<"$out" \
+	&& ok "environment overrides the import-instance skill .env" || bad "environment overrides the import-instance skill .env" "$out"
+out="$(bash "$IMPORT" --source flag@flag.example.test --dry-run plan /srv/x 2>&1)"
+grep -q 'flag@flag.example.test' <<<"$out" && ok "flag overrides the import-instance skill .env" || bad "flag overrides the import-instance skill .env" "$out"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$IMPORT" --dry-run import --host h1 --name x /srv/x 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "$im/repo/hosts/h1/instances/x" <<<"$out" \
+	&& ok "import-instance reads the deploy repo path from the deploy skill .env" || bad "import-instance reads the deploy repo path from the deploy skill .env" "rc=$rc $out"
+out="$(AGENTBOX_DEPLOY_REPO="$im/other" bash "$IMPORT" --dry-run import --host h2 --name x /srv/x 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "$im/other/hosts/h2" <<<"$out" && ! grep -q "$im/repo" <<<"$out" \
+	&& ok "environment overrides the deploy repo path for import-instance" || bad "environment overrides the deploy repo path for import-instance" "rc=$rc $out"
+out="$(bash "$IMPORT" --repo "$im/other" --dry-run import --host h2 --name x /srv/x 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "$im/other/hosts/h2" <<<"$out" \
+	&& ok "--repo overrides the deploy repo path for import-instance" || bad "--repo overrides the deploy repo path for import-instance" "rc=$rc $out"
+mv "$im/skills/import-instance/.env" "$im/skills/import-instance/.env.off"
+env -u AGENTBOX_IMPORT_SOURCE bash "$IMPORT" --dry-run plan /srv/x >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "import-instance without any source host exits 1" || bad "import-instance without any source host exits 1" "rc=$rc"
+mv "$im/skills/import-instance/.env.off" "$im/skills/import-instance/.env"
+env -u AGENTBOX_DEPLOY_REPO bash "$IMPORT" --dry-run import --host nosuch --name x /srv/x >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 2 ] && ok "import-instance rejects a host missing from the deploy repo (exit 2)" || bad "import-instance rejects a host missing from the deploy repo (exit 2)" "rc=$rc"
+bash "$IMPORT" --dry-run import --host h1 /srv/x >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "import without --name exits 1" || bad "import without --name exits 1" "rc=$rc"
+bash "$IMPORT" --dry-run import --host h1 --name Bad_Name /srv/x >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "import rejects an invalid instance name (exit 1)" || bad "import rejects an invalid instance name (exit 1)" "rc=$rc"
+bash "$IMPORT" --dry-run frobnicate /srv/x >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "import-instance rejects an unknown action (exit 1)" || bad "import-instance rejects an unknown action (exit 1)" "rc=$rc"
+[ -f "$ROOT/.claude/skills/import-instance/.env.example" ] && ! grep -v '127\.0\.0\.1' "$ROOT/.claude/skills/import-instance/.env.example" | grep -qE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' \
+	&& ok "import-instance .env.example carries no real address" || bad "import-instance .env.example carries no real address" ""
+
 group "template hygiene"
 for f in "$ROOT"/examples/*/config.toml; do
 	n="$(basename "$f")"
