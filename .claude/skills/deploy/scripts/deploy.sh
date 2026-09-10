@@ -331,7 +331,12 @@ remote_up() {
 	# The compose snippet declares networks: agentbox: external: true, so the network must exist
 	# before the first `docker compose up` on a fresh host; the inspect/create pair is idempotent.
 	local ensure_net="docker network inspect agentbox >/dev/null 2>&1 || docker network create agentbox"
-	local cmd="${ensure_net} && cd '${DEPLOY_DIR}' && docker compose pull${svc} && docker compose up -d${svc} && docker compose ps"
+	# --force-recreate is what makes a config change land. config.toml and env reach the container
+	# as bind mounts, so compose sees an unchanged service definition and leaves the container
+	# running -- and rsync replaces the file rather than rewriting it, so even the running
+	# container keeps reading the old inode. Without this, plan promises a restart that never
+	# happens and the deploy silently has no effect.
+	local cmd="${ensure_net} && cd '${DEPLOY_DIR}' && docker compose pull${svc} && docker compose up -d --force-recreate${svc} && docker compose ps"
 	if [ "${DRY_RUN}" -eq 1 ]; then
 		echo "plan: ensure docker network agentbox exists on the host" >&2
 		echo "plan: ssh ${DEPLOY_HOST} -- ${cmd}" >&2

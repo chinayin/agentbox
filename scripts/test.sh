@@ -602,6 +602,11 @@ out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run 
 [ "$rc" -eq 0 ] && ok "deploy --dry-run exits 0" || bad "deploy --dry-run exits 0" "rc=$rc $out"
 grep -q 'rsync' <<<"$out" && grep -q 'docker compose up' <<<"$out" && grep -q 'chmod 600' <<<"$out" \
 	&& ok "dry-run shows rsync, compose and the 0600 step" || bad "dry-run shows rsync, compose and the 0600 step" "$out"
+# 2026-09-10: plain `compose up -d` left the container running on a config-only change, so the
+# first real deploy shipped a config the container never read. config.toml is a bind mount and
+# rsync swaps the inode; only a recreate picks it up.
+grep -q 'docker compose up -d --force-recreate' <<<"$out" \
+	&& ok "compose up recreates containers so a config-only change lands" || bad "compose up recreates containers so a config-only change lands" "$out"
 grep -q 'docker network' <<<"$out" && grep -q 'agentbox' <<<"$out" \
 	&& ok "dry-run shows the deploy skill ensuring the agentbox network exists" || bad "dry-run shows the deploy skill ensuring the agentbox network exists" "$out"
 grep -q 'chown -R 1000:1000' <<<"$out" && grep -q 'config.toml and claude/ excepted' <<<"$out" \
