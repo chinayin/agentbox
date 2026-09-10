@@ -165,7 +165,10 @@ run_collect() {
 	if [ "${LOCAL}" -eq 1 ]; then
 		step "collecting from local directory ${SRC_DIR}"
 		[ -n "${HOME_DIR}" ] || warn "--home not given; the owner's home will be derived, which usually fails off the source host"
-		bash "${SKILL_DIR}/scripts/collect.sh" ${HOME_DIR:+--home "${HOME_DIR}"} "${SRC_DIR}" > "${INVENTORY}"
+		# HOME is scoped to TMP for this call: collect.sh takes the source owner's home via --home,
+		# never $HOME, but the tool-version probes it shells out to (e.g. `go version`) write their
+		# own local telemetry under $HOME as a side effect. Keep that off the real home directory.
+		HOME="${TMP}" bash "${SKILL_DIR}/scripts/collect.sh" ${HOME_DIR:+--home "${HOME_DIR}"} "${SRC_DIR}" > "${INVENTORY}"
 	else
 		step "collecting from ${SOURCE}:${SRC_DIR} (read-only)"
 		vlog "ssh ${SOURCE}: bash -s -- ${SRC_DIR} < collect.sh"
@@ -180,7 +183,40 @@ run_render() {
 	[ -n "${HOST}" ] && hargs=(--host "${HOST}")
 	python3 "${SKILL_DIR}/scripts/render.py" --inventory "${INVENTORY}" "${LOCKS[@]}" --name "${NAME:-instance}" "${hargs[@]+"${hargs[@]}"}" --image "${IMAGE}"
 }
-do_import()   { :; }   # Task 4
+# Fetch one path from the source into the target. kind: cred (file, 0600) / file / dir.
+fetch() {
+	local kind="$1" src="$2" dst="$3"
+	vlog "fetch ${kind} ${src} -> ${dst}"
+	install -d -m 0700 "$(dirname "${dst}")"
+	if [ "${LOCAL}" -eq 1 ]; then
+		if [ "${kind}" = dir ]; then cp -R "${src%/}/." "${dst}"; else cp "${src}" "${dst}"; fi
+	else
+		rsync -a -e "${TMP}/ssh" "${SOURCE}:${src}" "${dst}"
+	fi
+	[ "${kind}" = cred ] && chmod 600 "${dst}"
+	return 0
+}
+
+do_import() {
+	[ ! -e "${TARGET}" ] || die "${TARGET} already exists; remove it or pick another name"
+	[ "${LOCAL}" -eq 1 ] || make_rsync_ssh "${TMP}/ssh"
+	step "writing ${TARGET}"
+	install -d -m 0700 "${TARGET}"
+	trap 'rm -rf "${TARGET}"' ERR
+	# .env first: rendering appends the lifted literals to it. It goes straight to disk.
+	fetch cred "${SRC_DIR}/.env" "${TARGET}/env"
+	python3 "${SKILL_DIR}/scripts/render.py" --inventory "${INVENTORY}" "${LOCKS[@]}" \
+		--name "${NAME}" --host "${HOST}" --image "${IMAGE}" --out "${TARGET}" --copy-list "${TMP}/copies"
+	local kind src dst n=0
+	while IFS=$'\t' read -r kind src dst; do
+		[ -n "${kind}" ] || continue
+		fetch "${kind}" "${src}" "${TARGET}/${dst}"
+		n=$((n + 1))
+	done < "${TMP}/copies"
+	step "imported ${NAME}: config.toml, env and ${n} credential/skill entries under ${TARGET}"
+	echo "next: review env (chat app, proxy, kubeconfig set), paste the snippet into ${HOST_DIR}/docker-compose.yaml, commit, then: deploy.sh plan ${HOST} ${NAME}" >&2
+	trap - ERR
+}
 
 case "${ACTION}" in
 	plan)

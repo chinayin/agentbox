@@ -348,18 +348,82 @@ def main():
     new_config, ctx = rewrite(config, recs)
     plan = build_plan(recs, ctx, lock, a.host, a.name)
     if a.out:
-        write_out(a, recs, new_config, ctx)   # Task 4
+        write_out(a, recs, new_config, ctx)
     sys.stdout.write(plan)
     if a.out:
-        sys.stdout.write(snippet(a, recs, ctx))  # Task 4
+        sys.stdout.write(snippet(a, recs, ctx))
 
 
 def write_out(a, recs, new_config, ctx):
-    die("--out is not implemented yet")
+    out = a.out
+    if not a.copy_list:
+        die("--copy-list is required with --out")
+    env_path = os.path.join(out, "env")
+    if not os.path.isfile(env_path):
+        die(f"{env_path} must exist before rendering (copied from the source .env)", 2)
+    home = field(recs, "home")
+    text = "\n".join(new_config) + "\n"
+    try:
+        import tomllib
+        tomllib.loads(text)
+    except ModuleNotFoundError:
+        print("Warning: python3 < 3.11, skipping the TOML parse check", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 - report and stop, whatever tomllib raised
+        die(f"rewritten config.toml does not parse: {exc}")
+    with open(os.path.join(out, "config.toml"), "w", encoding="utf-8") as fh:
+        fh.write(text)
+    # env: keep the source file, drop unreferenced keys, append lifted literals
+    with open(env_path, encoding="utf-8") as fh:
+        src_lines = fh.read().splitlines()
+    drop = set(ctx["discard"])
+    kept = []
+    for line in src_lines:
+        m = re.match(r"^(?:export )?([A-Za-z_][A-Za-z0-9_]*)=", line)
+        if m and m.group(1) in drop:
+            continue
+        kept.append(line)
+    if ctx["literals"]:
+        kept.append("")
+        kept.append("# Lifted from the source config.toml by import-instance; config now references ${NAME}.")
+        for k, v in ctx["literals"]:
+            kept.append(f"{k}={v}")
+    with open(env_path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(kept).rstrip("\n") + "\n")
+    os.chmod(env_path, 0o600)
+    # copy list for the driver: credentials as 0600 files, skills as directories
+    rows = []
+    for src, dst in ctx["kube"]:
+        rows.append(("cred", src, dst))
+    ssh_keys = [r[0] for r in fields(recs, "ssh_key")]
+    if ssh_keys:
+        rows.append(("cred", f"{home}/.ssh/{ssh_keys[0]}", "ssh_key"))
+    for s in fields(recs, "user_skill"):
+        rows.append(("dir", f"{home}/.claude/skills/{s[0]}/", f"claude/.claude/skills/{s[0]}/"))
+    lock_path = field(recs, "skill_lock")
+    if lock_path:
+        rows.append(("file", lock_path, "claude/.skill-lock.json"))
+    with open(a.copy_list, "w", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write("\t".join(r) + "\n")
 
 
 def snippet(a, recs, ctx):
-    return ""
+    n = a.name
+    L = ["", "  # --- add under services: ---", f"  {n}:", f"    image: {a.image}:${{AGENTBOX_VERSION}}",
+         f"    container_name: agentbox-{n}", "    restart: unless-stopped", "    init: true",
+         "    stop_grace_period: 30s", "    security_opt: [no-new-privileges:true]", "    cap_drop: [ALL]",
+         "    deploy: {resources: {limits: {pids: 512}}}", "    networks: [agentbox]",
+         "    env_file:", f"      - ./instances/{n}/env", "    volumes:",
+         f"      - ./instances/{n}/config.toml:/agent/config.toml:ro", f"      - ./workspaces/{n}:/workspace",
+         f"      - {n}-state:/state", f"      - {n}-cache:/cache"]
+    for dst, mount in ctx["mounts"]:
+        L.append(f"      - ./instances/{n}/{dst}:{mount}:ro")
+    if fields(recs, "user_skill"):
+        L.append(f"      - ./instances/{n}/claude:/etc/claude-code:ro")
+    L += ["", "  # --- add under volumes: ---", f"  {n}-state:", f"  {n}-cache:", "",
+          "  # --- add once at top level (deploy creates the network on the host) ---",
+          "networks:", "  agentbox:", "    external: true", ""]
+    return "\n".join(L)
 
 
 if __name__ == "__main__":

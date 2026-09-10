@@ -792,6 +792,52 @@ out="$(python3 "$IM_SRC/render.py" --inventory "$im/nosuch.inv" --lock "$ROOT/mi
 # ~/.gnupg keeps its own line and its own reason, distinct from the state-volume note
 grep -qE '\.gnupg.*docs/TOOLS\.md' <<<"$plan" && ok "plan explains the .gnupg credential channel separately" || bad "plan explains the .gnupg credential channel separately" "$plan"
 
+# import on the fixture: files land only under the target, secrets only in files, snippet on stdout
+touch "$im/marker"; sleep 1
+tgt="$im/repo/hosts/h1/instances/srcops"
+HOME="$im/fakehome" AGENTBOX_DEPLOY_REPO="$im/repo" bash "$IMPORT" --local --home "$shome" import --host h1 --name srcops "$src" > "$im/import.out" 2>"$im/import.err"; rc=$?
+[ "$rc" -eq 0 ] && ok "local import exits 0" || bad "local import exits 0" "rc=$rc $(cat "$im/import.err")"
+[ -f "$tgt/config.toml" ] && [ -f "$tgt/env" ] && [ -f "$tgt/kubeconfig-dev.yaml" ] && [ -f "$tgt/kubeconfig-prod.yaml" ] && [ -f "$tgt/ssh_key" ] \
+	&& [ -f "$tgt/claude/.claude/skills/alpha/SKILL.md" ] && [ -f "$tgt/claude/.claude/skills/beta/test.sh" ] && [ -f "$tgt/claude/.skill-lock.json" ] \
+	&& ok "import writes config, env, credentials and the managed skills layer" || bad "import writes config, env, credentials and the managed skills layer" "$(find "$tgt" 2>/dev/null)"
+[ "$(stat -f %Lp "$tgt/env" 2>/dev/null || stat -c %a "$tgt/env")" = 600 ] && [ "$(stat -f %Lp "$tgt/ssh_key" 2>/dev/null || stat -c %a "$tgt/ssh_key")" = 600 ] \
+	&& [ "$(stat -f %Lp "$tgt/kubeconfig-dev.yaml" 2>/dev/null || stat -c %a "$tgt/kubeconfig-dev.yaml")" = 600 ] \
+	&& ok "env and credential files land as 0600" || bad "env and credential files land as 0600" ""
+grep -q '^FEISHU_APP_SECRET=fixture-feishu-secret$' "$tgt/env" && grep -q '^ANTHROPIC_MODEL=vendor/model-x$' "$tgt/env" \
+	&& grep -q '^GATEWAY_ADMIN_TOKEN=sk-fixture-secret-in-config$' "$tgt/env" && grep -q '^HTTPS_PROXY=http://proxy.example.test:7890$' "$tgt/env" \
+	&& ok "env keeps the source values and gains the lifted literals" || bad "env keeps the source values and gains the lifted literals" "$(sed 's/=.*/=<v>/' "$tgt/env")"
+! grep -q '^WORK_DIR=' "$tgt/env" && ok "env drops WORK_DIR" || bad "env drops WORK_DIR" ""
+grep -q 'fixture-ssh-private' "$tgt/ssh_key" && grep -q 'fixture-kube-prod' "$tgt/kubeconfig-prod.yaml" \
+	&& ok "credential files are copied verbatim" || bad "credential files are copied verbatim" ""
+python3 - "$tgt/config.toml" <<'PY' && ok "rewritten config parses and carries the new shape" || bad "rewritten config parses and carries the new shape" "see config.toml"
+import sys, tomllib
+c = tomllib.load(open(sys.argv[1], "rb")); p = c["projects"][0]; o = p["agent"]["options"]; e = o["env"]
+assert o["work_dir"] == "${WORK_DIR}", o["work_dir"]
+assert e["ANTHROPIC_MODEL"] == "${ANTHROPIC_MODEL}" and e["GATEWAY_ADMIN_TOKEN"] == "${GATEWAY_ADMIN_TOKEN}"
+assert e["KUBECONFIG"] == "/agent/kubeconfig-dev.yaml:/agent/kubeconfig-prod.yaml", e["KUBECONFIG"]
+assert e["GIT_SSH_COMMAND"] == "ssh -i /agent/ssh_key -o IdentitiesOnly=yes"
+assert e["ANTHROPIC_AUTH_TOKEN"] == "${ANTHROPIC_AUTH_TOKEN}"
+assert p["platforms"][0]["options"]["allow_from"] == "ou_fixture_user"
+assert c["log"]["level"] == "info" and o["mode"] == "bypassPermissions"
+PY
+grep -q '^work_dir = "${WORK_DIR}" # keep this comment$' "$tgt/config.toml" && ok "rewrite keeps trailing comments" || bad "rewrite keeps trailing comments" "$(grep work_dir "$tgt/config.toml")"
+diff <(grep -vE '^(work_dir|ANTHROPIC_MODEL|GATEWAY_ADMIN_TOKEN|EXTRA_API_SECRET|KUBECONFIG|HTTPS_PROXY|NO_PROXY|GIT_SSH_COMMAND) ' "$src/config.toml") <(grep -vE '^(work_dir|ANTHROPIC_MODEL|GATEWAY_ADMIN_TOKEN|EXTRA_API_SECRET|KUBECONFIG|HTTPS_PROXY|NO_PROXY|GIT_SSH_COMMAND) ' "$tgt/config.toml") >/dev/null \
+	&& ok "every line outside the rewritten keys is preserved verbatim" || bad "every line outside the rewritten keys is preserved verbatim" "$(diff "$src/config.toml" "$tgt/config.toml")"
+! grep -qE 'fixture-feishu-secret|sk-fixture-env-secret|sk-fixture-secret-in-config|fixture-ssh-private' "$im/import.out" "$im/import.err" \
+	&& ok "import prints no secret on stdout or stderr" || bad "import prints no secret on stdout or stderr" ""
+stray="$(find "$im" -newer "$im/marker" -type f -not -path "$tgt/*" -not -path "$im/import.*" 2>/dev/null)"
+[ -z "$stray" ] && [ ! -e "$im/fakehome" ] && ok "import writes nothing outside the target instance directory" || bad "import writes nothing outside the target instance directory" "$stray"
+snip="$(sed -n '/^  # --- add under services: ---/,$p' "$im/import.out")"
+grep -q '^  srcops:$' <<<"$snip" && grep -q 'image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}' <<<"$snip" \
+	&& grep -q './instances/srcops/kubeconfig-dev.yaml:/agent/kubeconfig-dev.yaml:ro' <<<"$snip" && grep -q './instances/srcops/ssh_key:/agent/ssh_key:ro' <<<"$snip" \
+	&& grep -q './instances/srcops/claude:/etc/claude-code:ro' <<<"$snip" && grep -q './workspaces/srcops:/workspace' <<<"$snip" && grep -q 'pids: ' <<<"$snip" \
+	&& ok "snippet mounts config, workspace, credentials and the managed layer with the GHCR image" || bad "snippet mounts config, workspace, credentials and the managed layer with the GHCR image" "$snip"
+bash "$IMPORT" --local --home "$shome" --repo "$im/repo" import --host h1 --name srcops "$src" >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "import refuses an existing target (exit 1)" || bad "import refuses an existing target (exit 1)" "rc=$rc"
+# the imported instance satisfies the deploy skill's local validation as-is
+env -u AGENTBOX_DEPLOY_REPO bash "$DP_SRC" --repo "$im/repo" --dry-run plan h1 srcops >/dev/null 2>"$im/dp.err"; rc=$?
+[ "$rc" -eq 0 ] && ok "deploy plan accepts the imported instance without edits" || bad "deploy plan accepts the imported instance without edits" "rc=$rc $(cat "$im/dp.err")"
+
 group "template hygiene"
 for f in "$ROOT"/examples/*/config.toml; do
 	n="$(basename "$f")"
