@@ -15,7 +15,7 @@ import sys
 
 BEGIN = "__AGENTBOX_CONFIG_BEGIN__"
 END = "__AGENTBOX_CONFIG_END__"
-SECRET_NAME = re.compile(r"(TOKEN|SECRET|PASSWORD|PASSWD|_KEY$|^KEY_)", re.I)
+SECRET_NAME = re.compile(r"(^|_)(TOKEN|SECRET|PASSWORD|PASSWD)(_|$)|_KEY$|^KEY_", re.I)
 PROXY_NAMES = {"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY"}
 KV_LINE = re.compile(r'^(\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(?:"([^"]*)"|\'([^\']*)\')(.*)$')
 # A TOML multi-line (triple-quoted) string opening: key = """ or key = '''. The value, and the
@@ -125,7 +125,9 @@ def coverage(name, version, lock):
     if lid is None or lid not in lock:
         return "not in lock", "add it to mise.toml (docs/TOOLCHAIN.md section 4) or drop the dependency"
     lv = lock[lid]
-    if major(version) and major(version) == major(lv):
+    if not major(version):
+        return "unknown", "version probe failed on the source; check by hand"
+    if major(version) == major(lv):
         return "covered", f"lock {lv}"
     return "major differs", f"lock {lv}"
 

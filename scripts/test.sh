@@ -703,6 +703,7 @@ EXTRA_API_SECRET = 'fixture-single-quoted'
 KUBECONFIG = "$shome/.kube/dev.yaml:$shome/.kube/prod.yaml"
 HTTPS_PROXY = "http://proxy.example.test:7890"
 NO_PROXY = "localhost,127.0.0.1"
+CLAUDE_CODE_MAX_CONTEXT_TOKENS = "999"
 
 [[projects.platforms]]
 type = "feishu"
@@ -787,6 +788,10 @@ grep -qE 'EXTRA_API_SECRET.*secret' <<<"$plan" && ! grep -q 'fixture-single-quot
 	&& ok "plan flags a single-quoted secret literal without printing it" || bad "plan flags a single-quoted secret literal without printing it" "$plan"
 grep -q 'KUBECONFIG.*/agent/kubeconfig-dev.yaml:/agent/kubeconfig-prod.yaml' <<<"$plan" && ok "plan maps KUBECONFIG to /agent paths" || bad "plan maps KUBECONFIG to /agent paths" "$plan"
 grep -qE 'HTTPS_PROXY.*egress' <<<"$plan" && ok "plan warns that proxy values may not apply to the new host" || bad "plan warns that proxy values may not apply to the new host" "$plan"
+grep -qE 'CLAUDE_CODE_MAX_CONTEXT_TOKENS.*literal carried to env' <<<"$plan" \
+	&& ok "TOKEN inside a longer identifier is not treated as a secret" || bad "TOKEN inside a longer identifier is not treated as a secret" "$plan"
+sed -n '/^== red items/,$p' <<<"$plan" | grep -q 'CLAUDE_CODE_MAX_CONTEXT_TOKENS' \
+	&& bad "CLAUDE_CODE_MAX_CONTEXT_TOKENS is not a red item" "found in red items" || ok "CLAUDE_CODE_MAX_CONTEXT_TOKENS is not a red item"
 grep -qE '^ *WORK_DIR.*discard' <<<"$plan" && ok "plan discards .env keys the config does not reference" || bad "plan discards .env keys the config does not reference" "$plan"
 grep -q 'id_fixture.*ssh_key' <<<"$plan" && grep -q 'GIT_SSH_COMMAND' <<<"$plan" && ok "plan mounts the first ssh key and wires GIT_SSH_COMMAND" || bad "plan mounts the first ssh key and wires GIT_SSH_COMMAND" "$plan"
 grep -qE 'alpha.*/etc/claude-code' <<<"$plan" && grep -qE 'beta.*test.sh' <<<"$plan" && ok "plan routes user skills to the managed layer and lists docker in self-tests" || bad "plan routes user skills to the managed layer and lists docker in self-tests" "$plan"
@@ -803,13 +808,15 @@ grep -qE 'allow_from|admin_from' <<<"$plan" && ok "plan reminds that open_ids ar
 ! grep -q 'fixture-feishu-secret' <<<"$plan$(cat "$im/plan.err")" && ! grep -q 'sk-fixture-env-secret' <<<"$plan$(cat "$im/plan.err")" \
 	&& ok "plan output carries no value from the source .env" || bad "plan output carries no value from the source .env" ""
 # tool coverage against the real lock files: a covered tool and a not-in-lock tool
-tinv="$im/tools.inv"; { echo "$inv" | grep -v '^tool	'; printf 'tool\tkubectl\t/usr/bin/kubectl\tClient Version: v1.36.4\ntool\tfoo\t/usr/bin/foo\tfoo 9.9\ntool\tdocker\t/usr/bin/docker\tDocker version 29.7.2\ntool\tcli\t/usr/bin/cli\tcli 1.0\n'; } > "$tinv"
+tinv="$im/tools.inv"; { echo "$inv" | grep -v '^tool	'; printf 'tool\tkubectl\t/usr/bin/kubectl\tClient Version: v1.36.4\ntool\tfoo\t/usr/bin/foo\tfoo 9.9\ntool\tdocker\t/usr/bin/docker\tDocker version 29.7.2\ntool\tcli\t/usr/bin/cli\tcli 1.0\ntool\thelm\t/usr/local/bin/helm\t?\n'; } > "$tinv"
 tplan="$(python3 "$IM_SRC/render.py" --inventory "$tinv" --lock "$ROOT/mise.lock" --lock "$ROOT/mise.claude.lock" --name t 2>&1)"
 grep -qE '^ *kubectl .*covered' <<<"$tplan" && grep -qE '^ *foo .*not in lock' <<<"$tplan" && sed -n '/^== red items/,$p' <<<"$tplan" | grep -q 'foo' \
 	&& ok "tool coverage marks covered and not-in-lock tools, the latter red" || bad "tool coverage marks covered and not-in-lock tools, the latter red" "$tplan"
 sed -n '/^== red items/,$p' <<<"$tplan" | grep -q 'docker' && ok "docker on the source is always a red item" || bad "docker on the source is always a red item" "$tplan"
 grep -qE '^ *cli .*ambiguous' <<<"$tplan" && grep -q 'cli/cli' <<<"$tplan" && grep -q 'gitlab-org/cli' <<<"$tplan" && sed -n '/^== red items/,$p' <<<"$tplan" | grep -q 'cli' \
 	&& ok "an ambiguous tool-name match is flagged, not silently reported as not in lock" || bad "an ambiguous tool-name match is flagged, not silently reported as not in lock" "$tplan"
+grep -qE '^ *helm .*unknown' <<<"$tplan" && ! grep -qE '^ *helm .*major differs' <<<"$tplan" \
+	&& ok "a failed version probe is reported unknown, not major differs" || bad "a failed version probe is reported unknown, not major differs" "$tplan"
 # multi-line (triple-quoted) TOML strings are passed through untouched, not misparsed
 minv="$im/multiline.inv"
 {
@@ -876,7 +883,7 @@ assert p["platforms"][0]["options"]["allow_from"] == "ou_fixture_user"
 assert c["log"]["level"] == "info" and o["mode"] == "bypassPermissions"
 PY
 grep -q '^work_dir = "${WORK_DIR}" # keep this comment$' "$tgt/config.toml" && ok "rewrite keeps trailing comments" || bad "rewrite keeps trailing comments" "$(grep work_dir "$tgt/config.toml")"
-diff <(grep -vE '^(work_dir|ANTHROPIC_MODEL|GATEWAY_ADMIN_TOKEN|EXTRA_API_SECRET|KUBECONFIG|HTTPS_PROXY|NO_PROXY|GIT_SSH_COMMAND) ' "$src/config.toml") <(grep -vE '^(work_dir|ANTHROPIC_MODEL|GATEWAY_ADMIN_TOKEN|EXTRA_API_SECRET|KUBECONFIG|HTTPS_PROXY|NO_PROXY|GIT_SSH_COMMAND) ' "$tgt/config.toml") >/dev/null \
+diff <(grep -vE '^(work_dir|ANTHROPIC_MODEL|GATEWAY_ADMIN_TOKEN|EXTRA_API_SECRET|KUBECONFIG|HTTPS_PROXY|NO_PROXY|CLAUDE_CODE_MAX_CONTEXT_TOKENS|GIT_SSH_COMMAND) ' "$src/config.toml") <(grep -vE '^(work_dir|ANTHROPIC_MODEL|GATEWAY_ADMIN_TOKEN|EXTRA_API_SECRET|KUBECONFIG|HTTPS_PROXY|NO_PROXY|CLAUDE_CODE_MAX_CONTEXT_TOKENS|GIT_SSH_COMMAND) ' "$tgt/config.toml") >/dev/null \
 	&& ok "every line outside the rewritten keys is preserved verbatim" || bad "every line outside the rewritten keys is preserved verbatim" "$(diff "$src/config.toml" "$tgt/config.toml")"
 ! grep -qE 'fixture-feishu-secret|sk-fixture-env-secret|sk-fixture-secret-in-config|fixture-ssh-private' "$im/import.out" "$im/import.err" \
 	&& ok "import prints no secret on stdout or stderr" || bad "import prints no secret on stdout or stderr" ""

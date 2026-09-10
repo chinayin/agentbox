@@ -10,7 +10,7 @@
 |---|---|---|
 | `work_dir = "/data/agents/x"` | `work_dir = "${WORK_DIR}"` | 不进 `env`，compose 提供 |
 | `KEY = "${KEY}"` | 不变 | `env` 里沿用源侧 `.env` 的值 |
-| `KEY = "literal"` | `KEY = "${KEY}"` | `env` 里 `KEY=literal`，原值；KEY 命中密钥名模式 `(TOKEN\|SECRET\|PASSWORD\|PASSWD\|_KEY$\|^KEY_)`（大小写不敏感）时规划表额外提醒「源侧把密钥写死在 config 里，已抽到 env」 |
+| `KEY = "literal"` | `KEY = "${KEY}"` | `env` 里 `KEY=literal`，原值；KEY 命中密钥名模式 `(^\|_)(TOKEN\|SECRET\|PASSWORD\|PASSWD)(_\|$)\|_KEY$\|^KEY_`（大小写不敏感）时规划表额外提醒「源侧把密钥写死在 config 里，已抽到 env」；模式要求 `TOKEN`/`SECRET`/`PASSWORD`/`PASSWD` 是完整的下划线分隔片段，`CLAUDE_CODE_MAX_CONTEXT_TOKENS` 这类名字里含 `TOKENS`（非独立片段）不会被误判 |
 | `KUBECONFIG = "/home/agent/.kube/a.yaml:/home/agent/.kube/b.yaml"` | `KUBECONFIG = "/agent/kubeconfig-a.yaml:/agent/kubeconfig-b.yaml"` | 字面值；每个文件产生一条 `:ro` 挂载 |
 | `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` 字面值 | `${HTTP_PROXY}` 等 | `env` 里带原值，规划表提醒「目标主机的出网路径可能不同，确认后再保留」 |
 | `KEY = """..."""` / `KEY = '''...'''`（多行） | 原样透传，不改写 | red items：多行字符串未改写，需要手工转换 |
@@ -41,7 +41,7 @@
 
 ## 4.4 工具覆盖
 
-源侧每个 CLI 与 `mise.lock` 对照。lock 里工具名是 `backend:owner/name` 形式，与二进制名对不上（`kubectl` 对 `aqua:kubernetes/kubectl`），所以匹配用小写子串，命中多个时全列。输出三列：源侧版本、lock 版本、结论。结论是五种之一：`covered`（大版本一致）、`major differs`（lock 里有，大版本不一致）、`not in lock`（子串完全没命中）、`ambiguous`（子串命中了不止一个 lock id：所有候选连同各自的 lock 版本一起列出）、`system`（`git`、`gpg`、`npm`、`pip3`、`curl`、`mise` 这几个随基础镜像自带，不由 lock 跟踪）。`not in lock` 与 `ambiguous` 是 red items，处理办法只有两条：进 `mise.toml`（见 `docs/TOOLCHAIN.md` §4）或改技能不依赖它；`system` 不是红项。`docker` 是特例，结论固定是 `not in image`（详情列写「容器里没有 docker，没有 socket，设计如此」），永远单独判红，不看源侧装的是什么版本，也不去对 lock。
+源侧每个 CLI 与 `mise.lock` 对照。lock 里工具名是 `backend:owner/name` 形式，与二进制名对不上（`kubectl` 对 `aqua:kubernetes/kubectl`），所以匹配用小写子串，命中多个时全列。输出三列：源侧版本、lock 版本、结论。结论是六种之一：`covered`（大版本一致）、`major differs`（lock 里有，大版本不一致）、`not in lock`（子串完全没命中）、`ambiguous`（子串命中了不止一个 lock id：所有候选连同各自的 lock 版本一起列出）、`system`（`git`、`gpg`、`npm`、`pip3`、`curl`、`mise` 这几个随基础镜像自带，不由 lock 跟踪）、`unknown`（源侧版本探测失败，比如打印了 `?` 或空字符串：跳过大版本比较，人工核实，不当作 `major differs` 误判）。`not in lock` 与 `ambiguous` 是 red items，处理办法只有两条：进 `mise.toml`（见 `docs/TOOLCHAIN.md` §4）或改技能不依赖它；`system` 与 `unknown` 都不是红项。`docker` 是特例，结论固定是 `not in image`（详情列写「容器里没有 docker，没有 socket，设计如此」），永远单独判红，不看源侧装的是什么版本，也不去对 lock。
 
 ## 4.5 工作区
 
