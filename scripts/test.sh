@@ -817,6 +817,21 @@ grep -qE '^ *cli .*ambiguous' <<<"$tplan" && grep -q 'cli/cli' <<<"$tplan" && gr
 	&& ok "an ambiguous tool-name match is flagged, not silently reported as not in lock" || bad "an ambiguous tool-name match is flagged, not silently reported as not in lock" "$tplan"
 grep -qE '^ *helm .*unknown' <<<"$tplan" && ! grep -qE '^ *helm .*major differs' <<<"$tplan" \
 	&& ok "a failed version probe is reported unknown, not major differs" || bad "a failed version probe is reported unknown, not major differs" "$tplan"
+# Every LOCK_ALIAS id (the bare node/go/python ids excepted) must resolve in one of the shipped
+# lock files, or the tool-coverage table would silently report "not in lock" for something that is
+# actually pinned -- render.py's own load_lock() decides what "resolves" means here.
+lock_check="$(python3 - "$IM_SRC/render.py" "$ROOT/mise.lock" "$ROOT/mise.claude.lock" "$ROOT/mise.pi.lock" <<'PY'
+import importlib.util, sys
+render_path, *lock_paths = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("render", render_path)
+render = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(render)
+lock = render.load_lock(lock_paths)
+missing = sorted({v for v in render.LOCK_ALIAS.values() if v not in ("node", "go", "python") and v not in lock})
+print("\n".join(missing))
+PY
+)"
+[ -z "$lock_check" ] && ok "every LOCK_ALIAS id exists in a shipped lock file" || bad "every LOCK_ALIAS id exists in a shipped lock file" "$lock_check"
 # multi-line (triple-quoted) TOML strings are passed through untouched, not misparsed
 minv="$im/multiline.inv"
 {

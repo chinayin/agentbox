@@ -21,7 +21,7 @@ description: Import a cc-connect instance that runs directly on a server (npm-in
 - `<source-dir>` 是源主机上含 `config.toml` 与 `.env` 的目录（systemd 单元里的 `WorkingDirectory` 或 `EnvironmentFile` 所在目录）。
 - 先跑 `plan`，把规划表给用户看，尤其是末尾的「red items」。它只读、不写文件。
 - `import` 要求 `hosts/<host>/host.env` 已存在（见 `.claude/skills/deploy/references/deploy-repo.md`）。目标目录已存在时 exit 1，不覆盖。
-- `--local <dir>` 把本地目录当源，配合 `--home` 指向源侧家目录的副本；用于离线检查。
+- `--local`（源目录仍是位置参数，配合 `--home` 指向源侧家目录的副本）；用于离线检查。
 - `--dry-run` 打出将执行的 ssh 与将写的路径，不连接、不写。
 
 ## 读结果
