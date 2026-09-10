@@ -405,6 +405,19 @@ grep -rn '跨实例共享' "$ROOT/README.md" "$ROOT"/docs/*.md "$ROOT/docker-com
 	&& bad "cache is no longer described as shared across instances" "see the lines above" || ok "cache is no longer described as shared across instances"
 
 # ---------- template hygiene ----------
+# One structural check for every compose snippet the repo prints (new-instance and import-instance):
+# service line, env_file, the config mount, both volumes in the service and in the volumes block.
+# $1 label, $2 snippet text, $3 service name, $4 instance path prefix (./examples or ./instances)
+check_snippet() {
+	local label="$1" s="$2" n="$3" p="$4"
+	grep -q "^  ${n}:\$" <<<"$s" && grep -q '^    env_file:' <<<"$s" \
+		&& grep -q "^      - ${p}/${n}/env\$" <<<"$s" \
+		&& grep -q "^      - ${p}/${n}/config.toml:/agent/config.toml:ro\$" <<<"$s" \
+		&& grep -q "^      - ${n}-state:/state\$" <<<"$s" && grep -q "^      - ${n}-cache:/cache\$" <<<"$s" \
+		&& grep -q "^  ${n}-state:\$" <<<"$s" && grep -q "^  ${n}-cache:\$" <<<"$s" \
+		&& ok "${label} snippet has the shared compose structure" || bad "${label} snippet has the shared compose structure" "$s"
+}
+
 # ---------- new-instance skill scaffold ----------
 # The skill's scaffold copies examples/demo; these guard the copy against template drift and
 # make sure the skill can never produce a non-placeholder value or clobber an existing instance.
@@ -444,6 +457,7 @@ printf '%s\n' "$snippet" | grep -q '^  data:$' && printf '%s\n' "$snippet" | gre
 	&& printf '%s\n' "$snippet" | grep -q 'examples/data/kubeconfig:/agent/kubeconfig:ro' && printf '%s\n' "$snippet" | grep -q '^  data-cache:$' \
 	&& ok "snippet names the service, the pi image, the kubeconfig mount and the volumes" \
 	|| bad "snippet names the service, the pi image, the kubeconfig mount and the volumes" "$snippet"
+check_snippet "new-instance" "$snippet" data ./examples
 [ -d "$sc/runtime/workspaces/data" ] && ok "scaffold creates the workspace directory" || bad "scaffold creates the workspace directory" ""
 bash "$SCAFFOLD" --root "$sc" data >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "scaffold refuses to overwrite an existing instance (exit 1)" || bad "scaffold refuses to overwrite an existing instance (exit 1)" "rc=$rc"
@@ -837,6 +851,7 @@ grep -q '^  srcops:$' <<<"$snip" && grep -q 'image: ghcr.io/chinayin/agentbox:${
 	&& grep -q './instances/srcops/kubeconfig-dev.yaml:/agent/kubeconfig-dev.yaml:ro' <<<"$snip" && grep -q './instances/srcops/ssh_key:/agent/ssh_key:ro' <<<"$snip" \
 	&& grep -q './instances/srcops/claude:/etc/claude-code:ro' <<<"$snip" && grep -q './workspaces/srcops:/workspace' <<<"$snip" && grep -q 'pids: ' <<<"$snip" \
 	&& ok "snippet mounts config, workspace, credentials and the managed layer with the GHCR image" || bad "snippet mounts config, workspace, credentials and the managed layer with the GHCR image" "$snip"
+check_snippet "import-instance" "$snip" srcops ./instances
 bash "$IMPORT" --local --home "$shome" --repo "$im/repo" import --host h1 --name srcops "$src" >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "import refuses an existing target (exit 1)" || bad "import refuses an existing target (exit 1)" "rc=$rc"
 # the imported instance satisfies the deploy skill's local validation as-is
