@@ -41,7 +41,7 @@
 
 ## 4.4 工具覆盖
 
-源侧每个 CLI 与 `mise.lock` 对照。lock 里工具名是 `backend:owner/name` 形式，与二进制名对不上（`kubectl` 对 `aqua:kubernetes/kubectl`），所以匹配用小写子串，命中多个时全列。输出三列：源侧版本、lock 版本、结论。结论是四种之一：`covered`（大版本一致）、`major differs`（lock 里有，大版本不一致）、`not in lock`（子串完全没命中）、`ambiguous`（子串命中了不止一个 lock id：所有候选连同各自的 lock 版本一起列出，这是一条 red item，需要人在 `mise.toml` 里显式选一个）。`docker` 永远判红：容器里没有 docker（没有 socket，设计如此），不管源侧装的是什么版本。`not in lock` 与 `ambiguous` 一样是 red items，处理办法只有两条：进 `mise.toml`（见 `docs/TOOLCHAIN.md` §4）或改技能不依赖它。
+源侧每个 CLI 与 `mise.lock` 对照。lock 里工具名是 `backend:owner/name` 形式，与二进制名对不上（`kubectl` 对 `aqua:kubernetes/kubectl`），所以匹配用小写子串，命中多个时全列。输出三列：源侧版本、lock 版本、结论。结论是 `covered`（大版本一致）、`major differs`（lock 里有，大版本不一致）、`not in lock`（子串完全没命中）、`ambiguous`（子串命中了不止一个 lock id：所有候选连同各自的 lock 版本一起列出）四种之一，其中 `not in lock` 与 `ambiguous` 是 red items，处理办法只有两条：进 `mise.toml`（见 `docs/TOOLCHAIN.md` §4）或改技能不依赖它。`docker` 是特例，永远单独判红：结论固定是「容器里没有 docker」（没有 socket，设计如此），不看源侧装的是什么版本，也不去对 lock。
 
 ## 4.5 工作区
 
