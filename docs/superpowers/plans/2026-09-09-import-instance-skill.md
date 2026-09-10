@@ -1405,10 +1405,10 @@ description: Import a cc-connect instance that runs directly on a server (npm-in
 四个 Claude Code 技能分工：`new-instance` 从模板造实例、`import-instance` 从裸机实例反向导入、`remote-build` 在远端构建镜像、`deploy` 把部署仓库推到主机。都在 `.claude/skills/`。
 ```
 
-`docs/ROADMAP.md` P1 表：第 4 行「现状」末尾加「2026-09-09 起由 litellm-gateway 迁移 demo 收口：构建机作为第一个 deploy 目标拉 `v0.2.0`」；第 5 行同样加「同一 demo 收口」；表末新增一行：
+`docs/ROADMAP.md` P1 表：第 4 行「现状」末尾加「2026-09-09 起由首个裸机实例迁移 demo 收口：构建机作为第一个 deploy 目标拉 `v0.2.0`」；第 5 行同样加「同一 demo 收口」；表末新增一行：
 
 ```markdown
-| 5a | `import-instance` 真实源首跑 | 技能与离线测试已实现；从未对真实裸机跑过 `import` | 对 litellm-gateway 源实例 `plan` 与 `import` 各跑通一次，产物经 `deploy plan` 校验通过，并在构建机上起来 |
+| 5a | `import-instance` 真实源首跑 | 技能与离线测试已实现；从未对真实裸机跑过 `import` | 对首个裸机源实例 `plan` 与 `import` 各跑通一次，产物经 `deploy plan` 校验通过，并在构建机上起来 |
 ```
 
 `.claude/skills/new-instance/SKILL.md` 第一段之后加：
@@ -1436,26 +1436,26 @@ git commit -m "docs(import-instance): skill guide, mapping reference, boundaries
 这是 spec §9。前四步由执行者做，第五步是用户的，之后再由执行者收尾。**真实地址、密钥值只出现在两个 gitignored `.env` 与私有部署仓库里，不进 chat。**
 
 **Files:**
-- Create（agentbox 之外）: `~/Sites/github/chinayin/agentbox-deploy/{README.md,hosts/hk-build/host.env,hosts/hk-build/docker-compose.yaml}`
+- Create（agentbox 之外）: `$DEPLOY_REPO/{README.md,hosts/<host>/host.env,hosts/<host>/docker-compose.yaml}`
 - Create（gitignored）: `.claude/skills/deploy/.env`、`.claude/skills/import-instance/.env`
 - Modify: `docs/ROADMAP.md`（验证通过后把第 4、5、5a 行改为已确认并删行）
 
 - [ ] **Step 1: 建部署仓库与两份 `.env`**
 
 ```bash
-mkdir -p ~/Sites/github/chinayin/agentbox-deploy/hosts/hk-build/instances
-cd ~/Sites/github/chinayin/agentbox-deploy && git init -q
+mkdir -p $DEPLOY_REPO/hosts/<host>/instances
+cd $DEPLOY_REPO && git init -q
 printf '# agentbox-deploy\n\n私有部署仓库：每台主机一个目录，真值明文入库，仓库权限是唯一防线。结构与用法见 agentbox 仓库 `.claude/skills/deploy/references/deploy-repo.md`。\n' > README.md
 ```
 
-`hosts/hk-build/host.env`：`DEPLOY_HOST` / `DEPLOY_KEY` / `DEPLOY_HOST_KEY_ALIAS` 三个值照抄 agentbox 的 `.claude/skills/remote-build/.env`（`AGENTBOX_REMOTE` / `AGENTBOX_REMOTE_KEY` / `AGENTBOX_REMOTE_HOST_KEY_ALIAS`），再加：
+`hosts/<host>/host.env`：`DEPLOY_HOST` / `DEPLOY_KEY` / `DEPLOY_HOST_KEY_ALIAS` 三个值照抄 agentbox 的 `.claude/skills/remote-build/.env`（`AGENTBOX_REMOTE` / `AGENTBOX_REMOTE_KEY` / `AGENTBOX_REMOTE_HOST_KEY_ALIAS`），再加：
 
 ```
 DEPLOY_DIR=/data/agentbox-demo
 AGENTBOX_VERSION=0.2.0
 ```
 
-`hosts/hk-build/docker-compose.yaml` 先只放：
+`hosts/<host>/docker-compose.yaml` 先只放：
 
 ```yaml
 services: {}
@@ -1465,17 +1465,17 @@ volumes: {}
 agentbox 里：
 
 ```bash
-printf 'AGENTBOX_DEPLOY_REPO=~/Sites/github/chinayin/agentbox-deploy\n' > .claude/skills/deploy/.env
+printf 'AGENTBOX_DEPLOY_REPO=$DEPLOY_REPO\n' > .claude/skills/deploy/.env
 ```
 
-`.claude/skills/import-instance/.env`：`AGENTBOX_IMPORT_SOURCE=root@<源ECS的ip>.sslip.io`、`AGENTBOX_IMPORT_KEY` 同 remote-build 的 key、`AGENTBOX_IMPORT_HOST_KEY_ALIAS=<源ECS的ip>`。源 ECS 的地址用户在对话里给过；写进文件后不再在 chat 里出现。
+`.claude/skills/import-instance/.env`：`AGENTBOX_IMPORT_SOURCE=root@<源主机 ip>.sslip.io`、`AGENTBOX_IMPORT_KEY` 同 remote-build 的 key、`AGENTBOX_IMPORT_HOST_KEY_ALIAS=<源主机 ip>`。源主机的地址由用户提供；写进文件后不再在 chat 里出现。
 
 注意用户 `~/.ssh/known_hosts` 里该主机有一条旧 ECDSA 指纹，主机现在给 ED25519，`StrictHostKeyChecking=accept-new` 会拒。执行前让用户决定：删那一行（`ssh-keygen -R <ip>`）或接受新指纹。不要替用户改 known_hosts。
 
 - [ ] **Step 2: 真实 `plan`**
 
 ```bash
-.claude/skills/import-instance/scripts/import-instance.sh plan /data/agents/litellm-gateway/.cc-connect
+.claude/skills/import-instance/scripts/import-instance.sh plan /data/agents/ops-agent/.cc-connect
 ```
 
 把规划表原样给用户看（它不含值）。预期红项：`bypassPermissions`；`docker` 工具在源上存在；`KUBECONFIG` 若是单文件则只有一条挂载；技能里 docker 只在 test.sh。若出现 `placeholder ... has no value` 之类意外红项，先停下报告。
@@ -1483,13 +1483,13 @@ printf 'AGENTBOX_DEPLOY_REPO=~/Sites/github/chinayin/agentbox-deploy\n' > .claud
 - [ ] **Step 3: 真实 `import`**
 
 ```bash
-.claude/skills/import-instance/scripts/import-instance.sh import /data/agents/litellm-gateway/.cc-connect --host hk-build --name litellm-gateway
+.claude/skills/import-instance/scripts/import-instance.sh import /data/agents/ops-agent/.cc-connect --host <host> --name ops-agent
 ```
 
-把 stdout 末尾的 compose 片段贴进 `hosts/hk-build/docker-compose.yaml`（替换掉空的 `services: {}` / `volumes: {}`），跑：
+把 stdout 末尾的 compose 片段贴进 `hosts/<host>/docker-compose.yaml`（替换掉空的 `services: {}` / `volumes: {}`），跑：
 
 ```bash
-cd ~/Sites/github/chinayin/agentbox-deploy && docker compose -f hosts/hk-build/docker-compose.yaml config -q
+cd $DEPLOY_REPO && docker compose -f hosts/<host>/docker-compose.yaml config -q
 ```
 
 本机若没有 docker，就跳过这条，靠下一步 `deploy plan` 与远端 `compose up` 报错。
@@ -1498,23 +1498,23 @@ cd ~/Sites/github/chinayin/agentbox-deploy && docker compose -f hosts/hk-build/d
 
 给用户列出，等他完成后再继续：
 
-1. 编辑 `hosts/hk-build/instances/litellm-gateway/env`：`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 换成 demo 应用那一对；`config.toml` 里 `allow_from` / `admin_from` 换成 demo 应用下的 open_id。
+1. 编辑 `hosts/<host>/instances/ops-agent/env`：`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 换成 demo 应用那一对；`config.toml` 里 `allow_from` / `admin_from` 换成 demo 应用下的 open_id。
 2. 决定 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`：构建机直连出网，通常三行都清空（保留键、值为空会让 entrypoint 报占位符缺值；要么删占位符要么给值，推荐从 `config.toml` 的 env 表和 `env` 里一起删掉这三项）。
 3. 只留 dev kubeconfig：删掉 prod 那个文件，`config.toml` 的 `KUBECONFIG` 只留 dev 路径，compose 片段去掉 prod 挂载。
 4. 确认 `ANTHROPIC_BASE_URL` 能从构建机访问（内网 IP 不行）。
-5. `git add -A && git commit -m "hk-build: litellm-gateway imported from the bare-metal host"`。
+5. `git add -A && git commit -m "<host>: ops-agent imported from the bare-metal host"`。
 
 - [ ] **Step 5: `deploy plan` / `deploy` / `status`**
 
 ```bash
-.claude/skills/deploy/scripts/deploy.sh plan hk-build litellm-gateway
+.claude/skills/deploy/scripts/deploy.sh plan <host> ops-agent
 ```
 
 给用户看输出。通过后：
 
 ```bash
-.claude/skills/deploy/scripts/deploy.sh deploy hk-build litellm-gateway
-.claude/skills/deploy/scripts/deploy.sh status hk-build
+.claude/skills/deploy/scripts/deploy.sh deploy <host> ops-agent
+.claude/skills/deploy/scripts/deploy.sh status <host>
 ```
 
 读日志最后 40 行：precheck 通过、cc-connect 起来。`docker compose logs` 里若有 `placeholder references unset variable`，回 Step 4 第 2 条。
@@ -1524,7 +1524,7 @@ cd ~/Sites/github/chinayin/agentbox-deploy && docker compose -f hosts/hk-build/d
 在构建机上（用 remote-build 的连接方式）：
 
 ```bash
-ssh <build-host> "install -d -o 1000 -g 1000 -m 0755 /data/agentbox-demo/workspaces/litellm-gateway && cd /data/agentbox-demo && docker compose exec -T litellm-gateway sh -c 'git clone <litellm-gateway 仓库 URL> /workspace/repo'"
+ssh <build-host> "install -d -o 1000 -g 1000 -m 0755 /data/agentbox-demo/workspaces/ops-agent && cd /data/agentbox-demo && docker compose exec -T ops-agent sh -c 'git clone <ops-agent 仓库 URL> /workspace/repo'"
 ```
 
 clone 用容器里的 `GIT_SSH_COMMAND` 与挂进去的 key。若源侧 `work_dir` 就是仓库根，把 `WORK_DIR` 在 compose 里设成 `/workspace/repo` 或 clone 到 `/workspace/.`。
@@ -1532,16 +1532,16 @@ clone 用容器里的 `GIT_SSH_COMMAND` 与挂进去的 key。若源侧 `work_di
 验收，三条都要：
 
 ```bash
-ssh <build-host> "cd /data/agentbox-demo && docker compose exec -T litellm-gateway sh -c 'curl -sS -m 20 \"\$ANTHROPIC_BASE_URL/v1/messages\" -H \"x-api-key: \$ANTHROPIC_AUTH_TOKEN\" -H \"anthropic-version: 2023-06-01\" -H \"content-type: application/json\" -d \"{\\\"model\\\":\\\"\$ANTHROPIC_MODEL\\\",\\\"max_tokens\\\":16,\\\"messages\\\":[{\\\"role\\\":\\\"user\\\",\\\"content\\\":\\\"ping\\\"}]}\"' | head -c 300"
-ssh <build-host> "docker inspect agentbox-litellm-gateway --format '{{.HostConfig.PidsLimit}} {{.HostConfig.CapDrop}} {{.HostConfig.SecurityOpt}}'"
+ssh <build-host> "cd /data/agentbox-demo && docker compose exec -T ops-agent sh -c 'curl -sS -m 20 \"\$ANTHROPIC_BASE_URL/v1/messages\" -H \"x-api-key: \$ANTHROPIC_AUTH_TOKEN\" -H \"anthropic-version: 2023-06-01\" -H \"content-type: application/json\" -d \"{\\\"model\\\":\\\"\$ANTHROPIC_MODEL\\\",\\\"max_tokens\\\":16,\\\"messages\\\":[{\\\"role\\\":\\\"user\\\",\\\"content\\\":\\\"ping\\\"}]}\"' | head -c 300"
+ssh <build-host> "docker inspect agentbox-ops-agent --format '{{.HostConfig.PidsLimit}} {{.HostConfig.CapDrop}} {{.HostConfig.SecurityOpt}}'"
 ```
 
 Expected：第一条返回含 `content`；第二条打出 `512 [ALL] [no-new-privileges:true]`。第三条是用户在飞书 demo 应用里发一条消息拿到回复。
 
 - [ ] **Step 7: 收尾**
 
-- `docs/ROADMAP.md`：第 4 行（GHCR 被服务器拉取）、第 5 行（deploy 首跑）、5a 行（import 首跑）验收全部满足则删行；若第 6 行的 `docker inspect` 三项读到，把该行「现状」改为「2026-09-09 在 hk-build 上读到 `PidsLimit`/`CapDrop`/`SecurityOpt` 生效；healthcheck 与 `read_only` 仍未做」。
-- 源 ECS 的 systemd 实例不动。何时停、怎么切由用户另行决定。
+- `docs/ROADMAP.md`：第 4 行（GHCR 被服务器拉取）、第 5 行（deploy 首跑）、5a 行（import 首跑）验收全部满足则删行；若第 6 行的 `docker inspect` 三项读到，把该行「现状」改为「2026-09-09 在 <host> 上读到 `PidsLimit`/`CapDrop`/`SecurityOpt` 生效；healthcheck 与 `read_only` 仍未做」。
+- 源主机的 systemd 实例不动。何时停、怎么切由用户另行决定。
 - `make check`，提交 agentbox；部署仓库单独提交。
 
 ```bash

@@ -6,7 +6,7 @@
 
 ## 1. 要解决的问题
 
-现有三个技能覆盖的是「从零开始」：`new-instance` 从模板造空壳，`deploy` 把部署仓库推到主机，`remote-build` 造镜像。没有一条路径处理「已经有一台裸机在跑、要换成容器」。这次的源是一台北京 ECS：cc-connect 与 Claude Code 用 npm 全局安装，以 `agent` 用户跑在 systemd user 单元里，实例目录 `/data/agents/<name>/.cc-connect/` 下有 `config.toml` 和 `.env`，家目录里散落着 kubeconfig、git 私钥、用户级技能。
+现有三个技能覆盖的是「从零开始」：`new-instance` 从模板造空壳，`deploy` 把部署仓库推到主机，`remote-build` 造镜像。没有一条路径处理「已经有一台裸机在跑、要换成容器」。这次的源是一台裸机：cc-connect 与 Claude Code 用 npm 全局安装，以 `agent` 用户跑在 systemd user 单元里，实例目录 `/data/agents/<name>/.cc-connect/` 下有 `config.toml` 和 `.env`，家目录里散落着 kubeconfig、git 私钥、用户级技能。
 
 人工迁一次可以，但每台机器的散落位置都不一样，人肉对照挂载契约表既慢又漏。目标是一条命令读出源侧的全部依赖，逐项映射到挂载契约，写出骨架，剩下只有「填密钥」这一步留给人。
 
@@ -136,18 +136,18 @@ import-instance.sh import <source-dir>  --host <host> --name <name>
 
 端到端不在 `make check` 里：在构建机上用 `deploy plan` / `deploy` / `status` 跑通，网关 curl 按 `docs/TOOLS.md` §3a，飞书发一条消息拿回复，`docker inspect` 读到 `PidsLimit` 与 `CapDrop`。
 
-## 9. 首次使用：litellm-gateway 实例
+## 9. 首次使用：首个裸机实例
 
 这次的具体落点，也是 `ROADMAP` 第 4、5 项的收口：
 
 1. 本机新建私有部署仓库 `agentbox-deploy`，第一个 host 是构建机，`DEPLOY_DIR=/data/agentbox-demo`，`AGENTBOX_VERSION=0.2.0`，镜像 `ghcr.io/chinayin/agentbox`。
-2. `import-instance import /data/agents/litellm-gateway/.cc-connect --host hk-build --name litellm-gateway`。
-3. 人工：飞书那一对换成 demo 应用的 id / secret，`allow_from` / `admin_from` 换成该应用下的 open_id；代理三件在构建机上清空或按需保留；prod kubeconfig 从实例目录删掉，只留 dev；把 compose 片段贴进 `hosts/hk-build/docker-compose.yaml`；提交。其余值已由 import 原样带到。
-4. `deploy plan hk-build litellm-gateway`，看输出；`deploy deploy hk-build litellm-gateway`；`status`。
-5. 在构建机上 clone 工作区仓库到 `workspaces/litellm-gateway/`，属主 1000。
+2. `import-instance import /data/agents/ops-agent/.cc-connect --host <host> --name ops-agent`。
+3. 人工：飞书那一对换成 demo 应用的 id / secret，`allow_from` / `admin_from` 换成该应用下的 open_id；代理三件在构建机上清空或按需保留；prod kubeconfig 从实例目录删掉，只留 dev；把 compose 片段贴进 `hosts/<host>/docker-compose.yaml`；提交。其余值已由 import 原样带到。
+4. `deploy plan <host> ops-agent`，看输出；`deploy deploy <host> ops-agent`；`status`。
+5. 在构建机上 clone 工作区仓库到 `workspaces/ops-agent/`，属主 1000。
 6. 验收见 §8 末段。
 
-源 ECS 上的 systemd 实例全程不停。同一个飞书应用不能有两个 cc-connect 消费者，所以 demo 用 demo 应用，源实例继续用它自己的。
+源主机上的 systemd 实例全程不停。同一个飞书应用不能有两个 cc-connect 消费者，所以 demo 用 demo 应用，源实例继续用它自己的。
 
 ## 10. 需要同步改动的文件
 
