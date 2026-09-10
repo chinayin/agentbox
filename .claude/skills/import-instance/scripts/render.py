@@ -319,6 +319,8 @@ def build_plan(recs, ctx, lock, host, name):
         L.append(skill_line(s[0], "user level -> managed layer /etc/claude-code", s[1] if len(s) > 1 else "-"))
     for s in fields(recs, "ws_skill"):
         L.append(skill_line(s[0], "workspace", s[1] if len(s) > 1 else "-"))
+    for s in fields(recs, "skill_cred"):
+        ctx["red"].append(f"skill {s[0]} carries a credential-looking file ({s[1]}); review it before committing the deploy repo")
     L.append("")
     L.append("== tools")
     L.append(f"  {'tool':<12} {'source':<40} {'result':<14} detail")

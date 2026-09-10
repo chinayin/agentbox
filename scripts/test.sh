@@ -724,6 +724,7 @@ chmod 600 "$shome/.kube"/* "$shome/.ssh/id_fixture"
 printf -- '---\nname: alpha\n---\nRuns curl only.\n' > "$shome/.claude/skills/alpha/SKILL.md"
 printf -- '---\nname: beta\n---\nRuns kubectl.\n' > "$shome/.claude/skills/beta/SKILL.md"
 printf '#!/usr/bin/env bash\ndocker compose up -d\n' > "$shome/.claude/skills/beta/test.sh"
+printf 'FIXTURE_SKILL_SECRET=do-not-print-me\n' > "$shome/.claude/skills/beta/.env"
 printf '{"skills":{"alpha":{"source":"owner/repo","skillPath":"skills/alpha"}}}\n' > "$shome/.agents/.skill-lock.json"
 printf -- '---\nname: gamma\n---\nThis skill shells out to docker at runtime.\n' > "$sws/.claude/skills/gamma/SKILL.md"
 printf -- '---\nname: delta\n---\nPure helm.\n' > "$sws/skills/delta/SKILL.md"
@@ -743,6 +744,8 @@ grep -q '^ssh_key	id_fixture$' <<<"$inv" && grep -q '^ssh_pub	id_fixture.pub$' <
 	&& ok "collect never prints credential file contents" || bad "collect never prints credential file contents" ""
 grep -q '^user_skill	alpha	-$' <<<"$inv" && grep -q '^user_skill	beta	test.sh$' <<<"$inv" && grep -q "^skill_lock	$shome/.agents/.skill-lock.json$" <<<"$inv" \
 	&& ok "collect lists user-level skills with docker hits and the skill lock" || bad "collect lists user-level skills with docker hits and the skill lock" "$inv"
+grep -q $'^skill_cred\tbeta\t.env$' <<<"$inv" && ! grep -q 'do-not-print-me' <<<"$inv" \
+	&& ok "collect flags a credential-looking file under a user skill without reading it" || bad "collect flags a credential-looking file under a user skill without reading it" "$inv"
 grep -q '^ws_skill	.claude/skills/gamma	SKILL.md$' <<<"$inv" && grep -q '^ws_skill	skills/delta	-$' <<<"$inv" \
 	&& ok "collect lists workspace skills with their docker hits" || bad "collect lists workspace skills with their docker hits" "$inv"
 grep -q '^unit	EnvironmentFile	' <<<"$inv" && grep -q '^unit	Environment	CC_LOG_FILE$' <<<"$inv" \
@@ -790,6 +793,11 @@ grep -qE 'alpha.*/etc/claude-code' <<<"$plan" && grep -qE 'beta.*test.sh' <<<"$p
 grep -qE 'gamma.*SKILL.md' <<<"$plan" && sed -n '/^== red items/,$p' <<<"$plan" | grep -q 'gamma' \
 	&& ok "docker in a skill's runtime path is a red item" || bad "docker in a skill's runtime path is a red item" "$plan"
 sed -n '/^== red items/,$p' <<<"$plan" | grep -q 'bypassPermissions' && ok "bypassPermissions is a red item" || bad "bypassPermissions is a red item" "$plan"
+red="$(sed -n '/^== red items/,$p' <<<"$plan")"
+grep -q 'beta' <<<"$red" && grep -q '\.env' <<<"$red" \
+	&& ok "a credential-looking file under a skill is a red item" || bad "a credential-looking file under a skill is a red item" "$plan"
+! grep -q 'do-not-print-me' <<<"$plan$(cat "$im/plan.err")" \
+	&& ok "a skill's credential-looking file content never appears in plan output" || bad "a skill's credential-looking file content never appears in plan output" ""
 grep -qE '^ *git .*(system|not in lock)' <<<"$plan" && ok "tool table classifies git" || bad "tool table classifies git" "$plan"
 grep -qE 'allow_from|admin_from' <<<"$plan" && ok "plan reminds that open_ids are per app" || bad "plan reminds that open_ids are per app" "$plan"
 ! grep -q 'fixture-feishu-secret' <<<"$plan$(cat "$im/plan.err")" && ! grep -q 'sk-fixture-env-secret' <<<"$plan$(cat "$im/plan.err")" \

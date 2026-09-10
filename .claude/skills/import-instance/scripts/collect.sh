@@ -82,10 +82,25 @@ done
 
 # Skills: user level (managed layer candidates) and workspace level (stay with the workspace).
 docker_hits() { grep -lw docker "$1"/* 2>/dev/null | while IFS= read -r h; do basename "${h}"; done | paste -sd, - || true; }
+# A user-level skill is copied verbatim into the deploy repo (see the import step), and skills
+# routinely carry a gitignored credential file. Flag names only, never read the file.
+skill_creds() {
+	local d="$1" skill="$2" f b
+	while IFS= read -r f; do
+		[ -n "${f}" ] || continue
+		b="$(basename "${f}")"
+		case "${b}" in
+			*.pub) continue ;;
+			.env|.env.*|*.pem|id_*|credentials*|*.key) rec skill_cred "${skill}" "${b}" ;;
+		esac
+	done < <(find "${d}" -type f 2>/dev/null)
+}
 for d in "${HOME_DIR}"/.claude/skills/*/; do
 	[ -f "${d}/SKILL.md" ] || continue
+	name="$(basename "${d}")"
 	hits="$(docker_hits "${d}")"
-	rec user_skill "$(basename "${d}")" "${hits:--}"
+	rec user_skill "${name}" "${hits:--}"
+	skill_creds "${d}" "${name}"
 done
 [ -f "${HOME_DIR}/.agents/.skill-lock.json" ] && rec skill_lock "${HOME_DIR}/.agents/.skill-lock.json"
 if [ -n "${work_dir}" ] && [ -d "${work_dir}" ]; then
