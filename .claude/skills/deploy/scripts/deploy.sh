@@ -328,8 +328,12 @@ remote_up() {
 	[ -n "${INSTANCE}" ] && svc=" ${INSTANCE}"
 	ts="$(date +%Y%m%d-%H%M%S)"
 	log="${LOG_DIR}/${ts}-deploy-${HOST}.log"
-	local cmd="cd '${DEPLOY_DIR}' && docker compose pull${svc} && docker compose up -d${svc} && docker compose ps"
+	# The compose snippet declares networks: agentbox: external: true, so the network must exist
+	# before the first `docker compose up` on a fresh host; the inspect/create pair is idempotent.
+	local ensure_net="docker network inspect agentbox >/dev/null 2>&1 || docker network create agentbox"
+	local cmd="${ensure_net} && cd '${DEPLOY_DIR}' && docker compose pull${svc} && docker compose up -d${svc} && docker compose ps"
 	if [ "${DRY_RUN}" -eq 1 ]; then
+		echo "plan: ensure docker network agentbox exists on the host" >&2
 		echo "plan: ssh ${DEPLOY_HOST} -- ${cmd}" >&2
 		return 0
 	fi

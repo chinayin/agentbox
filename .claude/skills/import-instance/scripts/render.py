@@ -421,7 +421,7 @@ def snippet(a, recs, ctx):
     if fields(recs, "user_skill"):
         L.append(f"      - ./instances/{n}/claude:/etc/claude-code:ro")
     L += ["", "  # --- add under volumes: ---", f"  {n}-state:", f"  {n}-cache:", "",
-          "  # --- add once at top level (deploy creates the network on the host) ---",
+          "  # --- add once at top level (deploy ensures the network exists on the host) ---",
           "networks:", "  agentbox:", "    external: true", ""]
     return "\n".join(L)
 

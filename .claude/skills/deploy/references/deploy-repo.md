@@ -66,6 +66,7 @@ services:
   aliyun:
     image: ghcr.io/<owner>/agentbox:${AGENTBOX_VERSION}
     env_file: [./instances/aliyun/env]
+    networks: [agentbox]
     volumes:
       - ./instances/aliyun/config.toml:/agent/config.toml:ro
       - ./workspaces/aliyun:/workspace
@@ -74,7 +75,14 @@ services:
 volumes:
   aliyun-state:
   aliyun-cache:
+networks:
+  agentbox:
+    external: true
 ```
+
+`deploy.sh` creates the `agentbox` network on the host if it is missing (an idempotent
+`docker network inspect || docker network create` before `docker compose pull`), so this
+external-network declaration works on a fresh host with no manual `docker network create` step.
 
 This file is not generated. Paste in the service block that `new-instance`'s scaffold script
 prints, then swap the image line for the GHCR form above — the repo root's `docker-compose.yaml`
