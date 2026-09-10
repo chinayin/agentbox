@@ -11,7 +11,6 @@
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-# shellcheck disable=SC2034  # ROOT is used in task 2-4 functions and for testing
 ROOT="$(cd "${SKILL_DIR}/../../.." && pwd)"
 DEPLOY_SKILL_DIR="${SKILL_DIR}/../deploy"
 
@@ -168,9 +167,15 @@ run_collect() {
 		bash "${SKILL_DIR}/scripts/collect.sh" ${HOME_DIR:+--home "${HOME_DIR}"} "${SRC_DIR}" > "${INVENTORY}"
 	else
 		step "collecting from ${SOURCE}:${SRC_DIR} (read-only)"
-		vlog "ssh ${SOURCE}: bash -s -- ${SRC_DIR} < collect.sh"
-		ssh "${SSH_OPTS[@]}" "${SOURCE}" "bash -s -- ${HOME_DIR:+--home '${HOME_DIR}' }'${SRC_DIR}'" \
-			< "${SKILL_DIR}/scripts/collect.sh" > "${INVENTORY}"
+		declare -a cargs=()
+		[ -n "${HOME_DIR}" ] && cargs=(--home "${HOME_DIR}")
+		# Every argument is shell-escaped with printf '%q' before it reaches the remote shell, so a
+		# source directory or home path with a quote, space or shell metacharacter cannot break the
+		# remote command line (or worse, run something unintended on the source host).
+		local remote_cmd
+		remote_cmd="bash -s --$(printf ' %q' "${cargs[@]+"${cargs[@]}"}" "${SRC_DIR}")"
+		vlog "ssh ${SOURCE}: ${remote_cmd} < collect.sh"
+		rssh "${remote_cmd}" < "${SKILL_DIR}/scripts/collect.sh" > "${INVENTORY}"
 	fi
 }
 LOCKS=(--lock "${ROOT}/mise.lock" --lock "${ROOT}/mise.claude.lock" --lock "${ROOT}/mise.pi.lock")
@@ -188,7 +193,9 @@ fetch() {
 	if [ "${LOCAL}" -eq 1 ]; then
 		if [ "${kind}" = dir ]; then cp -R "${src%/}/." "${dst}"; else cp "${src}" "${dst}"; fi
 	else
-		rsync -a -e "${TMP}/ssh" "${SOURCE}:${src}" "${dst}"
+		# Escape the remote path so a quote, space or shell metacharacter in it cannot break rsync's
+		# remote-shell invocation.
+		rsync -a -e "${TMP}/ssh" "${SOURCE}:$(printf '%q' "${src}")" "${dst}"
 	fi
 	[ "${kind}" = cred ] && chmod 600 "${dst}"
 	return 0
@@ -215,19 +222,24 @@ do_import() {
 	trap - ERR
 }
 
+# The one line both dry-run branches print for the collect step; kept as a single helper so the
+# two actions cannot drift apart.
+plan_collect_line() {
+	if [ "${LOCAL}" -eq 1 ]; then echo "plan: bash collect.sh${HOME_DIR:+ --home ${HOME_DIR}} ${SRC_DIR} (local)" >&2
+	else echo "plan: ssh ${SOURCE} -- bash -s -- ${SRC_DIR} < collect.sh" >&2; fi
+}
+
 case "${ACTION}" in
 	plan)
 		if [ "${DRY_RUN}" -eq 1 ]; then
-			if [ "${LOCAL}" -eq 1 ]; then echo "plan: bash collect.sh${HOME_DIR:+ --home ${HOME_DIR}} ${SRC_DIR} (local)" >&2
-			else echo "plan: ssh ${SOURCE} -- bash -s -- ${SRC_DIR} < collect.sh" >&2; fi
+			plan_collect_line
 			echo "plan: render the migration plan to stdout" >&2
 			exit 0
 		fi
 		run_collect; run_render ;;
 	import)
 		if [ "${DRY_RUN}" -eq 1 ]; then
-			if [ "${LOCAL}" -eq 1 ]; then echo "plan: bash collect.sh${HOME_DIR:+ --home ${HOME_DIR}} ${SRC_DIR} (local)" >&2
-			else echo "plan: ssh ${SOURCE} -- bash -s -- ${SRC_DIR} < collect.sh" >&2; fi
+			plan_collect_line
 			echo "plan: write ${TARGET}/{config.toml,env} plus credential files and claude/ (0600 for credentials)" >&2
 			echo "plan: print the compose snippet for service '${NAME}' with image ${IMAGE}" >&2
 			exit 0

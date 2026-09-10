@@ -761,6 +761,13 @@ hits="$(grep -vE '^[[:space:]]*#' "$IM_SRC/collect.sh" | grep -nwE 'tee|rm|chmod
 grep -q 'HOME=/dev/null' "$IM_SRC/collect.sh" \
 	&& ok "collect.sh probes tools with an unwritable HOME so third-party binaries cannot write on the source" \
 	|| bad "collect.sh probes tools with an unwritable HOME so third-party binaries cannot write on the source" ""
+# Remote arguments (source dir, --home) must be shell-escaped before they reach the source host,
+# and rssh (the one place every remote command goes through) must actually be used, not dead code.
+grep -q "printf '%q'" "$IM_SRC/import-instance.sh" \
+	&& ok "remote arguments are shell-escaped before they reach the source host" \
+	|| bad "remote arguments are shell-escaped before they reach the source host" "no printf '%q' found"
+rssh_hits="$(grep -c 'rssh' "$IM_SRC/import-instance.sh")"
+[ "$rssh_hits" -ge 2 ] && ok "rssh is defined and actually used" || bad "rssh is defined and actually used" "count=$rssh_hits"
 
 # plan on the fixture: read-only, offline, and every mapping decision visible in the text
 AGENTBOX_IMPORT_SOCKS=127.0.0.1:1 bash "$IMPORT" --local --home "$shome" plan "$src" > "$im/plan.out" 2>"$im/plan.err"; rc=$?
