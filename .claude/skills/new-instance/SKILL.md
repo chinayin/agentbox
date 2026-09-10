@@ -10,6 +10,8 @@ state volume, one cache volume. The repo's rule is **one container per trust dom
 project** (`docs/MULTI_PROJECT.md` §1). So the first thing to settle is whether the user needs a
 new container at all.
 
+**边界：** 已经有一台裸机在跑这个实例的，不要用本技能重造；用 `import-instance`（`.claude/skills/import-instance/SKILL.md`）从现状导入。本技能只服务「还没有」的实例。
+
 ## Step 1: pick the branch
 
 Ask, if the request does not already say: *does the new work share the same secrets (chat app,

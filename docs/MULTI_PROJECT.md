@@ -13,6 +13,8 @@
 
 新开信任域用仓库自带的 Claude Code 技能 `.claude/skills/new-instance/SKILL.md`：它复制 `examples/demo/` 生成配置骨架、建工作区目录并打出 compose 片段，不写任何真值。
 
+已有一台裸机在跑 cc-connect、要换成容器的，用 `.claude/skills/import-instance/SKILL.md`：它只读读取源主机，把配置与凭据按挂载契约写进部署仓库，上线仍走 `deploy`。
+
 ## 2. 同信任域加 project：只改配置
 
 ```toml

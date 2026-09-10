@@ -56,6 +56,8 @@ make lock      # 升级工具链到上游最新（通常由 CI 的 lock.yml 跑�
 
 本地产物统一落 `runtime/`，已被 git 与 docker 忽略。本机网络不适合拉资产时用 remote-build 技能（`.claude/skills/remote-build/SKILL.md`）在远端构建，构建机地址放技能目录下已忽略的 `.env`。
 
+四个 Claude Code 技能分工：`new-instance` 从模板造实例、`import-instance` 从裸机实例反向导入、`remote-build` 在远端构建镜像、`deploy` 把部署仓库推到主机。都在 `.claude/skills/`。
+
 ## 文档
 
 | 文档 | 内容 |
