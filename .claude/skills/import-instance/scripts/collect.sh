@@ -33,7 +33,7 @@ while [ $# -gt 0 ]; do
 	esac
 done
 [ $# -eq 0 ] || DIR="$1"
-[ -n "${DIR}" ] || { usage >&2; echo "Error: <instance-dir> is required" >&2; exit 1; }
+[ -n "${DIR}" ] || { usage >&2; echo "Error: the instance directory argument is required" >&2; exit 1; }
 [ -f "${DIR}/config.toml" ] || { echo "Error: ${DIR}/config.toml not found" >&2; exit 2; }
 
 rec() { local IFS=$'\t'; printf '%s\n' "$*"; }

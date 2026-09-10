@@ -731,7 +731,7 @@ bash "$COLLECT" --home "$shome" "$im/nosuch" >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 2 ] && ok "collect exits 2 when config.toml is missing" || bad "collect exits 2 when config.toml is missing" "rc=$rc"
 # Read-only by construction: no redirection other than to stderr or /dev/null, and none of the
 # commands that change a file system. Comment lines are skipped; the help heredoc must avoid them.
-hits="$(grep -vE '^[[:space:]]*#' "$IM_SRC/collect.sh" | grep -E '(^|[^0-9&])>' | grep -vE '2>/dev/null|>&2|2>&1|</dev/null' || true)"
+hits="$(grep -vE '^[[:space:]]*#' "$IM_SRC/collect.sh" | sed -E 's#2>/dev/null|>/dev/null|>&2|2>&1|</dev/null##g' | grep -E '(^|[^0-9&])>' || true)"
 [ -z "$hits" ] && ok "collect.sh has no redirection that could write a file" || bad "collect.sh has no redirection that could write a file" "$hits"
 hits="$(grep -vE '^[[:space:]]*#' "$IM_SRC/collect.sh" | grep -nwE 'tee|rm|chmod|chown|systemctl|mkdir|install|mv|cp|truncate|sed -i' || true)"
 [ -z "$hits" ] && ok "collect.sh calls no command that writes" || bad "collect.sh calls no command that writes" "$hits"
