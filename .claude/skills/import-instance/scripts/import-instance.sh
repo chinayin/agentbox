@@ -173,7 +173,13 @@ run_collect() {
 			< "${SKILL_DIR}/scripts/collect.sh" > "${INVENTORY}"
 	fi
 }
-run_render()  { :; }   # Task 3
+LOCKS=(--lock "${ROOT}/mise.lock" --lock "${ROOT}/mise.claude.lock" --lock "${ROOT}/mise.pi.lock")
+run_render() {
+	step "rendering the migration plan"
+	declare -a hargs=()
+	[ -n "${HOST}" ] && hargs=(--host "${HOST}")
+	python3 "${SKILL_DIR}/scripts/render.py" --inventory "${INVENTORY}" "${LOCKS[@]}" --name "${NAME:-instance}" "${hargs[@]+"${hargs[@]}"}" --image "${IMAGE}"
+}
 do_import()   { :; }   # Task 4
 
 case "${ACTION}" in

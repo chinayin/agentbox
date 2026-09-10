@@ -612,6 +612,10 @@ group "import-instance skill"
 IM_SRC="$ROOT/.claude/skills/import-instance/scripts"
 im="$TMP/im"; mkdir -p "$im/skills/import-instance/scripts" "$im/skills/deploy" "$im/repo/hosts/h1/instances" "$im/other/hosts/h2/instances"
 cp "$IM_SRC"/* "$im/skills/import-instance/scripts/"
+# render.py resolves lock files via ROOT, which the driver derives from its own script path
+# (SKILL_DIR/../../..); under this fixture's shallower copy that lands on $TMP, not $ROOT. Mirror
+# the real lock files there so the driver's tool-coverage step reads the genuine mise*.lock content.
+cp "$ROOT/mise.lock" "$ROOT/mise.claude.lock" "$ROOT/mise.pi.lock" "$TMP/"
 printf 'AGENTBOX_IMPORT_SOURCE=user@src.example.test\nAGENTBOX_IMPORT_KEY=~/nope.pem\n' > "$im/skills/import-instance/.env"
 printf 'AGENTBOX_DEPLOY_REPO=%s\n' "$im/repo" > "$im/skills/deploy/.env"
 printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.2.0\n' > "$im/repo/hosts/h1/host.env"
@@ -735,6 +739,36 @@ hits="$(grep -vE '^[[:space:]]*#' "$IM_SRC/collect.sh" | sed -E 's#2>/dev/null|>
 [ -z "$hits" ] && ok "collect.sh has no redirection that could write a file" || bad "collect.sh has no redirection that could write a file" "$hits"
 hits="$(grep -vE '^[[:space:]]*#' "$IM_SRC/collect.sh" | grep -nwE 'tee|rm|chmod|chown|systemctl|mkdir|install|mv|cp|truncate|sed -i' || true)"
 [ -z "$hits" ] && ok "collect.sh calls no command that writes" || bad "collect.sh calls no command that writes" "$hits"
+
+# plan on the fixture: read-only, offline, and every mapping decision visible in the text
+AGENTBOX_IMPORT_SOCKS=127.0.0.1:1 bash "$IMPORT" --local --home "$shome" plan "$src" > "$im/plan.out" 2>"$im/plan.err"; rc=$?
+[ "$rc" -eq 0 ] && ok "local plan exits 0 even with an unusable SOCKS proxy (no connection)" || bad "local plan exits 0 even with an unusable SOCKS proxy (no connection)" "rc=$rc $(cat "$im/plan.err")"
+plan="$(cat "$im/plan.out")"
+for s in '== artifacts' '== config rewrites' '== file credentials' '== skills' '== tools' '== red items'; do
+	grep -q "^$s" <<<"$plan" && ok "plan has section '$s'" || bad "plan has section '$s'" ""
+done
+grep -q 'work_dir.*\${WORK_DIR}' <<<"$plan" && ok "plan rewrites work_dir to \${WORK_DIR}" || bad "plan rewrites work_dir to \${WORK_DIR}" "$plan"
+grep -qE 'ANTHROPIC_MODEL.*\$\{ANTHROPIC_MODEL\}.*literal' <<<"$plan" && ok "plan turns a literal into a placeholder carried to env" || bad "plan turns a literal into a placeholder carried to env" "$plan"
+grep -qE 'GATEWAY_ADMIN_TOKEN.*secret' <<<"$plan" && ! grep -q 'sk-fixture-secret-in-config' <<<"$plan$(cat "$im/plan.err")" \
+	&& ok "plan flags a secret literal in config without printing it" || bad "plan flags a secret literal in config without printing it" "$plan"
+grep -q 'KUBECONFIG.*/agent/kubeconfig-dev.yaml:/agent/kubeconfig-prod.yaml' <<<"$plan" && ok "plan maps KUBECONFIG to /agent paths" || bad "plan maps KUBECONFIG to /agent paths" "$plan"
+grep -qE 'HTTPS_PROXY.*egress' <<<"$plan" && ok "plan warns that proxy values may not apply to the new host" || bad "plan warns that proxy values may not apply to the new host" "$plan"
+grep -qE '^ *WORK_DIR.*discard' <<<"$plan" && ok "plan discards .env keys the config does not reference" || bad "plan discards .env keys the config does not reference" "$plan"
+grep -q 'id_fixture.*ssh_key' <<<"$plan" && grep -q 'GIT_SSH_COMMAND' <<<"$plan" && ok "plan mounts the first ssh key and wires GIT_SSH_COMMAND" || bad "plan mounts the first ssh key and wires GIT_SSH_COMMAND" "$plan"
+grep -qE 'alpha.*/etc/claude-code' <<<"$plan" && grep -qE 'beta.*test.sh' <<<"$plan" && ok "plan routes user skills to the managed layer and lists docker in self-tests" || bad "plan routes user skills to the managed layer and lists docker in self-tests" "$plan"
+grep -qE 'gamma.*SKILL.md' <<<"$plan" && sed -n '/^== red items/,$p' <<<"$plan" | grep -q 'gamma' \
+	&& ok "docker in a skill's runtime path is a red item" || bad "docker in a skill's runtime path is a red item" "$plan"
+sed -n '/^== red items/,$p' <<<"$plan" | grep -q 'bypassPermissions' && ok "bypassPermissions is a red item" || bad "bypassPermissions is a red item" "$plan"
+grep -qE '^ *git .*(system|not in lock)' <<<"$plan" && ok "tool table classifies git" || bad "tool table classifies git" "$plan"
+grep -qE 'allow_from|admin_from' <<<"$plan" && ok "plan reminds that open_ids are per app" || bad "plan reminds that open_ids are per app" "$plan"
+! grep -q 'fixture-feishu-secret' <<<"$plan$(cat "$im/plan.err")" && ! grep -q 'sk-fixture-env-secret' <<<"$plan$(cat "$im/plan.err")" \
+	&& ok "plan output carries no value from the source .env" || bad "plan output carries no value from the source .env" ""
+# tool coverage against the real lock files: a covered tool and a not-in-lock tool
+tinv="$im/tools.inv"; { echo "$inv" | grep -v '^tool	'; printf 'tool\tkubectl\t/usr/bin/kubectl\tClient Version: v1.36.4\ntool\tfoo\t/usr/bin/foo\tfoo 9.9\ntool\tdocker\t/usr/bin/docker\tDocker version 29.7.2\n'; } > "$tinv"
+tplan="$(python3 "$IM_SRC/render.py" --inventory "$tinv" --lock "$ROOT/mise.lock" --lock "$ROOT/mise.claude.lock" --name t 2>&1)"
+grep -qE '^ *kubectl .*covered' <<<"$tplan" && grep -qE '^ *foo .*not in lock' <<<"$tplan" && sed -n '/^== red items/,$p' <<<"$tplan" | grep -q 'foo' \
+	&& ok "tool coverage marks covered and not-in-lock tools, the latter red" || bad "tool coverage marks covered and not-in-lock tools, the latter red" "$tplan"
+sed -n '/^== red items/,$p' <<<"$tplan" | grep -q 'docker' && ok "docker on the source is always a red item" || bad "docker on the source is always a red item" "$tplan"
 
 group "template hygiene"
 for f in "$ROOT"/examples/*/config.toml; do
