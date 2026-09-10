@@ -300,10 +300,13 @@ sync_host() {
 	# The remote .env is derived from host.env, never synced: connection fields stay local.
 	if [ "${DRY_RUN}" -eq 1 ]; then
 		echo "plan: write ${DEPLOY_DIR}/.env with AGENTBOX_VERSION=${AGENTBOX_VERSION}" >&2
-		echo "plan: chmod 600 ${DEPLOY_DIR}/instances/*/env and chown to UID 1000" >&2
+		echo "plan: chmod 600 every file under ${DEPLOY_DIR}/instances/*/ (config.toml and claude/ excepted) and chown -R 1000:1000 each instance directory" >&2
 	else
 		rssh "printf 'AGENTBOX_VERSION=%s\n' '${AGENTBOX_VERSION}' > '${DEPLOY_DIR}/.env'"
-		rssh "chmod 600 '${DEPLOY_DIR}'/instances/*/env"
+		# Every file credential (env, kubeconfig-*, ssh_key) is 0600; config.toml stays readable
+		# because the container reads it through the bind mount, and claude/ is a read-only code
+		# tree the agent must be able to list. docs/TOOLS.md section 3 explains the split.
+		rssh "find '${DEPLOY_DIR}'/instances -mindepth 2 -type f ! -name config.toml ! -path '*/claude/*' -exec chmod 600 {} +"
 		rssh "install -d -o 1000 -g 1000 -m 0755 '${DEPLOY_DIR}/workspaces'"
 	fi
 }
@@ -315,7 +318,7 @@ prepare_workspaces() {
 	while IFS= read -r n; do
 		[ -n "${n}" ] || continue
 		rssh "install -d -o 1000 -g 1000 -m 0755 '${DEPLOY_DIR}/workspaces/${n}'"
-		rssh "chown 1000:1000 '${DEPLOY_DIR}/instances/${n}/env'"
+		rssh "chown -R 1000:1000 '${DEPLOY_DIR}/instances/${n}'"
 	done < <(list_instances)
 }
 

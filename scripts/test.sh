@@ -588,6 +588,8 @@ out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run 
 [ "$rc" -eq 0 ] && ok "deploy --dry-run exits 0" || bad "deploy --dry-run exits 0" "rc=$rc $out"
 grep -q 'rsync' <<<"$out" && grep -q 'docker compose up' <<<"$out" && grep -q 'chmod 600' <<<"$out" \
 	&& ok "dry-run shows rsync, compose and the 0600 step" || bad "dry-run shows rsync, compose and the 0600 step" "$out"
+grep -q 'chown -R 1000:1000' <<<"$out" && grep -q 'config.toml and claude/ excepted' <<<"$out" \
+	&& ok "dry-run shows file credentials tightened and the instance directory chowned" || bad "dry-run shows file credentials tightened and the instance directory chowned" "$out"
 # the transport is a whitelist: nothing from the agentbox source tree may appear in the rsync source
 grep -q "$dp/repo/hosts/h1/" <<<"$out" && ! grep -qE 'Dockerfile|entrypoint\.sh|mise\.toml' <<<"$out" \
 	&& ok "rsync source is the host directory only, no agentbox source" || bad "rsync source is the host directory only, no agentbox source" "$out"

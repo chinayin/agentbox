@@ -89,8 +89,11 @@ The server holds only deploy artifacts, no source:
 /data/agentbox/                       DEPLOY_DIR
   docker-compose.yaml
   .env                                 written by deploy; compose variables only, no ssh info
-  instances/<name>/config.toml         0644
+  instances/<name>/config.toml         0644, owned by UID 1000
   instances/<name>/env                 0600, owned by UID 1000
+  instances/<name>/kubeconfig-*        0600, owned by UID 1000 (file credentials, one file each)
+  instances/<name>/ssh_key             0600, owned by UID 1000
+  instances/<name>/claude/             read-only managed layer for /etc/claude-code (skills, lock)
   workspaces/<name>/                   created and chowned to UID 1000 by deploy
 ```
 
@@ -130,3 +133,5 @@ opens it, so it can be — and is — tightened to `0600` and owned by UID 1000 
 
 The two files carrying different modes is not an inconsistency to fix; it follows from one being
 read by the container and the other only ever being read by compose on the host.
+
+File credentials (`kubeconfig-*`, `ssh_key`) follow `env`: 0600 and owned by UID 1000, because the container reads them through a bind mount as that UID and nothing else on the host should. `claude/` is code, not credentials, and keeps the modes it arrived with. `deploy` applies all of this on every run, so an instance written by `import-instance` needs no manual chmod on the server.
