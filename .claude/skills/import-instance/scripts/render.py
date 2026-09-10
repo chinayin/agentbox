@@ -6,7 +6,7 @@ Without --out: print the migration plan on stdout. With --out DIR: also write DI
 copied from the source .env), write the credential/skill copy list to --copy-list, and print the
 compose snippet after the plan. Nothing this script prints is a value from the source .env or a
 credential file; literals lifted from config.toml are written to env, never printed.
-Exit codes: 0 ok / 1 usage error or malformed inventory / 2 lock file or env file missing
+Exit codes: 0 ok / 1 usage error or malformed inventory / 2 inventory, lock or env file missing
 """
 import argparse
 import os
@@ -17,7 +17,10 @@ BEGIN = "__AGENTBOX_CONFIG_BEGIN__"
 END = "__AGENTBOX_CONFIG_END__"
 SECRET_NAME = re.compile(r"(TOKEN|SECRET|PASSWORD|PASSWD|_KEY$|^KEY_)", re.I)
 PROXY_NAMES = {"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY"}
-KV_LINE = re.compile(r'^(\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)"([^"]*)"(.*)$')
+KV_LINE = re.compile(r'^(\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(?:"([^"]*)"|\'([^\']*)\')(.*)$')
+# A TOML multi-line (triple-quoted) string opening: key = """ or key = '''. The value, and the
+# closing delimiter, may be on the same line or several lines later; either way it is not rewritten.
+TRIPLE_OPEN = re.compile(r'^(\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)("""|\'\'\')(.*)$')
 HEADER = re.compile(r"^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(#.*)?$")
 PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 OPTIONS_TABLE = "projects.agent.options"
@@ -42,6 +45,15 @@ VERSION_RE = re.compile(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?")
 def die(msg, code=1):
     print(f"Error: {msg}", file=sys.stderr)
     sys.exit(code)
+
+
+class ArgParser(argparse.ArgumentParser):
+    """argparse's own error() prints a usage banner and exits 2; the contract for this script is
+    an Error: line on stderr and exit 1, matching every other usage failure it can raise."""
+
+    def error(self, message):
+        print(f"Error: {message}", file=sys.stderr)
+        sys.exit(1)
 
 
 def parse_inventory(text):
@@ -105,8 +117,11 @@ def coverage(name, version, lock):
         return "system", "ships with the base image; not lock-tracked"
     lid = LOCK_ALIAS.get(name)
     if lid is None:
-        hits = [k for k in lock if name.lower() in k.lower().rsplit("/", 1)[-1]]
-        lid = hits[0] if len(hits) == 1 else None
+        hits = sorted(k for k in lock if name.lower() in k.lower().rsplit("/", 1)[-1])
+        if len(hits) > 1:
+            candidates = ", ".join(f"{k} ({lock[k]})" for k in hits)
+            return "ambiguous", f"matches {candidates}; pick one explicitly in mise.toml (docs/TOOLCHAIN.md section 4)"
+        lid = hits[0] if hits else None
     if lid is None or lid not in lock:
         return "not in lock", "add it to mise.toml (docs/TOOLCHAIN.md section 4) or drop the dependency"
     lv = lock[lid]
@@ -122,19 +137,42 @@ def rewrite(config_lines, recs):
     ssh_keys = [r[0] for r in fields(recs, "ssh_key")]
     ctx = {"rewrites": [], "literals": [], "kube": [], "red": [], "notes": [], "mounts": []}
     out, table, env_end = [], None, []
-    for i, line in enumerate(config_lines):
+    n = len(config_lines)
+    i = 0
+    while i < n:
+        line = config_lines[i]
         h = HEADER.match(line)
         if h:
             table = h.group(1).strip()
             out.append(line)
+            i += 1
             continue
+        if table in (OPTIONS_TABLE, ENV_TABLE):
+            tm = TRIPLE_OPEN.match(line)
+            if tm:
+                # Multi-line TOML string: pass the opening line and everything through the closing
+                # delimiter (same line or several lines later) through verbatim; flag it for a human.
+                mkey, delim, rest_of_line = tm.group(2), tm.group(4), tm.group(5)
+                block = [line]
+                j = i
+                closed = delim in rest_of_line
+                while not closed and j + 1 < n:
+                    j += 1
+                    block.append(config_lines[j])
+                    closed = delim in config_lines[j]
+                out.extend(block)
+                ctx["red"].append(f"{mkey}: multi-line string is not rewritten; convert it by hand")
+                i = j + 1
+                continue
         m = KV_LINE.match(line)
         if not m or table not in (OPTIONS_TABLE, ENV_TABLE):
             if table == OPTIONS_TABLE and re.match(r'^\s*mode\s*=\s*"bypassPermissions"', line):
                 ctx["red"].append("mode = bypassPermissions: only with an explicit allow_from list (docs/SECRETS.md section 3)")
             out.append(line)
+            i += 1
             continue
-        indent, key, eq, val, rest = m.groups()
+        indent, key, eq, val_dq, val_sq, rest = m.groups()
+        val = val_dq if val_dq is not None else val_sq
         if table == OPTIONS_TABLE:
             if key == "work_dir" and val != "${WORK_DIR}":
                 out.append(f'{indent}{key}{eq}"${{WORK_DIR}}"{rest}')
@@ -143,6 +181,7 @@ def rewrite(config_lines, recs):
                 if key == "mode" and val == "bypassPermissions":
                     ctx["red"].append("mode = bypassPermissions: only with an explicit allow_from list (docs/SECRETS.md section 3)")
                 out.append(line)
+            i += 1
             continue
         # env table
         env_end.append(len(out) + 1)
@@ -151,6 +190,7 @@ def rewrite(config_lines, recs):
             if ph.group(1) not in env_keys:
                 ctx["red"].append(f"{key}: placeholder ${{{ph.group(1)}}} has no value in the source .env")
             out.append(line)
+            i += 1
             continue
         if key == "KUBECONFIG":
             targets = []
@@ -166,6 +206,7 @@ def rewrite(config_lines, recs):
             new = ":".join(targets)
             out.append(f'{indent}{key}{eq}"{new}"{rest}')
             ctx["rewrites"].append((key, "<paths>", new, "each file mounted :ro under /agent"))
+            i += 1
             continue
         note = "literal carried to env"
         if SECRET_NAME.search(key):
@@ -176,6 +217,7 @@ def rewrite(config_lines, recs):
         out.append(f'{indent}{key}{eq}"${{{key}}}"{rest}')
         ctx["rewrites"].append((key, "<literal>", f"${{{key}}}", note))
         ctx["literals"].append((key, val))
+        i += 1
     if ssh_keys:
         ctx["mounts"].append(("ssh_key", SSH_KEY_MOUNT))
         if env_end:
@@ -230,7 +272,8 @@ def build_plan(recs, ctx, lock, host, name):
         L.append(f"  {lock_path:<44} {'claude/.skill-lock.json':<44} for npx skills update")
     for s in fields(recs, "ws_skill"):
         L.append(f"  {'<work_dir>/' + s[0]:<44} {'-':<44} stays in the workspace")
-    L.append(f"  {'~/.claude.json, sessions, ~/.gnupg':<44} {'-':<44} not migrated: state volume starts empty")
+    L.append(f"  {'~/.claude.json, sessions':<44} {'-':<44} not migrated: state volume starts empty")
+    L.append(f"  {'~/.gnupg':<44} {'-':<44} not migrated: signing keys, if needed, go through the docs/TOOLS.md credential channel")
     wd = field(recs, "work_dir")
     remote = field(recs, "git_remote")
     if remote:
@@ -271,7 +314,7 @@ def build_plan(recs, ctx, lock, host, name):
         name_, path, ver = (t + ["", "", ""])[:3]
         res, detail = coverage(name_, ver, lock)
         L.append(f"  {name_:<12} {ver[:40]:<40} {res:<14} {detail}")
-        if res in ("not in lock", "not in image"):
+        if res in ("not in lock", "not in image", "ambiguous"):
             ctx["red"].append(f"tool {name_}: {res}; {detail}")
     L.append("")
     L.append("== red items")
@@ -286,7 +329,7 @@ def build_plan(recs, ctx, lock, host, name):
 
 
 def main():
-    ap = argparse.ArgumentParser(add_help=True)
+    ap = ArgParser(add_help=True)
     ap.add_argument("--inventory", required=True)
     ap.add_argument("--lock", action="append", default=[])
     ap.add_argument("--name", required=True)
@@ -297,6 +340,8 @@ def main():
     a = ap.parse_args()
     if not a.lock:
         die("at least one --lock is required")
+    if not os.path.isfile(a.inventory):
+        die(f"inventory file not found: {a.inventory}", 2)
     with open(a.inventory, encoding="utf-8") as fh:
         recs, config = parse_inventory(fh.read())
     lock = load_lock(a.lock)

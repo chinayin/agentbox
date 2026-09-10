@@ -681,6 +681,7 @@ ANTHROPIC_BASE_URL = "\${ANTHROPIC_BASE_URL}"
 ANTHROPIC_AUTH_TOKEN = "\${ANTHROPIC_AUTH_TOKEN}"
 ANTHROPIC_MODEL = "vendor/model-x"
 GATEWAY_ADMIN_TOKEN = "sk-fixture-secret-in-config"
+EXTRA_API_SECRET = 'fixture-single-quoted'
 KUBECONFIG = "$shome/.kube/dev.yaml:$shome/.kube/prod.yaml"
 HTTPS_PROXY = "http://proxy.example.test:7890"
 NO_PROXY = "localhost,127.0.0.1"
@@ -751,6 +752,8 @@ grep -q 'work_dir.*\${WORK_DIR}' <<<"$plan" && ok "plan rewrites work_dir to \${
 grep -qE 'ANTHROPIC_MODEL.*\$\{ANTHROPIC_MODEL\}.*literal' <<<"$plan" && ok "plan turns a literal into a placeholder carried to env" || bad "plan turns a literal into a placeholder carried to env" "$plan"
 grep -qE 'GATEWAY_ADMIN_TOKEN.*secret' <<<"$plan" && ! grep -q 'sk-fixture-secret-in-config' <<<"$plan$(cat "$im/plan.err")" \
 	&& ok "plan flags a secret literal in config without printing it" || bad "plan flags a secret literal in config without printing it" "$plan"
+grep -qE 'EXTRA_API_SECRET.*secret' <<<"$plan" && ! grep -q 'fixture-single-quoted' <<<"$plan$(cat "$im/plan.err")" \
+	&& ok "plan flags a single-quoted secret literal without printing it" || bad "plan flags a single-quoted secret literal without printing it" "$plan"
 grep -q 'KUBECONFIG.*/agent/kubeconfig-dev.yaml:/agent/kubeconfig-prod.yaml' <<<"$plan" && ok "plan maps KUBECONFIG to /agent paths" || bad "plan maps KUBECONFIG to /agent paths" "$plan"
 grep -qE 'HTTPS_PROXY.*egress' <<<"$plan" && ok "plan warns that proxy values may not apply to the new host" || bad "plan warns that proxy values may not apply to the new host" "$plan"
 grep -qE '^ *WORK_DIR.*discard' <<<"$plan" && ok "plan discards .env keys the config does not reference" || bad "plan discards .env keys the config does not reference" "$plan"
@@ -764,11 +767,30 @@ grep -qE 'allow_from|admin_from' <<<"$plan" && ok "plan reminds that open_ids ar
 ! grep -q 'fixture-feishu-secret' <<<"$plan$(cat "$im/plan.err")" && ! grep -q 'sk-fixture-env-secret' <<<"$plan$(cat "$im/plan.err")" \
 	&& ok "plan output carries no value from the source .env" || bad "plan output carries no value from the source .env" ""
 # tool coverage against the real lock files: a covered tool and a not-in-lock tool
-tinv="$im/tools.inv"; { echo "$inv" | grep -v '^tool	'; printf 'tool\tkubectl\t/usr/bin/kubectl\tClient Version: v1.36.4\ntool\tfoo\t/usr/bin/foo\tfoo 9.9\ntool\tdocker\t/usr/bin/docker\tDocker version 29.7.2\n'; } > "$tinv"
+tinv="$im/tools.inv"; { echo "$inv" | grep -v '^tool	'; printf 'tool\tkubectl\t/usr/bin/kubectl\tClient Version: v1.36.4\ntool\tfoo\t/usr/bin/foo\tfoo 9.9\ntool\tdocker\t/usr/bin/docker\tDocker version 29.7.2\ntool\tcli\t/usr/bin/cli\tcli 1.0\n'; } > "$tinv"
 tplan="$(python3 "$IM_SRC/render.py" --inventory "$tinv" --lock "$ROOT/mise.lock" --lock "$ROOT/mise.claude.lock" --name t 2>&1)"
 grep -qE '^ *kubectl .*covered' <<<"$tplan" && grep -qE '^ *foo .*not in lock' <<<"$tplan" && sed -n '/^== red items/,$p' <<<"$tplan" | grep -q 'foo' \
 	&& ok "tool coverage marks covered and not-in-lock tools, the latter red" || bad "tool coverage marks covered and not-in-lock tools, the latter red" "$tplan"
 sed -n '/^== red items/,$p' <<<"$tplan" | grep -q 'docker' && ok "docker on the source is always a red item" || bad "docker on the source is always a red item" "$tplan"
+grep -qE '^ *cli .*ambiguous' <<<"$tplan" && grep -q 'cli/cli' <<<"$tplan" && grep -q 'gitlab-org/cli' <<<"$tplan" && sed -n '/^== red items/,$p' <<<"$tplan" | grep -q 'cli' \
+	&& ok "an ambiguous tool-name match is flagged, not silently reported as not in lock" || bad "an ambiguous tool-name match is flagged, not silently reported as not in lock" "$tplan"
+# multi-line (triple-quoted) TOML strings are passed through untouched, not misparsed
+minv="$im/multiline.inv"
+{
+	printf 'owner\ttester\nuid\t501\nhome\t/home/tester\nwork_dir\t/home/tester/ws\n'
+	printf '__AGENTBOX_CONFIG_BEGIN__\n[projects.agent.options]\nwork_dir = "/home/tester/ws"\n\n[projects.agent.options.env]\nNOTE = """\nline1\n"""\n__AGENTBOX_CONFIG_END__\n'
+} > "$minv"
+mplan="$(python3 "$IM_SRC/render.py" --inventory "$minv" --lock "$ROOT/mise.lock" --name t 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && sed -n '/^== red items/,$p' <<<"$mplan" | grep -q 'NOTE' && ! grep -qE 'NOTE.*\$\{NOTE\}' <<<"$mplan" \
+	&& ok "a multi-line TOML string is left to a human, not misparsed as an empty rewrite" || bad "a multi-line TOML string is left to a human, not misparsed as an empty rewrite" "rc=$rc $mplan"
+# argparse usage errors and missing files exit clean, no Python traceback
+out="$(python3 "$IM_SRC/render.py" --lock "$ROOT/mise.lock" --name t 2>&1 >/dev/null)"; rc=$?
+[ "$rc" -eq 1 ] && [[ "$out" == Error:* ]] && ok "render.py without --inventory exits 1 with an Error: line" || bad "render.py without --inventory exits 1 with an Error: line" "rc=$rc $out"
+out="$(python3 "$IM_SRC/render.py" --inventory "$im/nosuch.inv" --lock "$ROOT/mise.lock" --name t 2>&1 >/dev/null)"; rc=$?
+[ "$rc" -eq 2 ] && grep -q 'Error:' <<<"$out" && ! grep -q 'Traceback' <<<"$out" \
+	&& ok "render.py exits 2 on a missing inventory file, no traceback" || bad "render.py exits 2 on a missing inventory file, no traceback" "rc=$rc $out"
+# ~/.gnupg keeps its own line and its own reason, distinct from the state-volume note
+grep -qE '\.gnupg.*docs/TOOLS\.md' <<<"$plan" && ok "plan explains the .gnupg credential channel separately" || bad "plan explains the .gnupg credential channel separately" "$plan"
 
 group "template hygiene"
 for f in "$ROOT"/examples/*/config.toml; do
