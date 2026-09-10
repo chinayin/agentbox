@@ -804,6 +804,25 @@ minv="$im/multiline.inv"
 mplan="$(python3 "$IM_SRC/render.py" --inventory "$minv" --lock "$ROOT/mise.lock" --name t 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && sed -n '/^== red items/,$p' <<<"$mplan" | grep -q 'NOTE' && ! grep -qE 'NOTE.*\$\{NOTE\}' <<<"$mplan" \
 	&& ok "a multi-line TOML string is left to a human, not misparsed as an empty rewrite" || bad "a multi-line TOML string is left to a human, not misparsed as an empty rewrite" "rc=$rc $mplan"
+# a source config that already sets GIT_SSH_COMMAND must be rewritten in place, not duplicated: a
+# second inserted line would make the rewritten TOML fail to parse, and the source's own key path
+# must never be lifted into env as a literal.
+gsinv="$im/gitssh.inv"
+{
+	printf 'owner\ttester\nuid\t501\nhome\t/home/tester\nwork_dir\t/home/tester/ws\nssh_key\tid_x\n'
+	printf '__AGENTBOX_CONFIG_BEGIN__\n[projects.agent.options]\nwork_dir = "/home/tester/ws"\n\n[projects.agent.options.env]\nGIT_SSH_COMMAND = "ssh -i /home/x/.ssh/k"\n__AGENTBOX_CONFIG_END__\n'
+} > "$gsinv"
+gsout="$im/gitssh-out"; mkdir -p "$gsout"; : > "$gsout/env"
+gserr="$(python3 "$IM_SRC/render.py" --inventory "$gsinv" --lock "$ROOT/mise.lock" --name t --out "$gsout" --copy-list "$im/gitssh-copies" 2>&1 >/dev/null)"; rc=$?
+[ "$rc" -eq 0 ] && ok "render.py exits 0 when the source already sets GIT_SSH_COMMAND" || bad "render.py exits 0 when the source already sets GIT_SSH_COMMAND" "rc=$rc $gserr"
+python3 - "$gsout/config.toml" <<'PY' && ok "GIT_SSH_COMMAND is rewritten in place to the mounted key, not duplicated" || bad "GIT_SSH_COMMAND is rewritten in place to the mounted key, not duplicated" "see config.toml"
+import sys, tomllib
+c = tomllib.load(open(sys.argv[1], "rb"))
+e = c["projects"]["agent"]["options"]["env"]
+assert e["GIT_SSH_COMMAND"] == "ssh -i /agent/ssh_key -o IdentitiesOnly=yes", e["GIT_SSH_COMMAND"]
+PY
+! grep -q '^GIT_SSH_COMMAND=' "$gsout/env" \
+	&& ok "env does not gain a duplicate GIT_SSH_COMMAND literal with the source's key path" || bad "env does not gain a duplicate GIT_SSH_COMMAND literal with the source's key path" "$(cat "$gsout/env")"
 # argparse usage errors and missing files exit clean, no Python traceback
 out="$(python3 "$IM_SRC/render.py" --lock "$ROOT/mise.lock" --name t 2>&1 >/dev/null)"; rc=$?
 [ "$rc" -eq 1 ] && [[ "$out" == Error:* ]] && ok "render.py without --inventory exits 1 with an Error: line" || bad "render.py without --inventory exits 1 with an Error: line" "rc=$rc $out"

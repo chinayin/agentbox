@@ -137,6 +137,7 @@ def rewrite(config_lines, recs):
     ssh_keys = [r[0] for r in fields(recs, "ssh_key")]
     ctx = {"rewrites": [], "literals": [], "kube": [], "red": [], "notes": [], "mounts": []}
     out, table, env_end = [], None, []
+    git_ssh_seen = False
     n = len(config_lines)
     i = 0
     while i < n:
@@ -208,6 +209,15 @@ def rewrite(config_lines, recs):
             ctx["rewrites"].append((key, "<paths>", new, "each file mounted :ro under /agent"))
             i += 1
             continue
+        if key == "GIT_SSH_COMMAND" and ssh_keys:
+            # The source already pins its own key path; rewrite it in place to the mounted form
+            # instead of also inserting a second GIT_SSH_COMMAND further down (duplicate TOML key,
+            # and the source's /home/.../.ssh/... path would otherwise be lifted into env as-is).
+            out.append(f'{indent}{key}{eq}"{GIT_SSH_COMMAND}"{rest}')
+            ctx["rewrites"].append((key, val, GIT_SSH_COMMAND, "rewritten: git uses the mounted key"))
+            git_ssh_seen = True
+            i += 1
+            continue
         note = "literal carried to env"
         if SECRET_NAME.search(key):
             note = "secret literal was hard-coded in config; moved to env"
@@ -220,7 +230,9 @@ def rewrite(config_lines, recs):
         i += 1
     if ssh_keys:
         ctx["mounts"].append(("ssh_key", SSH_KEY_MOUNT))
-        if env_end:
+        if git_ssh_seen:
+            pass  # already rewritten in place above
+        elif env_end:
             pos = env_end[-1]
             out.insert(pos, f'GIT_SSH_COMMAND = "{GIT_SSH_COMMAND}"')
             ctx["rewrites"].append(("GIT_SSH_COMMAND", "-", GIT_SSH_COMMAND, "added: git uses the mounted key"))
