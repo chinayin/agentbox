@@ -62,16 +62,15 @@ AGENTBOX_VERSION=x.x.x
   different tag, then run `deploy`. Omit it and the repo-level `defaults.env` supplies it; keep it
   only for a host that must stay behind the rest of the fleet.
 
-## `skills-lock.json`（仓库根，可选）
+## `instances/<name>/skills-lock.json`（可选）
 
-The fleet-wide skill manifest. `deploy` merges it with `hosts/<host>/instances/<name>/skills-lock.json`
-— the instance file wins on a skill name — and writes the result as that instance's manifest on the
-server, which the container mounts at `/agent/skills-lock.json`. Both files are whatever
-`npx skills add` writes; nothing here is a format of our own.
+The instance's skill manifest, mounted at `/agent/skills-lock.json`; the entrypoint installs what it
+names into the state volume on first start. It is whatever `npx skills add` writes — generate one in
+a scratch directory and commit it, rather than hand-writing JSON.
 
-The image ships no default manifest on purpose: a default an instance cannot refuse is identity in
-the image (`docs/ARCHITECTURE.md` §1). Dropping a skill for one instance is an edit here, not a
-rebuild.
+There is deliberately no fleet-wide default, in the image or here: an instance either names a skill
+or does not have it. Two instances that want the same skill repeat two lines, which is cheaper to
+read than an inheritance rule.
 
 ## `defaults.env`
 

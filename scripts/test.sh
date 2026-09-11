@@ -789,21 +789,15 @@ grep -q 'AGENTBOX_VERSION=0.1.0' <<<"$out" \
 vout="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run -v deploy h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ! grep -q 'sk-x' <<<"$vout" \
 	&& ok "instance secrets never appear in dry-run -v output" || bad "instance secrets never appear in dry-run -v output" "rc=$rc $vout"
-# The fleet default lives in the deploy repo, not in the image: deploy merges repo root with the
-# instance's own file and ships one manifest, so an instance can override a default by name and a
-# repo with no default ships the instance file untouched.
-printf '{"version":1,"skills":{"preinstalled":{"source":"owner/preset"},"alpha":{"source":"owner/preset-alpha"}}}\n' > "$dp/repo/skills-lock.json"
-printf '{"version":1,"skills":{"alpha":{"source":"owner/instance-alpha"}}}\n' > "$dp/repo/hosts/h1/instances/a1/skills-lock.json"
-( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm manifests ) 2>/dev/null
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
-[ "$rc" -eq 0 ] && grep -q 'skills-lock.json.*merged with' <<<"$out" \
-	&& ok "deploy plans the merged skill manifest" || bad "deploy plans the merged skill manifest" "rc=$rc $out"
-sed -n '/^merged_manifest() {/,/^}/p' "$dp/skill/scripts/deploy.sh" > "$TMP/mm.sh"
-merged="$(REPO="$dp/repo" HOST_DIR="$dp/repo/hosts/h1" bash -c '. "$1"; merged_manifest a1' _ "$TMP/mm.sh")"
-grep -q '"owner/instance-alpha"' <<<"$merged" && ! grep -q 'preset-alpha' <<<"$merged" && grep -q '"owner/preset"' <<<"$merged" \
-	&& ok "the instance manifest overrides the repo default by skill name" || bad "the instance manifest overrides the repo default by skill name" "$merged"
-rm "$dp/repo/skills-lock.json" "$dp/repo/hosts/h1/instances/a1/skills-lock.json"
-( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm nomanifests ) 2>/dev/null
+# The skill manifest is an ordinary instance file: rsynced with the rest, no merging, no repo-level
+# default. One instance, one manifest, and nothing inherited to reason about.
+printf '{"version":1,"skills":{"alpha":{"source":"owner/one"}}}\n' > "$dp/repo/hosts/h1/instances/a1/skills-lock.json"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm manifest ) 2>/dev/null
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run -v deploy h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ! grep -qi 'merge' <<<"$out" \
+	&& ok "deploy ships the instance manifest without merging anything into it" || bad "deploy ships the instance manifest without merging anything into it" "rc=$rc $out"
+rm "$dp/repo/hosts/h1/instances/a1/skills-lock.json"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm nomanifest ) 2>/dev/null
 
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run status h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'compose ps' <<<"$out" \

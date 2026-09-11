@@ -20,7 +20,7 @@ docker compose up -d
 | 容器内路径 | 模式 | 内容 | 必需 |
 |---|---|---|---|
 | `/agent/config.toml` | ro | 实例声明，只含 `${占位符}`，可进 git。`/agent/` 下可再挂文件型凭据 | 是 |
-| `/agent/skills-lock.json` | ro | 技能清单（`npx skills add` 生成的 lock，原样用），列出的技能首次启动时装进 `/state`；fleet 级默认清单由部署仓库合并下发，见 [SKILLS](docs/SKILLS.md) | 否 |
+| `/agent/skills-lock.json` | ro | 技能清单（`npx skills add` 生成的 lock，原样用），列出的技能首次启动时装进 `/state`，见 [SKILLS](docs/SKILLS.md) | 否 |
 | `/workspace` | rw | 工作区，宿主目录 bind mount | 是 |
 | `/state` | rw | 会话与身份状态，`HOME` 指向此 | 是 |
 | `/cache` | rw | 构建缓存，每信任域独占 | 建议 |
