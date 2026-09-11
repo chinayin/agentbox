@@ -160,7 +160,7 @@ echo "npx $*" >> "$NPX_LOG"
 FAKE
 chmod +x "$TMP/bin/npx"
 setup_instance "$TMP/i6"
-cat > "$TMP/i6/skill-lock.json" <<'LOCK'
+cat > "$TMP/i6/skills-lock.json" <<'LOCK'
 {"version": 3, "skills": {
   "alpha": {"source": "owner/one", "skillPath": "skills/alpha/SKILL.md"},
   "beta":  {"source": "owner/two", "skillPath": "skills/beta/SKILL.md"}}}
@@ -179,8 +179,38 @@ env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
 	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub >/dev/null 2>&1
 [ "$(grep -c '^npx' "$NPX_LOG")" = 1 ] && ! grep -q ' alpha ' "$NPX_LOG" \
 	&& ok "an already-installed skill is not fetched again" || bad "an already-installed skill is not fetched again" "$(cat "$NPX_LOG")"
+# The image ships a preset manifest; the instance manifest is read second and wins on a name.
+# PRESET_SRC is rewritten into a copy of the entrypoint, the same trick the cn profile test uses.
+sed "s|^\tlocal preset=/etc/agentbox/skills-lock.json|\tlocal preset=$TMP/preset.json|" "$ENTRY" > "$TMP/entry-preset.sh"
+printf '{"version":1,"skills":{"preinstalled":{"source":"owner/preset"},"alpha":{"source":"owner/preset-alpha"}}}\n' > "$TMP/preset.json"
+rm -rf "$TMP/i6/state/.claude/skills"; : > "$NPX_LOG"
+cat > "$TMP/i6/skills-lock.json" <<'LOCK'
+{"version": 1, "skills": {"alpha": {"source": "owner/one"}}}
+LOCK
+env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
+	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$TMP/entry-preset.sh" --stub >/dev/null 2>&1
+grep -q 'skills add owner/preset -g -s preinstalled' "$NPX_LOG" \
+	&& ok "a preset skill is installed without the instance naming it" || bad "a preset skill is installed without the instance naming it" "$(cat "$NPX_LOG")"
+grep -q 'skills add owner/one -g -s alpha' "$NPX_LOG" && ! grep -q 'owner/preset-alpha' "$NPX_LOG" \
+	&& ok "the instance manifest wins over the preset on the same name" || bad "the instance manifest wins over the preset on the same name" "$(cat "$NPX_LOG")"
+# The fake npx installs nothing, so every skill above counts as failed: the summary and the marker
+# are what an operator finds days later, when the startup log is out of the tail window.
+out="$(env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
+	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$TMP/entry-preset.sh" --stub 2>&1)"
+grep -q 'of 2 skills in the manifest are not installed' <<<"$out" \
+	&& ok "a failed install is summarised at startup" || bad "a failed install is summarised at startup" "$out"
+[ -s "$TMP/i6/state/.agents/.agentbox-skills-missing" ] \
+	&& ok "a failed install leaves a marker in the state volume" || bad "a failed install leaves a marker in the state volume" "no marker"
+mkdir -p "$TMP/i6/state/.claude/skills/alpha" "$TMP/i6/state/.claude/skills/preinstalled"
+env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
+	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$TMP/entry-preset.sh" --stub >/dev/null 2>&1
+[ ! -e "$TMP/i6/state/.agents/.agentbox-skills-missing" ] \
+	&& ok "the marker is cleared once every skill is installed" || bad "the marker is cleared once every skill is installed" "marker still there"
+rm -rf "$TMP/i6/state/.claude/skills"
+printf '{"version": 3, "skills": {"alpha": {"source": "owner/one"}, "beta": {"source": "owner/two"}}}\n' > "$TMP/i6/skills-lock.json"
+
 # A broken manifest must not take the agent down with it.
-echo 'not json' > "$TMP/i6/skill-lock.json"
+echo 'not json' > "$TMP/i6/skills-lock.json"
 out="$(env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
 	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub 2>&1)"; rc=$?
 [ $rc -eq 0 ] && grep -q 'unreadable' <<<"$out" \
@@ -1016,7 +1046,7 @@ tgt="$im/repo/hosts/h1/instances/srcops"
 HOME="$im/fakehome" AGENTBOX_DEPLOY_REPO="$im/repo" bash "$IMPORT" --local --home "$shome" import --host h1 --name srcops "$src" > "$im/import.out" 2>"$im/import.err"; rc=$?
 [ "$rc" -eq 0 ] && ok "local import exits 0" || bad "local import exits 0" "rc=$rc $(cat "$im/import.err")"
 [ -f "$tgt/docker-compose.yaml" ] && [ -f "$tgt/config.toml" ] && [ -f "$tgt/env" ] && [ -f "$tgt/kubeconfig-dev.yaml" ] && [ -f "$tgt/kubeconfig-prod.yaml" ] && [ -f "$tgt/ssh_key" ] \
-	&& [ -f "$tgt/skill-lock.json" ] && [ ! -e "$tgt/claude" ] \
+	&& [ -f "$tgt/skills-lock.json" ] && [ ! -e "$tgt/claude" ] \
 	&& ok "import writes compose, config, env, credentials and the skill manifest" || bad "import writes compose, config, env, credentials and the skill manifest" "$(find "$tgt" 2>/dev/null)"
 # GNU stat first, BSD second: GNU `stat -f %Lp` does not fail, it prints filesystem fields, so the
 # BSD-first order passed on macOS and failed on the Linux CI runner (2026-09-11, first CI run of
@@ -1052,7 +1082,7 @@ stray="$(find "$im" -newer "$im/marker" -type f -not -path "$tgt/*" -not -path "
 icf="$tgt/docker-compose.yaml"
 grep -q 'image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}$' "$icf" \
 	&& grep -q '^      - ./kubeconfig-dev.yaml:/agent/kubeconfig-dev.yaml:ro$' "$icf" && grep -q '^      - ./kubeconfig-prod.yaml:/agent/kubeconfig-prod.yaml:ro$' "$icf" \
-	&& grep -q '^      - ./ssh_key:/agent/ssh_key:ro$' "$icf" && grep -q '^      - ./skill-lock.json:/agent/skill-lock.json:ro$' "$icf" \
+	&& grep -q '^      - ./ssh_key:/agent/ssh_key:ro$' "$icf" && grep -q '^      - ./skills-lock.json:/agent/skills-lock.json:ro$' "$icf" \
 	&& ok "imported compose mounts every credential and the skill manifest relative to the instance directory" \
 	|| bad "imported compose mounts every credential and the skill manifest relative to the instance directory" "$(cat "$icf" 2>/dev/null)"
 ! grep -q 'add under' "$im/import.out" && ok "import prints the plan only, no compose snippet to paste" || bad "import prints the plan only, no compose snippet to paste" ""

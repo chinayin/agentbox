@@ -285,7 +285,7 @@ def build_plan(recs, ctx, lock, host, name):
         dst = "-" if lock_path else "(no manifest)"
         L.append(f"  {home + '/.claude/skills/' + s[0]:<44} {dst:<44} not copied: reinstalled from the manifest on first start")
     if lock_path:
-        L.append(f"  {lock_path:<44} {'skill-lock.json':<44} bind mount /agent/skill-lock.json:ro")
+        L.append(f"  {lock_path:<44} {'skills-lock.json':<44} bind mount /agent/skills-lock.json:ro")
     for s in fields(recs, "ws_skill"):
         L.append(f"  {'<work_dir>/' + s[0]:<44} {'-':<44} stays in the workspace")
     L.append(f"  {'~/.claude.json, sessions':<44} {'-':<44} not migrated: state volume starts empty")
@@ -422,7 +422,7 @@ def write_out(a, recs, new_config, ctx):
     # entrypoint installs from it into the state volume (docs/SKILLS.md).
     lock_path = field(recs, "skill_lock")
     if lock_path:
-        rows.append(("file", lock_path, "skill-lock.json"))
+        rows.append(("file", lock_path, "skills-lock.json"))
     with open(a.copy_list, "w", encoding="utf-8") as fh:
         for r in rows:
             fh.write("\t".join(r) + "\n")
@@ -442,7 +442,7 @@ def compose(a, recs, ctx):
         lines = fh.read().splitlines()
     mounts = [f"      - ./{dst}:{mount}:ro" for dst, mount in ctx["mounts"]]
     if field(recs, "skill_lock"):
-        mounts.append("      - ./skill-lock.json:/agent/skill-lock.json:ro")
+        mounts.append("      - ./skills-lock.json:/agent/skills-lock.json:ro")
     out, hits = [], {"service": 0, "container": 0, "workspace": 0, "cache": 0}
     for line in lines:
         if line.startswith("      #"):

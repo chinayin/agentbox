@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "gen-ssh-key": {
+      "source": "chinayin/coding-skillhub",
+      "sourceType": "github",
+      "skillPath": "skills/gen-ssh-key/SKILL.md"
+    },
+    "skill-creator": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skill-creator/SKILL.md"
+    }
+  }
+}
