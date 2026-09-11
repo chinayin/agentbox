@@ -806,6 +806,9 @@ vout="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run status h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'compose ps' <<<"$out" \
 	&& ok "status dry-run shows compose ps" || bad "status dry-run shows compose ps" "rc=$rc $out"
+# A skill-less agent is healthy in ps; the marker is the only thing that says otherwise.
+grep -q '.agentbox-skills-missing' <<<"$out" \
+	&& ok "status reads the missing-skills marker out of each container" || bad "status reads the missing-skills marker out of each container" "$out"
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run status 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && ok "status without a host exits 1" || bad "status without a host exits 1" "rc=$rc"
 # remove retires an instance the repo no longer has: refuse while the directory still exists (a

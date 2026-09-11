@@ -447,8 +447,11 @@ do_deploy() {
 	remote_up
 }
 
+# The skills an instance failed to install are reported once, at startup, and 20 lines of log do not
+# reach back that far after a day. The entrypoint leaves a marker in the state volume for exactly
+# this reason, so read it here: a silently skill-less agent looks healthy in `ps`.
 do_status() {
-	rssh "for d in '${DEPLOY_DIR}'/instances/*/; do echo \"==> \$(basename \"\$d\")\"; (cd \"\$d\" && docker compose ps && docker compose logs --tail 20); done"
+	rssh "for d in '${DEPLOY_DIR}'/instances/*/; do n=\$(basename \"\$d\"); echo \"==> \$n\"; (cd \"\$d\" && docker compose ps && docker compose logs --tail 20); for c in \$(cd \"\$d\" && docker compose ps -q); do docker exec \"\$c\" cat /state/.agents/.agentbox-skills-missing 2>/dev/null && echo \"Warning: \$n is missing skills (see above)\"; done; done"
 }
 
 # Retire an instance: the repo no longer has its directory (deleted and committed), the server still

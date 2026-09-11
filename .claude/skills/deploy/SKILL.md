@@ -31,6 +31,9 @@ fleet moves together from one line while a host that must stay behind keeps its 
 .claude/skills/deploy/scripts/deploy.sh remove <host> <instance>
 ```
 
+- `status` also prints each container's missing-skills marker when there is one: an agent whose
+  skills failed to install is `running` and healthy-looking, and the startup warning is long gone
+  from the log tail by then.
 - Always run `plan` first and show the user its output. It validates every instance's placeholders
   against its env file, checks that each instance's `docker-compose.yaml` still carries the shared
   hardening block from `examples/demo/docker-compose.yaml`, refuses a dirty deploy repo, and lists
