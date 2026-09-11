@@ -1,9 +1,11 @@
 # The deploy repository
 
-`deploy.sh` reads and writes a separate, private git repository (suggested name
-`agentbox-deploy`). This repository holds real config, real secrets and a per-host commit
-history; agentbox itself never sees a filled-in `env` or `config.toml`. This page is what a human
-reads once, when creating that repository or adding a new host to it.
+`deploy.sh` reads and writes a separate, private git repository. This repository holds real
+config, real secrets and a per-host commit history; agentbox itself never sees a filled-in `env`
+or `config.toml`. Host it on an internal or self-hosted git server, never on a public one
+(GitHub included): the secrets are committed in plaintext, so the repository's access control is
+the only thing protecting them. This page is what a human reads once, when creating that
+repository or adding a new host to it.
 
 ## Repository layout
 
