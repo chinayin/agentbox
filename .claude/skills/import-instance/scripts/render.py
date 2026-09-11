@@ -3,9 +3,10 @@
 
 Without --out: print the migration plan on stdout. With --out DIR: also write DIR/config.toml
 (rewritten), append the literals lifted out of the config to DIR/env (which must already exist,
-copied from the source .env), write the credential/skill copy list to --copy-list, and print the
-compose snippet after the plan. Nothing this script prints is a value from the source .env or a
-credential file; literals lifted from config.toml are written to env, never printed.
+copied from the source .env), write the credential/skill copy list to --copy-list, and write
+DIR/docker-compose.yaml from the --template file (examples/demo/docker-compose.yaml). Nothing this
+script prints is a value from the source .env or a credential file; literals lifted from
+config.toml are written to env, never printed.
 Exit codes: 0 ok / 1 usage error or malformed inventory / 2 inventory, lock or env file missing
 """
 import argparse
@@ -354,6 +355,7 @@ def main():
     ap.add_argument("--image", default="ghcr.io/chinayin/agentbox")
     ap.add_argument("--out")
     ap.add_argument("--copy-list")
+    ap.add_argument("--template")
     a = ap.parse_args()
     if not a.lock:
         die("at least one --lock is required")
@@ -367,14 +369,16 @@ def main():
     if a.out:
         write_out(a, recs, new_config, ctx)
     sys.stdout.write(plan)
-    if a.out:
-        sys.stdout.write(snippet(a, recs, ctx))
 
 
 def write_out(a, recs, new_config, ctx):
     out = a.out
     if not a.copy_list:
         die("--copy-list is required with --out")
+    if not a.template:
+        die("--template is required with --out")
+    if not os.path.isfile(a.template):
+        die(f"compose template not found: {a.template}", 2)
     env_path = os.path.join(out, "env")
     if not os.path.isfile(env_path):
         die(f"{env_path} must exist before rendering (copied from the source .env)", 2)
@@ -422,25 +426,43 @@ def write_out(a, recs, new_config, ctx):
     with open(a.copy_list, "w", encoding="utf-8") as fh:
         for r in rows:
             fh.write("\t".join(r) + "\n")
+    with open(os.path.join(out, "docker-compose.yaml"), "w", encoding="utf-8") as fh:
+        fh.write(compose(a, recs, ctx))
 
 
-def snippet(a, recs, ctx):
+TEMPLATE_IMAGE = "ghcr.io/chinayin/agentbox"
+
+
+def compose(a, recs, ctx):
+    """The instance's docker-compose.yaml: the demo template renamed, with one read-only mount per
+    credential and the skill manifest added after the cache volume. The same three substitutions as
+    new-instance's scaffold.sh; the indented "# - ..." hints are dropped from a generated file."""
     n = a.name
-    L = ["", "  # --- add under services: ---", f"  {n}:", f"    image: {a.image}:${{AGENTBOX_VERSION}}",
-         f"    container_name: agentbox-{n}", "    restart: unless-stopped", "    init: true",
-         "    stop_grace_period: 30s", "    security_opt: [no-new-privileges:true]", "    cap_drop: [ALL]",
-         "    deploy: {resources: {limits: {pids: 512}}}", "    networks: [agentbox]",
-         "    env_file:", f"      - ./instances/{n}/env", "    volumes:",
-         f"      - ./instances/{n}/config.toml:/agent/config.toml:ro", f"      - ./workspaces/{n}:/workspace",
-         f"      - {n}-state:/state", f"      - {n}-cache:/cache"]
-    for dst, mount in ctx["mounts"]:
-        L.append(f"      - ./instances/{n}/{dst}:{mount}:ro")
+    with open(a.template, encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+    mounts = [f"      - ./{dst}:{mount}:ro" for dst, mount in ctx["mounts"]]
     if field(recs, "skill_lock"):
-        L.append(f"      - ./instances/{n}/skill-lock.json:/agent/skill-lock.json:ro")
-    L += ["", "  # --- add under volumes: ---", f"  {n}-state:", f"  {n}-cache:", "",
-          "  # --- add once at top level (deploy ensures the network exists on the host) ---",
-          "networks:", "  agentbox:", "    external: true", ""]
-    return "\n".join(L)
+        mounts.append("      - ./skill-lock.json:/agent/skill-lock.json:ro")
+    out, hits = [], {"service": 0, "container": 0, "workspace": 0, "cache": 0}
+    for line in lines:
+        if line.startswith("      #"):
+            continue
+        if line == "  demo:":
+            line = f"  {n}:"; hits["service"] += 1
+        elif line == "    container_name: agentbox-demo":
+            line = f"    container_name: agentbox-{n}"; hits["container"] += 1
+        elif line.endswith("/demo:/workspace"):
+            line = line[: -len("/demo:/workspace")] + f"/{n}:/workspace"; hits["workspace"] += 1
+        elif line.startswith("  image: ") and TEMPLATE_IMAGE in line:
+            line = line.replace(TEMPLATE_IMAGE, a.image)
+        out.append(line)
+        if line == "      - cache:/cache":
+            hits["cache"] += 1
+            out.extend(mounts)
+    missing = [k for k, v in hits.items() if v != 1]
+    if missing:
+        die(f"compose template {a.template} changed: {', '.join(missing)} line not found exactly once")
+    return "\n".join(out) + "\n"
 
 
 if __name__ == "__main__":

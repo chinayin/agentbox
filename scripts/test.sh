@@ -445,18 +445,22 @@ grep -nE '^VERSION="[0-9]' "$ENTRY" "$ROOT"/scripts/*.sh 2>/dev/null | grep -q .
 grep -rn '跨实例共享' "$ROOT/README.md" "$ROOT"/docs/*.md "$ROOT/docker-compose.yaml" "$ROOT"/examples "$ENTRY" 2>/dev/null | grep -q . \
 	&& bad "cache is no longer described as shared across instances" "see the lines above" || ok "cache is no longer described as shared across instances"
 
-# ---------- template hygiene ----------
-# One structural check for every compose snippet the repo prints (new-instance and import-instance):
-# service line, env_file, the config mount, both volumes in the service and in the volumes block.
-# $1 label, $2 snippet text, $3 service name, $4 instance path prefix (./examples or ./instances)
-check_snippet() {
-	local label="$1" s="$2" n="$3" p="$4"
-	grep -q "^  ${n}:\$" <<<"$s" && grep -q '^    env_file:' <<<"$s" \
-		&& grep -q "^      - ${p}/${n}/env\$" <<<"$s" \
-		&& grep -q "^      - ${p}/${n}/config.toml:/agent/config.toml:ro\$" <<<"$s" \
-		&& grep -q "^      - ${n}-state:/state\$" <<<"$s" && grep -q "^      - ${n}-cache:/cache\$" <<<"$s" \
-		&& grep -q "^  ${n}-state:\$" <<<"$s" && grep -q "^  ${n}-cache:\$" <<<"$s" \
-		&& ok "${label} snippet has the shared compose structure" || bad "${label} snippet has the shared compose structure" "$s"
+# ---------- instance compose files ----------
+# One structural check for every docker-compose.yaml the repo generates (new-instance and
+# import-instance), against the template they are both cut from: the service is renamed and
+# inherits the shared anchor, paths are relative to the instance directory, the shared block the
+# deploy skill enforces is intact, and no template hint comment survives into a generated file.
+# $1 label, $2 file, $3 service name
+check_instance_compose() {
+	local label="$1" f="$2" n="$3"
+	[ -f "$f" ] && grep -q '^x-agentbox: &agentbox$' "$f" && grep -q "^  ${n}:\$" "$f" && grep -q '^    <<: \*agentbox$' "$f" \
+		&& grep -q "^    container_name: agentbox-${n}\$" "$f" && grep -q '^  env_file: \[./env\]$' "$f" \
+		&& grep -q '^      - ./config.toml:/agent/config.toml:ro$' "$f" && grep -q "/${n}:/workspace\$" "$f" \
+		&& grep -q '^      - state:/state$' "$f" && grep -q '^      - cache:/cache$' "$f" \
+		&& grep -q '^  state:$' "$f" && grep -q '^  cache:$' "$f" && grep -q '^    external: true$' "$f" \
+		&& grep -q 'cap_drop: \[ALL\]' "$f" && grep -q 'no-new-privileges:true' "$f" && grep -q 'pids: 512' "$f" \
+		&& ! grep -q '^      #' "$f" && ! grep -q 'demo' "$f" \
+		&& ok "${label} docker-compose.yaml has the shared instance structure" || bad "${label} docker-compose.yaml has the shared instance structure" "$(cat "$f" 2>/dev/null)"
 }
 
 # ---------- new-instance skill scaffold ----------
@@ -465,11 +469,12 @@ check_snippet() {
 group "new-instance scaffold"
 SCAFFOLD="$ROOT/.claude/skills/new-instance/scripts/scaffold.sh"
 sc="$TMP/scaffold"; mkdir -p "$sc/examples"; cp -R "$ROOT/examples/demo" "$sc/examples/"; cp "$ROOT/.gitignore" "$sc/"
-if snippet="$(bash "$SCAFFOLD" --root "$sc" --agent pi --mount kubeconfig data 2>"$sc/err")"; then
+if out="$(bash "$SCAFFOLD" --root "$sc" --agent pi --mount kubeconfig --mount ssh_key data 2>"$sc/err")"; then
 	ok "scaffold exits 0 for a fresh name"
 else
 	bad "scaffold exits 0 for a fresh name" "$(cat "$sc/err")"
 fi
+[ -z "$out" ] && ok "scaffold prints nothing on stdout (the files are the product)" || bad "scaffold prints nothing on stdout (the files are the product)" "$out"
 python3 -c 'import sys,tomllib; c=tomllib.load(open(sys.argv[1],"rb")); p=c["projects"][0]; assert p["name"]=="data" and p["agent"]["type"]=="pi" and p["agent"]["options"]["env"]["KUBECONFIG"]=="/agent/kubeconfig"' "$sc/examples/data/config.toml" 2>/dev/null \
 	&& ok "scaffolded config.toml parses with name, agent type and KUBECONFIG applied" \
 	|| bad "scaffolded config.toml parses with name, agent type and KUBECONFIG applied" "see $sc/examples/data/config.toml"
@@ -494,11 +499,15 @@ have="$(grep -oE '^[A-Z_]+=' "$sc/examples/data/env.example" | tr -d = | sort -u
 grep -vE '^(#|$)' "$sc/examples/data/env.example" | grep -vE '=(cli_|ou_|sk-)?x+$|=https://[a-z.-]+\.example\.com$' | grep -q . \
 	&& bad "scaffolded env.example holds placeholders only" "$(grep -vE '^(#|$)' "$sc/examples/data/env.example" | grep -vE '=(cli_|ou_|sk-)?x+$|example\.com')" \
 	|| ok "scaffolded env.example holds placeholders only"
-printf '%s\n' "$snippet" | grep -q '^  data:$' && printf '%s\n' "$snippet" | grep -q 'AGENTBOX_IMAGE_PI' \
-	&& printf '%s\n' "$snippet" | grep -q 'examples/data/kubeconfig:/agent/kubeconfig:ro' && printf '%s\n' "$snippet" | grep -q '^  data-cache:$' \
-	&& ok "snippet names the service, the pi image, the kubeconfig mount and the volumes" \
-	|| bad "snippet names the service, the pi image, the kubeconfig mount and the volumes" "$snippet"
-check_snippet "new-instance" "$snippet" data ./examples
+scf="$sc/examples/data/docker-compose.yaml"
+grep -q 'image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}-pi$' "$scf" \
+	&& ok "pi scaffold switches the anchor image to the -pi tag" || bad "pi scaffold switches the anchor image to the -pi tag" "$(grep image: "$scf")"
+# --mount order is preserved, and every mount is relative to the instance directory
+[ "$(grep -oE '/agent/(kubeconfig|ssh_key):ro$' "$scf" | tr '\n' ' ')" = "/agent/kubeconfig:ro /agent/ssh_key:ro " ] \
+	&& grep -q '^      - ./kubeconfig:/agent/kubeconfig:ro$' "$scf" && grep -q '^      - ./ssh_key:/agent/ssh_key:ro$' "$scf" \
+	&& ok "scaffold adds one ./FILE:/agent/FILE:ro mount per --mount, in the given order" \
+	|| bad "scaffold adds one ./FILE:/agent/FILE:ro mount per --mount, in the given order" "$(grep ':ro$' "$scf")"
+check_instance_compose "new-instance" "$scf" data
 [ -d "$sc/runtime/workspaces/data" ] && ok "scaffold creates the workspace directory" || bad "scaffold creates the workspace directory" ""
 bash "$SCAFFOLD" --root "$sc" data >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "scaffold refuses to overwrite an existing instance (exit 1)" || bad "scaffold refuses to overwrite an existing instance (exit 1)" "rc=$rc"
@@ -538,6 +547,30 @@ grep -qxF '.claude/skills/*/.env' "$ROOT/.gitignore" && ok "skill .env files are
 group "deploy skill"
 dp="$TMP/dp"; mkdir -p "$dp/skill/scripts"; cp "$DP_SRC" "$dp/skill/scripts/"
 mkdir -p "$dp/repo/hosts/h1/instances/a1" "$dp/other/hosts/h2/instances/a2"
+# Every instance is its own compose project; the fixture files carry the shared block the deploy
+# skill enforces (cap_drop, no-new-privileges, pids, external network, version variable).
+compose_fixture() {
+	cat > "$1" <<'YML'
+x-agentbox: &agentbox
+  image: ghcr.io/owner/agentbox:${AGENTBOX_VERSION}
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  deploy: {resources: {limits: {pids: 512}}}
+  networks: [agentbox]
+  env_file: [./env]
+services:
+  svc:
+    <<: *agentbox
+    volumes: [./config.toml:/agent/config.toml:ro, state:/state]
+volumes:
+  state:
+networks:
+  agentbox:
+    external: true
+YML
+}
+compose_fixture "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
+compose_fixture "$dp/other/hosts/h2/instances/a2/docker-compose.yaml"
 printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\n' > "$dp/repo/hosts/h1/host.env"
 printf 'DEPLOY_HOST=user@h2.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\n' > "$dp/other/hosts/h2/host.env"
 # Every host needs a complete, valid instance once check_all_instances validates locally: config.toml
@@ -630,15 +663,30 @@ env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" plan h1 >/dev/nul
 printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\nDEPLOY_KEY=/tmp/nope.pem\nDEPLOY_SOCKS=127.0.0.1:7890\n' > "$dp/repo/hosts/h1/host.env"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm hostenv ) 2>/dev/null
 
-# deploy actually pushes config: sync a whitelist, derive the remote .env, fix permissions, then
-# start containers. All of this must show up in --dry-run output without ever connecting.
-cat > "$dp/repo/hosts/h1/docker-compose.yaml" <<'YML'
-services:
-  a1:
-    image: ghcr.io/owner/agentbox:${AGENTBOX_VERSION}
-    env_file: [./instances/a1/env]
-YML
-( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm compose ) 2>/dev/null
+# The instance compose file is policy: a hand edit that drops the shared block, adds a forbidden
+# key, or leaves the version variable out must fail plan locally and name what is wrong. A
+# host-level compose file (the pre-2026-09-11 shape) is refused outright rather than ignored.
+sed -i.bak '/cap_drop/d' "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
+printf '    privileged: true\n' >> "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'missing cap_drop' <<<"$out" && grep -q 'forbidden privileged' <<<"$out" \
+	&& ok "plan refuses an instance compose that drops the shared block or adds privileged, naming both" \
+	|| bad "plan refuses an instance compose that drops the shared block or adds privileged, naming both" "rc=$rc $out"
+mv "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml.bak" "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
+rm "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'docker-compose.yaml' <<<"$out" \
+	&& ok "plan refuses an instance without its own docker-compose.yaml" || bad "plan refuses an instance without its own docker-compose.yaml" "rc=$rc $out"
+( cd "$dp/repo" && git checkout -q -- hosts/h1/instances/a1/docker-compose.yaml ) 2>/dev/null
+printf 'services: {}\n' > "$dp/repo/hosts/h1/docker-compose.yaml"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'no longer read' <<<"$out" \
+	&& ok "plan refuses a host-level docker-compose.yaml instead of silently ignoring it" || bad "plan refuses a host-level docker-compose.yaml instead of silently ignoring it" "rc=$rc $out"
+rm "$dp/repo/hosts/h1/docker-compose.yaml"
+
+# deploy actually pushes config: sync a whitelist, derive each instance's .env, fix permissions,
+# then start every instance from its own directory. All of this must show up in --dry-run output
+# without ever connecting.
 # Image version: --image-version > hosts/<host>/host.env > repo-level defaults.env. A fleet moves
 # together from one line; a host that must stay behind pins its own. Each step commits because
 # plan refuses a dirty repo.
@@ -675,13 +723,21 @@ grep -q 'rsync' <<<"$out" && grep -q 'docker compose up' <<<"$out" && grep -q 'c
 # rsync swaps the inode; only a recreate picks it up.
 grep -q 'docker compose up -d --force-recreate' <<<"$out" \
 	&& ok "compose up recreates containers so a config-only change lands" || bad "compose up recreates containers so a config-only change lands" "$out"
+# one compose project per instance: compose runs from inside the instance directory, validates the
+# rendered file first, and the derived .env lands in that directory, not at the deploy root
+grep -q "cd '/data/agentbox/instances/a1' && docker compose config -q && docker compose pull && docker compose up -d --force-recreate" <<<"$out" \
+	&& ok "each instance is deployed from its own directory as its own compose project" || bad "each instance is deployed from its own directory as its own compose project" "$out"
+grep -q 'instances/<name>/.env with AGENTBOX_VERSION=0.1.0' <<<"$out" && ! grep -q "write /data/agentbox/.env" <<<"$out" \
+	&& ok "the derived .env is written per instance directory" || bad "the derived .env is written per instance directory" "$out"
+grep -q 'retire it with remove' <<<"$out" \
+	&& ok "deploy refuses to mirror away an instance the server still runs (remove first)" || bad "deploy refuses to mirror away an instance the server still runs (remove first)" "$out"
 grep -q 'docker network' <<<"$out" && grep -q 'agentbox' <<<"$out" \
 	&& ok "dry-run shows the deploy skill ensuring the agentbox network exists" || bad "dry-run shows the deploy skill ensuring the agentbox network exists" "$out"
 grep -q 'chown -R 1000:1000' <<<"$out" && grep -q 'config.toml and claude/ excepted' <<<"$out" \
 	&& ok "dry-run shows file credentials tightened and the instance directory chowned" || bad "dry-run shows file credentials tightened and the instance directory chowned" "$out"
 # the transport is a whitelist: nothing from the agentbox source tree may appear in the rsync source
-grep -q "$dp/repo/hosts/h1/" <<<"$out" && ! grep -qE 'Dockerfile|entrypoint\.sh|mise\.toml' <<<"$out" \
-	&& ok "rsync source is the host directory only, no agentbox source" || bad "rsync source is the host directory only, no agentbox source" "$out"
+grep -q "rsync .* $dp/repo/hosts/h1/instances " <<<"$out" && ! grep -qE 'Dockerfile|entrypoint\.sh|mise\.toml|hosts/h1/docker-compose' <<<"$out" \
+	&& ok "rsync source is the instances tree only, no host compose, no agentbox source" || bad "rsync source is the instances tree only, no host compose, no agentbox source" "$out"
 grep -q 'AGENTBOX_VERSION=0.1.0' <<<"$out" \
 	&& ok "the remote .env is derived, not synced" || bad "the remote .env is derived, not synced" "$out"
 ! grep -qE 'DEPLOY_KEY|DEPLOY_SOCKS|DEPLOY_HOST=' <<<"$out" \
@@ -695,6 +751,16 @@ out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run 
 	&& ok "status dry-run shows compose ps" || bad "status dry-run shows compose ps" "rc=$rc $out"
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run status 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && ok "status without a host exits 1" || bad "status without a host exits 1" "rc=$rc"
+# remove retires an instance the repo no longer has: refuse while the directory still exists (a
+# deploy would bring it back), and never touch volumes.
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run remove h1 a1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'still in the deploy repo' <<<"$out" \
+	&& ok "remove refuses an instance the repo still has (exit 1)" || bad "remove refuses an instance the repo still has (exit 1)" "rc=$rc $out"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run remove h1 gone 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "instances/gone' && docker compose down" <<<"$out" && grep -q "rm -rf '/data/agentbox/instances/gone'" <<<"$out" && ! grep -q 'down -v\|volume rm' <<<"$out" \
+	&& ok "remove dry-run shows compose down and the directory deletion, volumes untouched" || bad "remove dry-run shows compose down and the directory deletion, volumes untouched" "rc=$rc $out"
+env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run remove h1 >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "remove without an instance exits 1" || bad "remove without an instance exits 1" "rc=$rc"
 
 # ---------- import-instance skill ----------
 # Reverse of new-instance: reads a running bare-metal cc-connect instance and writes the agentbox
@@ -707,6 +773,8 @@ cp "$IM_SRC"/* "$im/skills/import-instance/scripts/"
 # (SKILL_DIR/../../..); under this fixture's shallower copy that lands on $TMP, not $ROOT. Mirror
 # the real lock files there so the driver's tool-coverage step reads the genuine mise*.lock content.
 cp "$ROOT/mise.lock" "$ROOT/mise.claude.lock" "$ROOT/mise.pi.lock" "$TMP/"
+# The driver also reads the instance compose template from ROOT (examples/demo/docker-compose.yaml).
+mkdir -p "$TMP/examples/demo" && cp "$ROOT/examples/demo/docker-compose.yaml" "$TMP/examples/demo/"
 printf 'AGENTBOX_IMPORT_SOURCE=user@src.example.test\nAGENTBOX_IMPORT_KEY=~/nope.pem\n' > "$im/skills/import-instance/.env"
 printf 'AGENTBOX_DEPLOY_REPO=%s\n' "$im/repo" > "$im/skills/deploy/.env"
 printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.2.0\n' > "$im/repo/hosts/h1/host.env"
@@ -923,7 +991,7 @@ gsinv="$im/gitssh.inv"
 	printf '__AGENTBOX_CONFIG_BEGIN__\n[projects.agent.options]\nwork_dir = "/home/tester/ws"\n\n[projects.agent.options.env]\nGIT_SSH_COMMAND = "ssh -i /home/x/.ssh/k"\n__AGENTBOX_CONFIG_END__\n'
 } > "$gsinv"
 gsout="$im/gitssh-out"; mkdir -p "$gsout"; : > "$gsout/env"
-gserr="$(python3 "$IM_SRC/render.py" --inventory "$gsinv" --lock "$ROOT/mise.lock" --name t --out "$gsout" --copy-list "$im/gitssh-copies" 2>&1 >/dev/null)"; rc=$?
+gserr="$(python3 "$IM_SRC/render.py" --inventory "$gsinv" --lock "$ROOT/mise.lock" --name t --out "$gsout" --copy-list "$im/gitssh-copies" --template "$ROOT/examples/demo/docker-compose.yaml" 2>&1 >/dev/null)"; rc=$?
 [ "$rc" -eq 0 ] && ok "render.py exits 0 when the source already sets GIT_SSH_COMMAND" || bad "render.py exits 0 when the source already sets GIT_SSH_COMMAND" "rc=$rc $gserr"
 python3 - "$gsout/config.toml" <<'PY' && ok "GIT_SSH_COMMAND is rewritten in place to the mounted key, not duplicated" || bad "GIT_SSH_COMMAND is rewritten in place to the mounted key, not duplicated" "see config.toml"
 import sys, tomllib
@@ -942,14 +1010,14 @@ out="$(python3 "$IM_SRC/render.py" --inventory "$im/nosuch.inv" --lock "$ROOT/mi
 # ~/.gnupg keeps its own line and its own reason, distinct from the state-volume note
 grep -qE '\.gnupg.*docs/TOOLS\.md' <<<"$plan" && ok "plan explains the .gnupg credential channel separately" || bad "plan explains the .gnupg credential channel separately" "$plan"
 
-# import on the fixture: files land only under the target, secrets only in files, snippet on stdout
+# import on the fixture: files land only under the target, secrets only in files, plan on stdout
 touch "$im/marker"; sleep 1
 tgt="$im/repo/hosts/h1/instances/srcops"
 HOME="$im/fakehome" AGENTBOX_DEPLOY_REPO="$im/repo" bash "$IMPORT" --local --home "$shome" import --host h1 --name srcops "$src" > "$im/import.out" 2>"$im/import.err"; rc=$?
 [ "$rc" -eq 0 ] && ok "local import exits 0" || bad "local import exits 0" "rc=$rc $(cat "$im/import.err")"
-[ -f "$tgt/config.toml" ] && [ -f "$tgt/env" ] && [ -f "$tgt/kubeconfig-dev.yaml" ] && [ -f "$tgt/kubeconfig-prod.yaml" ] && [ -f "$tgt/ssh_key" ] \
+[ -f "$tgt/docker-compose.yaml" ] && [ -f "$tgt/config.toml" ] && [ -f "$tgt/env" ] && [ -f "$tgt/kubeconfig-dev.yaml" ] && [ -f "$tgt/kubeconfig-prod.yaml" ] && [ -f "$tgt/ssh_key" ] \
 	&& [ -f "$tgt/skill-lock.json" ] && [ ! -e "$tgt/claude" ] \
-	&& ok "import writes config, env, credentials and the skill manifest" || bad "import writes config, env, credentials and the skill manifest" "$(find "$tgt" 2>/dev/null)"
+	&& ok "import writes compose, config, env, credentials and the skill manifest" || bad "import writes compose, config, env, credentials and the skill manifest" "$(find "$tgt" 2>/dev/null)"
 [ "$(stat -f %Lp "$tgt/env" 2>/dev/null || stat -c %a "$tgt/env")" = 600 ] && [ "$(stat -f %Lp "$tgt/ssh_key" 2>/dev/null || stat -c %a "$tgt/ssh_key")" = 600 ] \
 	&& [ "$(stat -f %Lp "$tgt/kubeconfig-dev.yaml" 2>/dev/null || stat -c %a "$tgt/kubeconfig-dev.yaml")" = 600 ] \
 	&& ok "env and credential files land as 0600" || bad "env and credential files land as 0600" ""
@@ -977,12 +1045,14 @@ diff <(grep -vE '^(work_dir|ANTHROPIC_MODEL|GATEWAY_ADMIN_TOKEN|EXTRA_API_SECRET
 	&& ok "import prints no secret on stdout or stderr" || bad "import prints no secret on stdout or stderr" ""
 stray="$(find "$im" -newer "$im/marker" -type f -not -path "$tgt/*" -not -path "$im/import.*" 2>/dev/null)"
 [ -z "$stray" ] && [ ! -e "$im/fakehome" ] && ok "import writes nothing outside the target instance directory" || bad "import writes nothing outside the target instance directory" "$stray"
-snip="$(sed -n '/^  # --- add under services: ---/,$p' "$im/import.out")"
-grep -q '^  srcops:$' <<<"$snip" && grep -q 'image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}' <<<"$snip" \
-	&& grep -q './instances/srcops/kubeconfig-dev.yaml:/agent/kubeconfig-dev.yaml:ro' <<<"$snip" && grep -q './instances/srcops/ssh_key:/agent/ssh_key:ro' <<<"$snip" \
-	&& grep -q './instances/srcops/skill-lock.json:/agent/skill-lock.json:ro' <<<"$snip" && grep -q './workspaces/srcops:/workspace' <<<"$snip" && grep -q 'pids: ' <<<"$snip" \
-	&& ok "snippet mounts config, workspace, credentials and the skill manifest with the GHCR image" || bad "snippet mounts config, workspace, credentials and the skill manifest with the GHCR image" "$snip"
-check_snippet "import-instance" "$snip" srcops ./instances
+icf="$tgt/docker-compose.yaml"
+grep -q 'image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}$' "$icf" \
+	&& grep -q '^      - ./kubeconfig-dev.yaml:/agent/kubeconfig-dev.yaml:ro$' "$icf" && grep -q '^      - ./kubeconfig-prod.yaml:/agent/kubeconfig-prod.yaml:ro$' "$icf" \
+	&& grep -q '^      - ./ssh_key:/agent/ssh_key:ro$' "$icf" && grep -q '^      - ./skill-lock.json:/agent/skill-lock.json:ro$' "$icf" \
+	&& ok "imported compose mounts every credential and the skill manifest relative to the instance directory" \
+	|| bad "imported compose mounts every credential and the skill manifest relative to the instance directory" "$(cat "$icf" 2>/dev/null)"
+! grep -q 'add under' "$im/import.out" && ok "import prints the plan only, no compose snippet to paste" || bad "import prints the plan only, no compose snippet to paste" ""
+check_instance_compose "import-instance" "$icf" srcops
 bash "$IMPORT" --local --home "$shome" --repo "$im/repo" import --host h1 --name srcops "$src" >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "import refuses an existing target (exit 1)" || bad "import refuses an existing target (exit 1)" "rc=$rc"
 # the imported instance satisfies the deploy skill's local validation as-is
@@ -1005,6 +1075,13 @@ for f in "$ROOT"/examples/*/config.toml; do
 	grep -qE '^[[:space:]]*mode[[:space:]]*=[[:space:]]*"bypassPermissions"' "$f" && bad "${n} does not default to bypassPermissions" "the template default should be acceptEdits" || ok "${n} does not default to bypassPermissions"
 done
 [ -f "$DEMO_ENV" ] && ok "the instance secret template ends in .example" || bad "the instance secret template ends in .example" "missing"
+# The demo compose template is what both generators cut from and what deploy.sh's check_compose
+# enforces; the two must agree on the shared block or every generated instance fails plan.
+dc="$ROOT/examples/demo/docker-compose.yaml"
+grep -q 'cap_drop: \[ALL\]' "$dc" && grep -q 'no-new-privileges:true' "$dc" && grep -qE 'pids: [0-9]+' "$dc" \
+	&& grep -q 'external: true' "$dc" && grep -q 'image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}$' "$dc" \
+	&& grep -q '^  env_file: \[./env\]$' "$dc" && grep -q '^      - ./config.toml:/agent/config.toml:ro$' "$dc" \
+	&& ok "the demo compose template carries the shared block deploy.sh enforces" || bad "the demo compose template carries the shared block deploy.sh enforces" ""
 ls "$ROOT"/examples/*/env "$ROOT/.env" >/dev/null 2>&1 && bad "no real env file in the repo" "an env file without .example was found" || ok "no real env file in the repo"
 
 group "workflow invariants"

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Publish agentbox instances to a remote docker host. Configuration and secrets come from a
 # separate private deploy repository, one directory per host; images come from GHCR by version.
+# Every instance is its own compose project: hosts/<host>/instances/<name>/ holds docker-compose.yaml,
+# config.toml, env and file credentials, and `docker compose` runs from inside that directory on the
+# server, so an instance moves between hosts as one directory and one instance's broken file cannot
+# block another's deploy.
 # The repo path comes from, in order of precedence: --repo, AGENTBOX_DEPLOY_REPO, the skill's .env
 # file (../.env next to this script, gitignored; template in ../.env.example).
 # Per-host connection details live in the deploy repo at hosts/<host>/host.env and never in here.
@@ -47,7 +51,9 @@ Usage: deploy.sh [options] <action> [host] [instance]
 Actions:
   plan     HOST [INSTANCE]   validate locally and print the impact; never connects
   deploy   HOST [INSTANCE]   push config and secrets, pull the image, start containers
-  status   HOST              remote container state and recent logs
+  status   HOST              remote container state and recent logs, per instance
+  remove   HOST INSTANCE     stop an instance the deploy repo no longer has and delete its directory
+                             on the server; its state and cache volumes are kept
 
 Options:
       --repo PATH    deploy repository (or the AGENTBOX_DEPLOY_REPO environment variable)
@@ -79,7 +85,7 @@ while [ $# -gt 0 ]; do
 		-h|--help) usage; exit 0 ;;
 		--) shift; break ;;
 		-*) usage >&2; die "unknown option: $1" ;;
-		plan|deploy|status)
+		plan|deploy|status|remove)
 			[ -n "${ACTION}" ] && { usage >&2; die "only one action is allowed"; }
 			ACTION="$1"; shift ;;
 		*)
@@ -152,18 +158,24 @@ load_host_env() {
 	return 0
 }
 
+# Every instance directory in the repo for this host: what the server mirrors, whether or not this
+# run restarts it.
+all_instances() {
+	local d
+	for d in "${HOST_DIR}"/instances/*/; do
+		[ -d "${d}" ] || continue
+		basename "${d}"
+	done
+}
+
 # Instances to act on: the one named on the command line, or every directory under instances/.
 list_instances() {
-	local d
 	if [ -n "${INSTANCE}" ]; then
 		[ -d "${HOST_DIR}/instances/${INSTANCE}" ] || die "instance ${INSTANCE} not found under ${HOST_DIR}/instances"
 		echo "${INSTANCE}"
 		return 0
 	fi
-	for d in "${HOST_DIR}"/instances/*/; do
-		[ -d "${d}" ] || continue
-		basename "${d}"
-	done
+	all_instances
 }
 
 # ${VAR} names referenced by string values in the config (real TOML parse: comments do not count).
@@ -196,14 +208,35 @@ print("\n".join(sorted(names)))
 PY
 }
 
+# The shared block of an instance's docker-compose.yaml is policy. The file is generated from
+# examples/demo/docker-compose.yaml, so a missing line means a hand edit; refuse rather than start a
+# container without its hardening. Text checks keep plan offline and docker-free; the server runs
+# `docker compose config -q` on the rendered file before `up`.
+check_compose() {
+	local name="$1" f="$2" p bad=()
+	for p in 'cap_drop: \[ALL\]' 'no-new-privileges:true' 'pids: [0-9]+' 'external: true' '\$\{AGENTBOX_VERSION\}'; do
+		grep -qE "${p}" "${f}" || bad+=("missing ${p}")
+	done
+	for p in privileged 'docker\.sock' network_mode cap_add; do
+		grep -qE "^[^#]*${p}" "${f}" && bad+=("forbidden ${p}")
+	done
+	[ "${#bad[@]}" -eq 0 ] && return 0
+	echo "Error: instance ${name}: ${f} departs from the shared compose block (examples/demo/docker-compose.yaml):" >&2
+	printf '  - %s\n' "${bad[@]}" >&2
+	return 1
+}
+
 # WORK_DIR comes from the compose file, not the env file, so it is not required here.
 check_instance() {
-	local name="$1" dir toml envf want have missing=()
+	local name="$1" dir toml envf compose want have missing=()
 	dir="${HOST_DIR}/instances/${name}"
 	toml="${dir}/config.toml"
 	envf="${dir}/env"
+	compose="${dir}/docker-compose.yaml"
 	[ -f "${toml}" ] || die "missing ${toml}"
 	[ -f "${envf}" ] || die "missing ${envf}"
+	[ -f "${compose}" ] || die "missing ${compose} (every instance is its own compose project; generate it with new-instance or import-instance)"
+	check_compose "${name}" "${compose}" || return 1
 	want="$(config_placeholders "${toml}")" || die "config ${toml} is not valid TOML (see above)"
 	have="$(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "${envf}" | tr -d '=' | sort -u)"
 	local v
@@ -222,33 +255,31 @@ check_instance() {
 
 check_all_instances() {
 	local n rc=0 count=0
+	# A host-level compose file is the pre-2026-09-11 shape; its services now live one per instance.
+	[ ! -e "${HOST_DIR}/docker-compose.yaml" ] \
+		|| die "hosts/${HOST}/docker-compose.yaml is no longer read: move each service into instances/<name>/docker-compose.yaml (see .claude/skills/deploy/references/deploy-repo.md) and delete it"
 	while IFS= read -r n; do
 		[ -n "${n}" ] || continue
 		count=$((count+1))
 		check_instance "${n}" || rc=1
 	done < <(list_instances)
 	[ "${count}" -gt 0 ] || die "no instances found under ${HOST_DIR}/instances"
-	[ "${rc}" -eq 0 ] || die "fix the env files above before deploying"
+	[ "${rc}" -eq 0 ] || die "fix the files above before deploying"
 	return 0
 }
 
 # Everything print_plan reports is computed from local files; it must not connect.
 print_plan() {
-	local n compose="${HOST_DIR}/docker-compose.yaml"
+	local n
 	echo "  repo:      ${REPO}" >&2
 	echo "  host:      ${DEPLOY_HOST}  dir ${DEPLOY_DIR}" >&2
 	echo "  version:   ${AGENTBOX_VERSION} (from ${VERSION_SOURCE})" >&2
-	if [ -f "${compose}" ]; then
-		echo "  compose:   ${compose}" >&2
-	else
-		echo "  compose:   MISSING (${compose})" >&2
-	fi
-	echo "  will sync: docker-compose.yaml, instances/ (config.toml + env, env as 0600)" >&2
-	echo "  instances/ on the server is mirrored: directories no longer in the deploy repo are removed" >&2
-	echo "  will restart these containers, interrupting any session in progress:" >&2
+	echo "  will sync: instances/ (docker-compose.yaml + config.toml + env + file credentials, env as 0600)" >&2
+	echo "  instances/ on the server is mirrored; a directory the repo no longer has must be retired with remove first" >&2
+	echo "  will restart these compose projects (one per instance), interrupting any session in progress:" >&2
 	while IFS= read -r n; do
 		[ -n "${n}" ] || continue
-		echo "    - ${n}" >&2
+		echo "    - ${n}  (${HOST_DIR}/instances/${n}/docker-compose.yaml)" >&2
 	done < <(list_instances)
 }
 
@@ -271,14 +302,15 @@ check_repo_clean() {
 	exit 1
 }
 
-# All remote commands go through here; ssh exit code passes through.
+# All remote commands go through here; ssh exit code passes through. -n: callers loop over a
+# process substitution, and without it ssh would swallow the remaining lines as its stdin.
 rssh() {
 	vlog "ssh ${DEPLOY_HOST}: $*"
 	if [ "${DRY_RUN}" -eq 1 ]; then
 		echo "plan: ssh ${DEPLOY_HOST} -- $*" >&2
 		return 0
 	fi
-	ssh "${SSH_OPTS[@]}" "${DEPLOY_HOST}" "$@"
+	ssh -n "${SSH_OPTS[@]}" "${DEPLOY_HOST}" "$@"
 }
 
 # rsync -e takes one string; options with spaces (ProxyCommand) need a wrapper script.
@@ -293,13 +325,11 @@ make_rsync_ssh() {
 	chmod 0700 "${wrapper}"
 }
 
-# Whitelist transport, one direction only: the host directory's compose file and instances/. The
-# agentbox source tree is never involved, and nothing is ever pulled back from the server.
+# Whitelist transport, one direction only: the host directory's instances/ tree. The agentbox source
+# tree is never involved, and nothing is ever pulled back from the server.
 sync_host() {
-	local compose="${HOST_DIR}/docker-compose.yaml"
-	[ -f "${compose}" ] || die "missing ${compose}"
 	step "syncing ${HOST} config to ${DEPLOY_HOST}:${DEPLOY_DIR}"
-	local tmp
+	local tmp n
 	tmp="$(mktemp -d)"
 	# shellcheck disable=SC2064  # expand tmp now, on purpose
 	trap "rm -rf '${tmp}'" RETURN
@@ -307,24 +337,36 @@ sync_host() {
 	local -a args=(-a --delete)
 	[ "${VERBOSE}" -eq 1 ] && args+=(-v)
 	if [ "${DRY_RUN}" -eq 1 ]; then
-		echo "plan: rsync ${args[*]} ${HOST_DIR}/docker-compose.yaml ${HOST_DIR}/instances ${DEPLOY_HOST}:${DEPLOY_DIR}/" >&2
+		echo "plan: refuse if the server holds an instance directory the repo no longer has (retire it with remove first)" >&2
+		echo "plan: rsync ${args[*]} ${HOST_DIR}/instances ${DEPLOY_HOST}:${DEPLOY_DIR}/" >&2
 	else
+		# --delete would silently take a retired instance's compose file away while its containers
+		# keep running, with nothing left on the server to `down` them. Refuse instead.
+		local remote extra=""
+		remote="$(rssh "ls -1 '${DEPLOY_DIR}/instances' 2>/dev/null || true")"
+		for n in ${remote}; do
+			[ -d "${HOST_DIR}/instances/${n}" ] || extra="${extra} ${n}"
+		done
+		[ -z "${extra}" ] || die "on the server but not in the deploy repo:${extra}; run remove ${HOST} <instance> for each before deploying"
 		# 0700, not 0755: rsync -a preserves the source file mode, so instances/*/env can land
 		# briefly world-readable before the chmod 600 below runs. Closing the directory to the
 		# owner means that window never exposes secrets to another user on the host, regardless
 		# of what mode a file arrives with. dockerd (root) and docker compose (run as the owning
 		# ssh user) can both still traverse it; see the Task 8 fix report for the full reasoning.
 		rssh "install -d -m 0700 '${DEPLOY_DIR}'"
-		rsync "${args[@]}" -e "${tmp}/ssh" \
-			"${HOST_DIR}/docker-compose.yaml" "${HOST_DIR}/instances" \
-			"${DEPLOY_HOST}:${DEPLOY_DIR}/"
+		rsync "${args[@]}" -e "${tmp}/ssh" "${HOST_DIR}/instances" "${DEPLOY_HOST}:${DEPLOY_DIR}/"
 	fi
-	# The remote .env is derived from host.env, never synced: connection fields stay local.
+	# Each instance is a compose project rooted in its own directory, so each gets its own .env.
+	# It is derived from host.env, never synced: connection fields stay local. Every instance
+	# directory gets it, not just the ones this run restarts, because --delete just removed them.
 	if [ "${DRY_RUN}" -eq 1 ]; then
-		echo "plan: write ${DEPLOY_DIR}/.env with AGENTBOX_VERSION=${AGENTBOX_VERSION}" >&2
+		echo "plan: write ${DEPLOY_DIR}/instances/<name>/.env with AGENTBOX_VERSION=${AGENTBOX_VERSION} for every instance" >&2
 		echo "plan: chmod 600 every file under ${DEPLOY_DIR}/instances/*/ (config.toml and claude/ excepted) and chown -R 1000:1000 each instance directory" >&2
 	else
-		rssh "printf 'AGENTBOX_VERSION=%s\n' '${AGENTBOX_VERSION}' > '${DEPLOY_DIR}/.env'"
+		while IFS= read -r n; do
+			[ -n "${n}" ] || continue
+			rssh "printf 'AGENTBOX_VERSION=%s\n' '${AGENTBOX_VERSION}' > '${DEPLOY_DIR}/instances/${n}/.env'"
+		done < <(all_instances)
 		# Every file credential (env, kubeconfig-*, ssh_key) is 0600; config.toml stays readable
 		# because the container reads it through the bind mount, and claude/ is a read-only code
 		# tree the agent must be able to list. docs/TOOLS.md section 3 explains the split.
@@ -344,13 +386,15 @@ prepare_workspaces() {
 	done < <(list_instances)
 }
 
-# Pull the pinned version, start containers, then read the entrypoint precheck out of the logs.
+# Per instance: validate the rendered compose file, pull the pinned version, recreate, then read the
+# entrypoint precheck out of the logs. Each instance directory is its own compose project (the
+# project name is the directory name), so one instance's failure stops the run without touching the
+# others already recreated; the log names the instance it stopped at.
 remote_up() {
-	local ts log svc=""
-	[ -n "${INSTANCE}" ] && svc=" ${INSTANCE}"
+	local ts log n
 	ts="$(date +%Y%m%d-%H%M%S)"
 	log="${LOG_DIR}/${ts}-deploy-${HOST}.log"
-	# The compose snippet declares networks: agentbox: external: true, so the network must exist
+	# The compose file declares networks: agentbox: external: true, so the network must exist
 	# before the first `docker compose up` on a fresh host; the inspect/create pair is idempotent.
 	local ensure_net="docker network inspect agentbox >/dev/null 2>&1 || docker network create agentbox"
 	# --force-recreate is what makes a config change land. config.toml and env reach the container
@@ -358,7 +402,11 @@ remote_up() {
 	# running -- and rsync replaces the file rather than rewriting it, so even the running
 	# container keeps reading the old inode. Without this, plan promises a restart that never
 	# happens and the deploy silently has no effect.
-	local cmd="${ensure_net} && cd '${DEPLOY_DIR}' && docker compose pull${svc} && docker compose up -d --force-recreate${svc} && docker compose ps"
+	local cmd="${ensure_net}"
+	while IFS= read -r n; do
+		[ -n "${n}" ] || continue
+		cmd="${cmd} && echo '==> ${n}' && cd '${DEPLOY_DIR}/instances/${n}' && docker compose config -q && docker compose pull && docker compose up -d --force-recreate && docker compose ps"
+	done < <(list_instances)
 	if [ "${DRY_RUN}" -eq 1 ]; then
 		echo "plan: ensure docker network agentbox exists on the host" >&2
 		echo "plan: ssh ${DEPLOY_HOST} -- ${cmd}" >&2
@@ -379,8 +427,12 @@ remote_up() {
 		return 1
 	fi
 	# The entrypoint lists unset placeholders and exits 2; surface that instead of a bare "started".
-	local logs
-	logs="$(ssh "${SSH_OPTS[@]}" "${DEPLOY_HOST}" "cd '${DEPLOY_DIR}' && docker compose logs --tail 40${svc}" 2>&1 | tee -a "${log}")"
+	local logs="" one
+	while IFS= read -r n; do
+		[ -n "${n}" ] || continue
+		one="$(ssh -n "${SSH_OPTS[@]}" "${DEPLOY_HOST}" "cd '${DEPLOY_DIR}/instances/${n}' && docker compose logs --tail 40" 2>&1 | tee -a "${log}")"
+		logs="${logs}${one}"
+	done < <(list_instances)
 	umask "${old_umask}"
 	if grep -q 'references unset environment variables' <<<"${logs}"; then
 		echo "Error: a container failed its precheck; see ${log}" >&2
@@ -396,7 +448,21 @@ do_deploy() {
 }
 
 do_status() {
-	rssh "cd '${DEPLOY_DIR}' && docker compose ps && docker compose logs --tail 20"
+	rssh "for d in '${DEPLOY_DIR}'/instances/*/; do echo \"==> \$(basename \"\$d\")\"; (cd \"\$d\" && docker compose ps && docker compose logs --tail 20); done"
+}
+
+# Retire an instance: the repo no longer has its directory (deleted and committed), the server still
+# does. Stop its containers through its own compose file, then delete the directory. State and cache
+# volumes are left alone on purpose: the state volume carries session history and tool-written
+# credentials, and deleting it is a separate, deliberate `docker volume rm` by a human.
+do_remove() {
+	[ -n "${INSTANCE}" ] || { usage >&2; die "remove needs an instance name"; }
+	[ ! -e "${HOST_DIR}/instances/${INSTANCE}" ] \
+		|| die "instance ${INSTANCE} is still in the deploy repo; delete hosts/${HOST}/instances/${INSTANCE}, commit, then remove (a deploy would otherwise bring it back)"
+	local d="${DEPLOY_DIR}/instances/${INSTANCE}"
+	step "retiring ${INSTANCE} on ${DEPLOY_HOST}: compose down, delete ${d}; volumes are kept"
+	rssh "if [ ! -f '${d}/docker-compose.yaml' ]; then echo 'Error: ${d}/docker-compose.yaml not found on the server' >&2; exit 1; fi; cd '${d}' && docker compose down && cd / && rm -rf '${d}'"
+	echo "kept: docker volumes of compose project ${INSTANCE}; remove them by hand only if the state is truly no longer needed" >&2
 }
 
 main() {
@@ -418,6 +484,10 @@ main() {
 		status)
 			step "querying ${HOST} (${DEPLOY_HOST}) from ${REPO}"
 			do_status
+			;;
+		remove)
+			check_repo_clean
+			do_remove
 			;;
 	esac
 }

@@ -59,8 +59,8 @@ Usage: import-instance.sh [options] <action> <source-dir>
 
 Actions:
   plan     read the source instance and print the migration plan; writes nothing
-  import   plan, then write hosts/<host>/instances/<name>/ in the deploy repo and print the
-           compose snippet; requires --host and --name
+  import   plan, then write hosts/<host>/instances/<name>/ in the deploy repo: docker-compose.yaml,
+           config.toml, env, credential files and the skill manifest; requires --host and --name
 
 Arguments:
   <source-dir>   the instance directory holding config.toml and .env (on the source host, or a
@@ -77,7 +77,7 @@ Options:
       --repo DIR           deploy repository (or AGENTBOX_DEPLOY_REPO, or the deploy skill .env)
       --host HOST          host directory in the deploy repo (hosts/<host> must already exist)
       --name NAME          instance name: [a-z][a-z0-9-]{0,31}
-      --image REPO         image repository for the snippet (default ghcr.io/chinayin/agentbox)
+      --image REPO         image repository written into docker-compose.yaml (default ghcr.io/chinayin/agentbox)
       --dry-run            print what would run and what would be written; no connection, no files
   -v, --verbose            extra diagnostics on stderr (never a value from the source .env)
   -h, --help               show this help
@@ -179,6 +179,8 @@ run_collect() {
 	fi
 }
 LOCKS=(--lock "${ROOT}/mise.lock" --lock "${ROOT}/mise.claude.lock" --lock "${ROOT}/mise.pi.lock")
+# The instance's docker-compose.yaml is the demo template renamed, same as new-instance's scaffold.
+COMPOSE_TEMPLATE="${ROOT}/examples/demo/docker-compose.yaml"
 run_render() {
 	step "rendering the migration plan"
 	declare -a hargs=()
@@ -210,15 +212,16 @@ do_import() {
 	# .env first: rendering appends the lifted literals to it. It goes straight to disk.
 	fetch cred "${SRC_DIR}/.env" "${TARGET}/env"
 	python3 "${SKILL_DIR}/scripts/render.py" --inventory "${INVENTORY}" "${LOCKS[@]}" \
-		--name "${NAME}" --host "${HOST}" --image "${IMAGE}" --out "${TARGET}" --copy-list "${TMP}/copies"
+		--name "${NAME}" --host "${HOST}" --image "${IMAGE}" --out "${TARGET}" --copy-list "${TMP}/copies" \
+		--template "${COMPOSE_TEMPLATE}"
 	local kind src dst n=0
 	while IFS=$'\t' read -r kind src dst; do
 		[ -n "${kind}" ] || continue
 		fetch "${kind}" "${src}" "${TARGET}/${dst}"
 		n=$((n + 1))
 	done < "${TMP}/copies"
-	step "imported ${NAME}: config.toml, env and ${n} credential/skill entries under ${TARGET}"
-	echo "next: review env (chat app, proxy, kubeconfig set), paste the snippet into ${HOST_DIR}/docker-compose.yaml, commit, then: deploy.sh plan ${HOST} ${NAME}" >&2
+	step "imported ${NAME}: docker-compose.yaml, config.toml, env and ${n} credential/skill entries under ${TARGET}"
+	echo "next: review env (chat app, proxy, kubeconfig set) and the mounts in docker-compose.yaml, commit, then: deploy.sh plan ${HOST} ${NAME}" >&2
 	trap - ERR
 }
 
@@ -240,8 +243,8 @@ case "${ACTION}" in
 	import)
 		if [ "${DRY_RUN}" -eq 1 ]; then
 			plan_collect_line
-			echo "plan: write ${TARGET}/{config.toml,env} plus credential files and skill-lock.json (0600 for credentials)" >&2
-			echo "plan: print the compose snippet for service '${NAME}' with image ${IMAGE}" >&2
+			echo "plan: write ${TARGET}/{docker-compose.yaml,config.toml,env} plus credential files and skill-lock.json (0600 for credentials)" >&2
+			echo "plan: docker-compose.yaml uses image ${IMAGE}:\${AGENTBOX_VERSION} and the demo template's shared block" >&2
 			exit 0
 		fi
 		run_collect; do_import ;;

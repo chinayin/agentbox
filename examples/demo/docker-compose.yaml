@@ -1,0 +1,40 @@
+# One instance = one compose project = one trust domain. This directory is the whole unit: the
+# deploy skill runs `docker compose` from inside it, so every path is relative to this file and the
+# compose project (hence the volume prefix) is named after the directory. The shared block below is
+# policy, not preference: `deploy plan` refuses a file that drops any of it. A second container in
+# the same trust domain is one more service with `<<: *agentbox` and its own config, workspace and
+# volumes (docs/MULTI_PROJECT.md).
+x-agentbox: &agentbox
+  image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}
+  restart: unless-stopped
+  init: true
+  stop_grace_period: 30s
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  deploy: {resources: {limits: {pids: 512}}}
+  networks: [agentbox]
+  env_file: [./env]
+
+services:
+  demo:
+    <<: *agentbox
+    container_name: agentbox-demo
+    volumes:
+      - ./config.toml:/agent/config.toml:ro
+      - ${WORKSPACES_ROOT:-../../workspaces}/demo:/workspace
+      - state:/state
+      - cache:/cache
+      # Optional mounts, see the mount contract table in README:
+      # - ./kubeconfig:/agent/kubeconfig:ro
+      # - ./ssh_key:/agent/ssh_key:ro
+      # - ./skill-lock.json:/agent/skill-lock.json:ro
+      # - ./claude:/etc/claude-code:ro
+
+volumes:
+  state:
+  cache:
+
+# Shared by every instance on the host; the deploy skill creates it once (docker network create agentbox).
+networks:
+  agentbox:
+    external: true

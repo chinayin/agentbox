@@ -44,7 +44,7 @@ docker compose up -d
 
 ## 多实例
 
-**容器边界 = 信任域边界，不是 project 边界。** 共享密钥的 project 放同一容器，加一个 `[[projects]]` 块；密钥要隔离才拆新的 compose service。详见 [MULTI_PROJECT](docs/MULTI_PROJECT.md)。新实例的骨架由 Claude Code 技能 `.claude/skills/new-instance/SKILL.md` 生成，它先问是否共享密钥再决定走哪条路。
+**实例 = 一个目录 = 一个 compose 项目 = 一个信任域。** 共享密钥的 project 放同一容器，加一个 `[[projects]]` 块；密钥要隔离才开新实例。每个实例目录自带 `docker-compose.yaml`（模板 `examples/demo/docker-compose.yaml`），`deploy` 在服务器上从该目录内运行 compose，所以搬迁一个实例就是搬一个目录；同一信任域要第二个容器时，在这份文件里再加一个 `<<: *agentbox` 的 service。所有实例共用一张外部 `agentbox` 网络，按容器名互通。详见 [MULTI_PROJECT](docs/MULTI_PROJECT.md)。新实例的骨架由 Claude Code 技能 `.claude/skills/new-instance/SKILL.md` 生成，它先问是否共享密钥再决定走哪条路。
 
 ## 开发
 

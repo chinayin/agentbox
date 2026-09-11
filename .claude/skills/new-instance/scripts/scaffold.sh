@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Scaffold a new agentbox instance (one trust domain = one compose service).
-# Copies examples/demo/ as the template, creates the workspace directory and prints the compose
-# snippet on stdout. It never edits docker-compose.yaml and never writes secret values.
+# Scaffold a new agentbox instance (one trust domain = one compose project = one directory).
+# Copies examples/demo/ as the template: config.toml, env.example and the instance's own
+# docker-compose.yaml, and creates the workspace directory. It never writes secret values.
 # Exit codes: 0 ok / 1 usage error or target exists / 2 precondition (template missing)
 
 set -euo pipefail
@@ -21,14 +21,14 @@ usage() {
 	cat <<'USAGE'
 Usage: scaffold.sh [options] <name>
 
-Create examples/<name>/{config.toml,env.example} from the demo template, create the workspace
-directory, and print the docker-compose service + volume snippet on stdout.
+Create examples/<name>/{docker-compose.yaml,config.toml,env.example} from the demo template and
+create the workspace directory. Nothing is printed on stdout; progress goes to stderr.
 
 Arguments:
   <name>                  instance name: lowercase letters, digits, dashes; starts with a letter
 
 Options:
-      --agent TYPE        claudecode (default) or pi; pi selects the -pi image in the snippet
+      --agent TYPE        claudecode (default) or pi; pi selects the -pi image in docker-compose.yaml
       --mount FILE        file credential to mount as /agent/FILE:ro (repeatable), e.g. kubeconfig
       --workspaces-root D host directory holding one workspace per instance (default ./runtime/workspaces)
       --root DIR          repository root (default: derived from this script's location)
@@ -65,8 +65,8 @@ done
 
 TEMPLATE="${ROOT}/examples/demo"
 TARGET="${ROOT}/examples/${NAME}"
-[ -f "${TEMPLATE}/config.toml" ] && [ -f "${TEMPLATE}/env.example" ] \
-	|| { echo "Error: template ${TEMPLATE} is incomplete (config.toml + env.example required)" >&2; exit 2; }
+[ -f "${TEMPLATE}/config.toml" ] && [ -f "${TEMPLATE}/env.example" ] && [ -f "${TEMPLATE}/docker-compose.yaml" ] \
+	|| { echo "Error: template ${TEMPLATE} is incomplete (docker-compose.yaml + config.toml + env.example required)" >&2; exit 2; }
 [ ! -e "${TARGET}" ] || die "${TARGET} already exists; pick another name or remove it first"
 
 WS_DIR="${WORKSPACES_ROOT}/${NAME}"
@@ -75,8 +75,8 @@ case "${WS_DIR}" in /*) WS_ABS="${WS_DIR}" ;; *) WS_ABS="${ROOT}/${WS_DIR#./}" ;
 if [ "${DRY_RUN}" -eq 1 ]; then
 	echo "plan: create ${TARGET}/config.toml (name=${NAME}, agent.type=${AGENT})" >&2
 	echo "plan: create ${TARGET}/env.example" >&2
+	echo "plan: create ${TARGET}/docker-compose.yaml (service ${NAME}, agent ${AGENT})" >&2
 	echo "plan: create workspace ${WS_ABS}" >&2
-	echo "plan: print compose snippet for service '${NAME}'" >&2
 	exit 0
 fi
 
@@ -105,6 +105,29 @@ else
 	cp "${TEMPLATE}/env.example" "${TARGET}/env.example"
 fi
 
+# docker-compose.yaml: rename the service, container and workspace, switch the image tag for pi,
+# add one read-only mount per --mount after the cache volume. The indented "# - ..." hints in the
+# template are dropped: a scaffolded file lists what it mounts, nothing else.
+sed -e "s/^  demo:\$/  ${NAME}:/" \
+    -e "s/^    container_name: agentbox-demo\$/    container_name: agentbox-${NAME}/" \
+    -e "s|/demo:/workspace\$|/${NAME}:/workspace|" \
+    -e '/^      #/d' \
+    "${TEMPLATE}/docker-compose.yaml" > "${TARGET}/docker-compose.yaml"
+if [ "${AGENT}" = pi ]; then
+	sed -i.bak 's|^\(  image: .*:\${AGENTBOX_VERSION}\)$|\1-pi|' "${TARGET}/docker-compose.yaml" && rm -f "${TARGET}/docker-compose.yaml.bak"
+	grep -q 'AGENTBOX_VERSION}-pi$' "${TARGET}/docker-compose.yaml" || die "template changed: image line not found"
+fi
+# Each insert lands right after the cache line, so walk the list backwards to keep the given order.
+for ((i = ${#MOUNTS[@]} - 1; i >= 0; i--)); do
+	m="${MOUNTS[i]}"
+	sed -i.bak "/^      - cache:\/cache\$/a\\
+      - ./${m}:/agent/${m}:ro" "${TARGET}/docker-compose.yaml" && rm -f "${TARGET}/docker-compose.yaml.bak"
+done
+grep -q "^  ${NAME}:\$" "${TARGET}/docker-compose.yaml" || die "template changed: service line not found"
+grep -q "^    container_name: agentbox-${NAME}\$" "${TARGET}/docker-compose.yaml" || die "template changed: container_name line not found"
+grep -q "/${NAME}:/workspace\$" "${TARGET}/docker-compose.yaml" || die "template changed: workspace mount not found"
+
+info "created ${TARGET}/docker-compose.yaml"
 info "created ${TARGET}/config.toml"
 info "created ${TARGET}/env.example"
 info "created workspace ${WS_ABS} (owner must match the image's AGENT_UID, default 1000)"
@@ -112,26 +135,3 @@ for m in "${MOUNTS[@]+"${MOUNTS[@]}"}"; do
 	grep -qxF "examples/*/${m}" "${ROOT}/.gitignore" 2>/dev/null \
 		|| warn "examples/*/${m} is not in .gitignore; add it before creating the file"
 done
-
-# Snippet on stdout: data only, so it can be redirected or pasted.
-{
-	echo "  # --- add under services: ---"
-	echo "  ${NAME}:"
-	echo "    <<: *agentbox"
-	echo "    container_name: agentbox-${NAME}"
-	[ "${AGENT}" = pi ] && echo '    image: ${AGENTBOX_IMAGE_PI:-agentbox:dev-pi}'
-	echo "    env_file:"
-	echo "      - ./examples/${NAME}/env"
-	echo "    volumes:"
-	echo "      - ./examples/${NAME}/config.toml:/agent/config.toml:ro"
-	echo "      - \${WORKSPACES_ROOT:-${WORKSPACES_ROOT}}/${NAME}:/workspace"
-	echo "      - ${NAME}-state:/state"
-	echo "      - ${NAME}-cache:/cache"
-	for m in "${MOUNTS[@]+"${MOUNTS[@]}"}"; do
-		echo "      - ./examples/${NAME}/${m}:/agent/${m}:ro"
-	done
-	echo
-	echo "  # --- add under volumes: ---"
-	echo "  ${NAME}-state:"
-	echo "  ${NAME}-cache:"
-}
