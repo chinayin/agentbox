@@ -150,6 +150,47 @@ setup_instance "$TMP/i5"; rm -rf "$TMP/i5/ws"
 out="$(run_entry "$TMP/i5" FEISHU_APP_ID=x)"; rc=$?
 [ $rc -eq 2 ] && ok "a missing workspace exits 2" || bad "a missing workspace exits 2" "rc=$rc"
 
+# Skills come from a manifest next to the config, installed into HOME by npx skills. A fake npx
+# records the calls: what matters is the flags (one skill per add, agent name claude-code) and that
+# an already-installed skill is skipped, because both have bitten us (docs/SKILLS.md).
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/npx" <<'FAKE'
+#!/usr/bin/env bash
+echo "npx $*" >> "$NPX_LOG"
+FAKE
+chmod +x "$TMP/bin/npx"
+setup_instance "$TMP/i6"
+cat > "$TMP/i6/skill-lock.json" <<'LOCK'
+{"version": 3, "skills": {
+  "alpha": {"source": "owner/one", "skillPath": "skills/alpha/SKILL.md"},
+  "beta":  {"source": "owner/two", "skillPath": "skills/beta/SKILL.md"}}}
+LOCK
+NPX_LOG="$TMP/npx.log"; : > "$NPX_LOG"
+out="$(env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
+	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub 2>&1)"; rc=$?
+[ $rc -eq 0 ] && ok "an instance with a skill manifest still starts" || bad "an instance with a skill manifest still starts" "rc=$rc / $out"
+[ "$(grep -c '^npx' "$NPX_LOG")" = 2 ] \
+	&& ok "each skill in the manifest is added by its own npx call" || bad "each skill in the manifest is added by its own npx call" "$(cat "$NPX_LOG")"
+grep -q -- '--yes skills add owner/one -g -s alpha -a claude-code -y' "$NPX_LOG" \
+	&& ok "the add carries the skill name and the claude-code agent" || bad "the add carries the skill name and the claude-code agent" "$(cat "$NPX_LOG")"
+mkdir -p "$TMP/i6/state/.claude/skills/alpha"
+: > "$NPX_LOG"
+env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
+	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub >/dev/null 2>&1
+[ "$(grep -c '^npx' "$NPX_LOG")" = 1 ] && ! grep -q ' alpha ' "$NPX_LOG" \
+	&& ok "an already-installed skill is not fetched again" || bad "an already-installed skill is not fetched again" "$(cat "$NPX_LOG")"
+# A broken manifest must not take the agent down with it.
+echo 'not json' > "$TMP/i6/skill-lock.json"
+out="$(env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
+	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub 2>&1)"; rc=$?
+[ $rc -eq 0 ] && grep -q 'unreadable' <<<"$out" \
+	&& ok "an unreadable manifest warns instead of killing the agent" || bad "an unreadable manifest warns instead of killing the agent" "rc=$rc / $out"
+# No manifest at all is the common case and must stay silent.
+NPX_LOG="$TMP/npx2.log"; : > "$NPX_LOG"
+env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i1/state" WORK_DIR="$TMP/i1/ws" \
+	AGENTBOX_CONFIG="$TMP/i1/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub >/dev/null 2>&1
+[ ! -s "$NPX_LOG" ] && ok "no manifest means no install attempt" || bad "no manifest means no install attempt" "$(cat "$NPX_LOG")"
+
 # escape hatch
 out="$(run_entry "$TMP/i1" AGENTBOX_PRECHECK=0)"; rc=$?
 [ $rc -eq 0 ] && ok "PRECHECK=0 skips the prechecks" || bad "PRECHECK=0 skips the prechecks" "rc=$rc"
@@ -826,7 +867,7 @@ sed -n '/^== red items/,$p' <<<"$plan" | grep -q 'CLAUDE_CODE_MAX_CONTEXT_TOKENS
 	&& bad "CLAUDE_CODE_MAX_CONTEXT_TOKENS is not a red item" "found in red items" || ok "CLAUDE_CODE_MAX_CONTEXT_TOKENS is not a red item"
 grep -qE '^ *WORK_DIR.*discard' <<<"$plan" && ok "plan discards .env keys the config does not reference" || bad "plan discards .env keys the config does not reference" "$plan"
 grep -q 'id_fixture.*ssh_key' <<<"$plan" && grep -q 'GIT_SSH_COMMAND' <<<"$plan" && ok "plan mounts the first ssh key and wires GIT_SSH_COMMAND" || bad "plan mounts the first ssh key and wires GIT_SSH_COMMAND" "$plan"
-grep -qE 'alpha.*/etc/claude-code' <<<"$plan" && grep -qE 'beta.*test.sh' <<<"$plan" && ok "plan routes user skills to the managed layer and lists docker in self-tests" || bad "plan routes user skills to the managed layer and lists docker in self-tests" "$plan"
+grep -qE 'alpha.*reinstalled from the manifest' <<<"$plan" && grep -qE 'beta.*test.sh' <<<"$plan" && ok "plan reinstalls user skills from the manifest and lists docker in self-tests" || bad "plan reinstalls user skills from the manifest and lists docker in self-tests" "$plan"
 grep -qE 'gamma.*SKILL.md' <<<"$plan" && sed -n '/^== red items/,$p' <<<"$plan" | grep -q 'gamma' \
 	&& ok "docker in a skill's runtime path is a red item" || bad "docker in a skill's runtime path is a red item" "$plan"
 sed -n '/^== red items/,$p' <<<"$plan" | grep -q 'bypassPermissions' && ok "bypassPermissions is a red item" || bad "bypassPermissions is a red item" "$plan"
@@ -907,8 +948,8 @@ tgt="$im/repo/hosts/h1/instances/srcops"
 HOME="$im/fakehome" AGENTBOX_DEPLOY_REPO="$im/repo" bash "$IMPORT" --local --home "$shome" import --host h1 --name srcops "$src" > "$im/import.out" 2>"$im/import.err"; rc=$?
 [ "$rc" -eq 0 ] && ok "local import exits 0" || bad "local import exits 0" "rc=$rc $(cat "$im/import.err")"
 [ -f "$tgt/config.toml" ] && [ -f "$tgt/env" ] && [ -f "$tgt/kubeconfig-dev.yaml" ] && [ -f "$tgt/kubeconfig-prod.yaml" ] && [ -f "$tgt/ssh_key" ] \
-	&& [ -f "$tgt/claude/.claude/skills/alpha/SKILL.md" ] && [ -f "$tgt/claude/.claude/skills/beta/test.sh" ] && [ -f "$tgt/claude/.skill-lock.json" ] \
-	&& ok "import writes config, env, credentials and the managed skills layer" || bad "import writes config, env, credentials and the managed skills layer" "$(find "$tgt" 2>/dev/null)"
+	&& [ -f "$tgt/skill-lock.json" ] && [ ! -e "$tgt/claude" ] \
+	&& ok "import writes config, env, credentials and the skill manifest" || bad "import writes config, env, credentials and the skill manifest" "$(find "$tgt" 2>/dev/null)"
 [ "$(stat -f %Lp "$tgt/env" 2>/dev/null || stat -c %a "$tgt/env")" = 600 ] && [ "$(stat -f %Lp "$tgt/ssh_key" 2>/dev/null || stat -c %a "$tgt/ssh_key")" = 600 ] \
 	&& [ "$(stat -f %Lp "$tgt/kubeconfig-dev.yaml" 2>/dev/null || stat -c %a "$tgt/kubeconfig-dev.yaml")" = 600 ] \
 	&& ok "env and credential files land as 0600" || bad "env and credential files land as 0600" ""
@@ -939,8 +980,8 @@ stray="$(find "$im" -newer "$im/marker" -type f -not -path "$tgt/*" -not -path "
 snip="$(sed -n '/^  # --- add under services: ---/,$p' "$im/import.out")"
 grep -q '^  srcops:$' <<<"$snip" && grep -q 'image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}' <<<"$snip" \
 	&& grep -q './instances/srcops/kubeconfig-dev.yaml:/agent/kubeconfig-dev.yaml:ro' <<<"$snip" && grep -q './instances/srcops/ssh_key:/agent/ssh_key:ro' <<<"$snip" \
-	&& grep -q './instances/srcops/claude:/etc/claude-code:ro' <<<"$snip" && grep -q './workspaces/srcops:/workspace' <<<"$snip" && grep -q 'pids: ' <<<"$snip" \
-	&& ok "snippet mounts config, workspace, credentials and the managed layer with the GHCR image" || bad "snippet mounts config, workspace, credentials and the managed layer with the GHCR image" "$snip"
+	&& grep -q './instances/srcops/skill-lock.json:/agent/skill-lock.json:ro' <<<"$snip" && grep -q './workspaces/srcops:/workspace' <<<"$snip" && grep -q 'pids: ' <<<"$snip" \
+	&& ok "snippet mounts config, workspace, credentials and the skill manifest with the GHCR image" || bad "snippet mounts config, workspace, credentials and the skill manifest with the GHCR image" "$snip"
 check_snippet "import-instance" "$snip" srcops ./instances
 bash "$IMPORT" --local --home "$shome" --repo "$im/repo" import --host h1 --name srcops "$src" >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "import refuses an existing target (exit 1)" || bad "import refuses an existing target (exit 1)" "rc=$rc"

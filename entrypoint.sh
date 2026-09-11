@@ -25,6 +25,7 @@ so that docker run --rm -it agentbox bash works for debugging.
 
 Mount contract:
   /agent/config.toml   ro   instance declaration (path overridable via AGENTBOX_CONFIG)
+  /agent/skill-lock.json ro optional, skill manifest; named skills are installed into /state
   /workspace           rw   workspace, bind-mounted from the host
   /state               rw   session and identity state; HOME points here
   /cache               rw   build cache, one per trust domain
@@ -110,6 +111,45 @@ precheck() {
 	fi
 }
 
+# Install the skills the manifest names. npx skills is the only tool that reads this file, and it
+# knows two scopes: project (cwd) and global (HOME). HOME is the state volume, so a global install
+# persists across restarts and an already-installed skill costs no network -- which is why the
+# skills themselves are not mounted: the manifest is the only thing an instance carries.
+# One add per skill: several in one command silently stop after the first (docs/SKILLS.md).
+install_skills() {
+	local lock name src
+	lock="$(dirname "${CONFIG}")/skill-lock.json"
+	[ -f "${lock}" ] || return 0
+	if ! command -v npx >/dev/null 2>&1; then
+		warn "npx not found; the skills in ${lock} were not installed"
+		return 0
+	fi
+	while IFS="$(printf '\t')" read -r name src; do
+		[ -n "${name}" ] || continue
+		if [ -d "${HOME}/.claude/skills/${name}" ]; then continue; fi
+		info "installing skill ${name} from ${src}"
+		npx --yes skills add "${src}" -g -s "${name}" -a claude-code -y >&2 \
+			|| warn "skill ${name} from ${src} failed to install"
+	done < <(lock_entries "${lock}" || true)
+}
+
+# name<TAB>source per skill. A manifest that does not parse is a warning, not a dead agent.
+lock_entries() {
+	python3 - "$1" <<'LOCK'
+import json, sys
+try:
+    with open(sys.argv[1], "rb") as fh:
+        lock = json.load(fh)
+except (OSError, ValueError) as e:
+    print(f"Warning: skill manifest {sys.argv[1]} is unreadable: {e}", file=sys.stderr)
+    sys.exit(1)
+for name, meta in (lock.get("skills") or {}).items():
+    src = meta.get("source") or meta.get("sourceUrl")
+    if src:
+        print(f"{name}\t{src}")
+LOCK
+}
+
 main() {
 	# Deliberate deviation from gox-code-rules:shell, which says to reject unknown options: this is a
 	# pass-through wrapper, and every flag it does not claim below belongs to cc-connect. Rejecting
@@ -132,6 +172,8 @@ main() {
 	else
 		warn "prechecks skipped (AGENTBOX_PRECHECK=0)"
 	fi
+
+	install_skills
 
 	info "starting cc-connect with config ${CONFIG}"
 	exec cc-connect --config "${CONFIG}" "$@"

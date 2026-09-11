@@ -240,7 +240,7 @@ case "${ACTION}" in
 	import)
 		if [ "${DRY_RUN}" -eq 1 ]; then
 			plan_collect_line
-			echo "plan: write ${TARGET}/{config.toml,env} plus credential files and claude/ (0600 for credentials)" >&2
+			echo "plan: write ${TARGET}/{config.toml,env} plus credential files and skill-lock.json (0600 for credentials)" >&2
 			echo "plan: print the compose snippet for service '${NAME}' with image ${IMAGE}" >&2
 			exit 0
 		fi

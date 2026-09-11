@@ -279,11 +279,12 @@ def build_plan(recs, ctx, lock, host, name):
             L.append(f"  {home + '/.ssh/' + k:<44} {'ssh_key (0600)':<44} bind mount /agent/ssh_key:ro")
         else:
             L.append(f"  {home + '/.ssh/' + k:<44} {'-':<44} not mounted: only the first key is; wire others by hand")
-    for s in fields(recs, "user_skill"):
-        L.append(f"  {home + '/.claude/skills/' + s[0]:<44} {'claude/.claude/skills/' + s[0]:<44} bind mount /etc/claude-code:ro")
     lock_path = field(recs, "skill_lock")
+    for s in fields(recs, "user_skill"):
+        dst = "-" if lock_path else "(no manifest)"
+        L.append(f"  {home + '/.claude/skills/' + s[0]:<44} {dst:<44} not copied: reinstalled from the manifest on first start")
     if lock_path:
-        L.append(f"  {lock_path:<44} {'claude/.skill-lock.json':<44} for npx skills update")
+        L.append(f"  {lock_path:<44} {'skill-lock.json':<44} bind mount /agent/skill-lock.json:ro")
     for s in fields(recs, "ws_skill"):
         L.append(f"  {'<work_dir>/' + s[0]:<44} {'-':<44} stays in the workspace")
     L.append(f"  {'~/.claude.json, sessions':<44} {'-':<44} not migrated: state volume starts empty")
@@ -318,7 +319,7 @@ def build_plan(recs, ctx, lock, host, name):
             return f"  {name_:<28} {where}, docker in runtime path ({hits})"
         return f"  {name_:<28} {where}, docker only in self-tests ({hits}): those tests cannot run inside the container"
     for s in fields(recs, "user_skill"):
-        L.append(skill_line(s[0], "user level -> managed layer /etc/claude-code", s[1] if len(s) > 1 else "-"))
+        L.append(skill_line(s[0], "user level -> reinstalled from the manifest into /state", s[1] if len(s) > 1 else "-"))
     for s in fields(recs, "ws_skill"):
         L.append(skill_line(s[0], "workspace", s[1] if len(s) > 1 else "-"))
     for s in fields(recs, "skill_cred"):
@@ -413,11 +414,11 @@ def write_out(a, recs, new_config, ctx):
     ssh_keys = [r[0] for r in fields(recs, "ssh_key")]
     if ssh_keys:
         rows.append(("cred", f"{home}/.ssh/{ssh_keys[0]}", "ssh_key"))
-    for s in fields(recs, "user_skill"):
-        rows.append(("dir", f"{home}/.claude/skills/{s[0]}/", f"claude/.claude/skills/{s[0]}/"))
+    # User-level skills are not copied: the manifest is what the instance carries, and the
+    # entrypoint installs from it into the state volume (docs/SKILLS.md).
     lock_path = field(recs, "skill_lock")
     if lock_path:
-        rows.append(("file", lock_path, "claude/.skill-lock.json"))
+        rows.append(("file", lock_path, "skill-lock.json"))
     with open(a.copy_list, "w", encoding="utf-8") as fh:
         for r in rows:
             fh.write("\t".join(r) + "\n")
@@ -434,8 +435,8 @@ def snippet(a, recs, ctx):
          f"      - {n}-state:/state", f"      - {n}-cache:/cache"]
     for dst, mount in ctx["mounts"]:
         L.append(f"      - ./instances/{n}/{dst}:{mount}:ro")
-    if fields(recs, "user_skill"):
-        L.append(f"      - ./instances/{n}/claude:/etc/claude-code:ro")
+    if field(recs, "skill_lock"):
+        L.append(f"      - ./instances/{n}/skill-lock.json:/agent/skill-lock.json:ro")
     L += ["", "  # --- add under volumes: ---", f"  {n}-state:", f"  {n}-cache:", "",
           "  # --- add once at top level (deploy ensures the network exists on the host) ---",
           "networks:", "  agentbox:", "    external: true", ""]
