@@ -370,6 +370,41 @@ else
 	bad "a missing placeholder is listed before start and exits 2" "rc=${RUN_RC} output=${RUN_OUT}"
 fi
 
+# A skill manifest is the only thing an instance carries; the entrypoint installs from it into the
+# state volume. This is the one check that the whole path works in the image: npx present, network
+# out, and the result landing where Claude Code looks. test.sh can only get as far as a fake npx.
+printf 'FEISHU_APP_ID=fixture\n' > "${TMP}/env"
+cat > "${TMP}/skill-lock.json" <<'LOCK'
+{"version": 3, "skills": {"gen-ssh-key": {"source": "chinayin/coding-skillhub", "skillPath": "skills/gen-ssh-key/SKILL.md"}}}
+LOCK
+run_capture "${IMAGE}" \
+	--env-file "${TMP}/env" \
+	-v "${TMP}/config.toml:/agent/config.toml:ro" \
+	-v "${TMP}/skill-lock.json:/agent/skill-lock.json:ro" \
+	-v "${TMP}/state:/state" \
+	-v "${TMP}/workspace:/workspace" \
+	-- --stub
+if [ -f "${TMP}/state/.claude/skills/gen-ssh-key/SKILL.md" ]; then
+	ok "a skill named in the manifest is installed into the state volume"
+else
+	bad "a skill named in the manifest is installed into the state volume" "rc=${RUN_RC} output=${RUN_OUT}"
+fi
+
+# Second start: the skill is already there, so nothing is fetched again -- restarts must not depend
+# on GitHub being up.
+run_capture "${IMAGE}" \
+	--env-file "${TMP}/env" \
+	-v "${TMP}/config.toml:/agent/config.toml:ro" \
+	-v "${TMP}/skill-lock.json:/agent/skill-lock.json:ro" \
+	-v "${TMP}/state:/state" \
+	-v "${TMP}/workspace:/workspace" \
+	-- --stub
+if printf '%s\n' "${RUN_OUT}" | grep -q "installing skill"; then
+	bad "an installed skill is not fetched again on restart" "output=${RUN_OUT}"
+else
+	ok "an installed skill is not fetched again on restart"
+fi
+
 run_capture "${IMAGE}" -- --stub
 if [ "${RUN_RC}" -eq 2 ] && printf '%s\n' "${RUN_OUT}" | grep -q "not found; mount /agent/config.toml"; then  # entrypoint-text
 	ok "starting without a config fails clearly"

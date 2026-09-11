@@ -6,9 +6,13 @@
 
 | 落法 | 位置 | 适用 |
 |---|---|---|
-| 托管层 | 宿主目录 `:ro` 挂到 `/etc/claude-code`，技能放 `.claude/skills/<name>/` | 团队共享、由宿主统一管理的技能；改完重启容器即生效，重建 state 卷不丢 |
-| 装进 state | `/state/.claude/skills`，容器内 `npx skills add -g` | 第三方技能临时试用；重建 state 卷即丢，靠 §3 的清单复现 |
+| 清单驱动（默认） | 挂 `/agent/skill-lock.json`，entrypoint 首启按清单 `npx skills add -g` 装进 `/state/.claude/skills` | 用户级技能的常规落法。实例只带一份清单，技能本体不进配置仓库 |
+| 托管层 | 宿主目录 `:ro` 挂到 `/etc/claude-code` | 组织级策略：`managed-settings.json`、`CLAUDE.md`、`managed-mcp.json`。技能也认（`.claude/skills/<name>/`），但那条路 `npx skills` 不认，只用于必须由宿主锁死、不允许 agent 自行更新的技能 |
 | 进工作区 | 仓库自带 `.claude/skills/` | 只属于这个项目的技能，随代码版本化 |
+
+**为什么默认是清单而不是把技能挂进去。** `npx skills` 只认两个作用域：project（cwd 的 `.claude/skills`）与 global（`~/.agents/.skill-lock.json` + `~/.claude/skills`）。`/etc/claude-code` 不在其中——挂在那儿的技能，`skills list` 看不见、`skills update` 更新不了，只能靠外部脚本模拟一个 HOME 去伺候它。而 `HOME=/state`，global 作用域天然就落在 state 卷里：装一次持久有效，重启不联网（entrypoint 按目录名跳过已装的），更新就是容器内一句 `npx skills update -g`。2026-09-11 实测：容器内 `npx skills add <src> -g -s <name> -a claude-code -y` 正常装进 `/state/.claude/skills/<name>`（实体目录，非软链），lock 落 `/state/.agents/.skill-lock.json`。
+
+清单缺失、npx 不可用、单条安装失败都只 `Warning:` 不中断启动——技能没装上，agent 仍然应该能收消息。清单本身解析不了同样只告警。
 
 `/opt/toolkit` 只是脚本库（`bin/` 进 PATH），Claude Code 不会从那里发现 `SKILL.md`。
 
@@ -45,7 +49,9 @@ npx --yes skills add <owner/repo> -g -s <skill-name> -a claude-code -y
 
 ## 3. 清单
 
-`npx skills` 维护 `.skill-lock.json`，每条含 `source`、`skillPath`、内容哈希。备份或迁移只需这一个文件，建议放进实例目录随配置版本化。
+`npx skills` 维护 `.skill-lock.json`（global 作用域下在 `~/.agents/` 里），每条含 `source`、`skillPath`、内容哈希。备份或迁移只需这一个文件——它就是挂给容器的 `/agent/skill-lock.json`，放进部署仓库的实例目录随配置版本化。entrypoint 只读它的 `skills.<name>.source`，`sourceUrl` 作为回退。
+
+技能是会被执行的代码，`update` 拉的是上游 HEAD。清单里记的是仓库而不是 commit，所以更新时机由人决定：不要让 agent 自己定期 update。
 
 ## 4. 凭据
 

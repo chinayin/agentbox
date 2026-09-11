@@ -1,31 +1,36 @@
 # The deploy repository
 
-`deploy.sh` reads and writes a separate, private git repository (suggested name
-`agentbox-deploy`). This repository holds real config, real secrets and a per-host commit
-history; agentbox itself never sees a filled-in `env` or `config.toml`. This page is what a human
-reads once, when creating that repository or adding a new host to it.
+`deploy.sh` reads and writes a separate, private git repository. This repository holds real
+config, real secrets and a per-host commit history; agentbox itself never sees a filled-in `env`
+or `config.toml`. Host it on an internal or self-hosted git server, never on a public one
+(GitHub included): the secrets are committed in plaintext, so the repository's access control is
+the only thing protecting them. This page is what a human reads once, when creating that
+repository or adding a new host to it.
 
 ## Repository layout
 
 ```
 agentbox-deploy/
   README.md
+  defaults.env
   hosts/
     hk-test/
       host.env
-      docker-compose.yaml
       instances/
-        aliyun/{config.toml,env}
-        demo/{config.toml,env}
+        aliyun/{docker-compose.yaml,config.toml,env,kubeconfig}
+        demo/{docker-compose.yaml,config.toml,env}
     prod-cn/
       host.env
-      docker-compose.yaml
       instances/...
 ```
 
-One directory per host under `hosts/`. Each host directory is a self-contained compose project:
-its own `host.env` (connection info and target version), its own `docker-compose.yaml`, and one
-`instances/<name>/` per agent running there, holding a filled-in `config.toml` and `env`.
+One directory per host under `hosts/`, holding `host.env` (connection info and target version)
+and one `instances/<name>/` per instance running there. **Each instance directory is a
+self-contained compose project**: its own `docker-compose.yaml`, a filled-in `config.toml` and
+`env`, and its file credentials. `deploy.sh` runs `docker compose` from inside that directory on
+the server, so the compose project (and the volume prefix) is named after the directory, every
+path in the file is relative to it, and moving an instance to another host is moving one directory
+(plus its workspace and volumes). There is no host-level compose file; `plan` refuses one.
 
 `config.toml` and `env` here are the real thing — the counterpart of the `config.toml` example and
 `env.example` template that `new-instance` generates under `examples/<name>/` in the agentbox
@@ -34,8 +39,8 @@ repo. Templates live in agentbox and go in git; real values live in the deploy r
 ## `host.env`
 
 Connection fields (top half) are read locally by `deploy.sh` and never leave this machine. Only
-`AGENTBOX_VERSION` (bottom half) is derived into the remote `.env` that `docker compose` reads on
-the server.
+`AGENTBOX_VERSION` (bottom half) is derived into the `.env` that `docker compose` reads on the
+server, one copy per instance directory.
 
 ```env
 DEPLOY_HOST=root@xxx.xxx.xxx.xxx.sslip.io
@@ -52,34 +57,89 @@ AGENTBOX_VERSION=x.x.x
   `remote-build`'s `.env.example`, because the network path is the same: behind a rule-based proxy
   a bare IP goes DIRECT and times out, so use the `<ip>.sslip.io` form and set the alias to the
   real IP to keep `known_hosts` correct.
-- `DEPLOY_DIR` is the directory this host's compose project lives in on the server (see below).
+- `DEPLOY_DIR` is the directory this host's instances live in on the server (see below).
 - `AGENTBOX_VERSION` is the only thing an upgrade or rollback touches: edit this line to a
-  different tag, then run `deploy`.
+  different tag, then run `deploy`. Omit it and the repo-level `defaults.env` supplies it; keep it
+  only for a host that must stay behind the rest of the fleet.
 
-## Production `docker-compose.yaml`
+## `defaults.env`
 
-Written by hand in the deploy repo, one per host, image pinned to a GHCR tag via the version
-variable that `deploy.sh` writes into the remote `.env`:
+Optional, at the repo root, and read for exactly one variable:
 
-```yaml
-services:
-  aliyun:
-    image: ghcr.io/<owner>/agentbox:${AGENTBOX_VERSION}
-    env_file: [./instances/aliyun/env]
-    volumes:
-      - ./instances/aliyun/config.toml:/agent/config.toml:ro
-      - ./workspaces/aliyun:/workspace
-      - aliyun-state:/state
-      - aliyun-cache:/cache
-volumes:
-  aliyun-state:
-  aliyun-cache:
+```env
+AGENTBOX_VERSION=x.x.x
 ```
 
-This file is not generated. Paste in the service block that `new-instance`'s scaffold script
-prints, then swap the image line for the GHCR form above — the repo root's `docker-compose.yaml`
-stays a development file pointing at a local `agentbox:dev` build; the two never share content or
-generate one another.
+Moving every host to a new image is then this one line rather than one edit per host. Connection
+fields are per-host by nature and are never read from here. `--image-version TAG` overrides both
+files for a single run, which is how you try a tag without writing it down; the version a host
+actually runs stays in git either way, and `plan` prints which source it came from.
+
+## The instance's `docker-compose.yaml`
+
+Generated, not written by hand: `new-instance` and `import-instance` both cut it from
+`examples/demo/docker-compose.yaml` in the agentbox repo, so every instance file has the same
+shape. Image pinned to a GHCR tag via the version variable that `deploy.sh` writes into the
+instance's `.env`; paths relative to the instance directory; the workspace defaults to
+`../../workspaces/<name>`, which is `DEPLOY_DIR/workspaces/<name>` on the server:
+
+```yaml
+x-agentbox: &agentbox
+  image: ghcr.io/<owner>/agentbox:${AGENTBOX_VERSION}
+  restart: unless-stopped
+  init: true
+  stop_grace_period: 30s
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  deploy: {resources: {limits: {pids: 512}}}
+  networks: [agentbox]
+  env_file: [./env]
+
+services:
+  aliyun:
+    <<: *agentbox
+    container_name: agentbox-aliyun
+    volumes:
+      - ./config.toml:/agent/config.toml:ro
+      - ${WORKSPACES_ROOT:-../../workspaces}/aliyun:/workspace
+      - state:/state
+      - cache:/cache
+      - ./kubeconfig:/agent/kubeconfig:ro
+
+volumes:
+  state:
+  cache:
+
+networks:
+  agentbox:
+    external: true
+```
+
+The `x-agentbox` block is policy shared by every instance, referenced inside the file by a YAML
+anchor rather than inherited from another file, so the directory stays self-contained. `plan`
+checks each file for `cap_drop: [ALL]`, `no-new-privileges`, a pids limit, the external network
+and `${AGENTBOX_VERSION}`, and refuses `privileged`, `cap_add`, `network_mode` and a docker socket
+mount. Edit only the service's own `volumes`; a second container in the same trust domain is a
+second service with `<<: *agentbox` and its own `container_name`, config file and volumes
+(`docs/MULTI_PROJECT.md` §1).
+
+`deploy.sh` creates the `agentbox` network on the host if it is missing (an idempotent
+`docker network inspect || docker network create` before the first `docker compose pull`), so the
+external-network declaration works on a fresh host with no manual `docker network create` step.
+Every instance on the host joins that one network and containers resolve each other by name; the
+repo root's `docker-compose.yaml` stays a development file pointing at a local `agentbox:dev` build.
+
+### Moving from the host-level compose file (before 2026-09-11)
+
+Hosts set up earlier had one `hosts/<host>/docker-compose.yaml` with every instance as a service,
+run as one compose project named after `DEPLOY_DIR`. To move such a host: generate or write
+`instances/<name>/docker-compose.yaml` for each service, pin each `state` / `cache` volume to the
+name the old project gave it (`volumes: state: name: <old-project>_<name>-state`, read it from
+`docker volume ls` on the server) so no session history is lost, delete the host-level file, and
+commit. Before the first per-instance `deploy`, stop the old project on the server once —
+`docker compose -f DEPLOY_DIR/docker-compose.yaml down` (no `-v`) — otherwise the new project's
+`container_name` collides with the running container. Then `deploy` as usual and delete the stale
+`DEPLOY_DIR/docker-compose.yaml` and `DEPLOY_DIR/.env`.
 
 ## Server layout
 
@@ -87,16 +147,26 @@ The server holds only deploy artifacts, no source:
 
 ```
 /data/agentbox/                       DEPLOY_DIR
-  docker-compose.yaml
-  .env                                 written by deploy; compose variables only, no ssh info
-  instances/<name>/config.toml         0644
+  instances/<name>/docker-compose.yaml the instance's compose project; compose runs from this directory
+  instances/<name>/.env                written by deploy; compose variables only, no ssh info
+  instances/<name>/config.toml         0644, owned by UID 1000
   instances/<name>/env                 0600, owned by UID 1000
+  instances/<name>/kubeconfig-*        0600, owned by UID 1000 (file credentials, one file each)
+  instances/<name>/ssh_key             0600, owned by UID 1000
+  instances/<name>/claude/             read-only managed layer for /etc/claude-code (skills, lock)
   workspaces/<name>/                   created and chowned to UID 1000 by deploy
 ```
 
-`state` and `cache` are docker named volumes, not part of this tree; a deploy never touches them.
-That is deliberate — the state volume carries session history and tool-written credentials, and a
-redeploy must not wipe it.
+`state` and `cache` are docker named volumes (`<name>_state`, `<name>_cache`), not part of this
+tree; a deploy never touches them and `remove` leaves them behind on purpose — the state volume
+carries session history and tool-written credentials, and neither a redeploy nor a retirement may
+wipe it without a human running `docker volume rm`.
+
+`instances/` on the server mirrors the repo (`rsync --delete`). A directory deleted from the repo
+must be retired with `deploy.sh remove <host> <name>` before the next deploy: it stops the
+containers through the server's copy of the compose file, then deletes the directory. A plain
+deploy refuses while the server holds an instance the repo no longer has, because mirroring the
+compose file away would leave running containers with nothing to `down` them.
 
 ### Why the deploy directory itself is created `0700`
 
@@ -130,3 +200,5 @@ opens it, so it can be — and is — tightened to `0600` and owned by UID 1000 
 
 The two files carrying different modes is not an inconsistency to fix; it follows from one being
 read by the container and the other only ever being read by compose on the host.
+
+File credentials (`kubeconfig-*`, `ssh_key`) follow `env`: 0600 and owned by UID 1000, because the container reads them through a bind mount as that UID and nothing else on the host should. `claude/` is code, not credentials, and keeps the modes it arrived with. `deploy` applies all of this on every run, so an instance written by `import-instance` needs no manual chmod on the server.

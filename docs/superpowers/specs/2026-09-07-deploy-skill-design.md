@@ -33,7 +33,7 @@
 
 ## 4. 部署仓库结构
 
-仓库名建议 `agentbox-deploy`，GitHub 私有。
+仓库私有，放内部自建 git（**不要放公网 git 托管，GitHub 私有仓库也不行**：密钥是明文入库的，仓库权限是唯一防线）。2026-09-11 起实际落在内部 GitLab 的 `op/config`。
 
 ```
 agentbox-deploy/

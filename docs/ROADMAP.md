@@ -9,8 +9,9 @@
 | 1 | `linux/arm64` 镜像在 arm64 上跑通 | 2026-09-09 这个开关翻了三次，最后按实测数据定为**关闭**：amd64 单架构 publish 冷 2m12s、暖 1m17s，加上 arm64 要 7m50s（其中 334s 是模拟的 apt 层），缓存包也从 776 MB 翻到 1523 MB，而 arm64 没有部署目标——开发机可以拉保留下来的 `v0.3.0`（它含 arm64 层），或本地 `make image` 原生构建。**`v0.3.0` 的 arm64 层仍然从未被运行过**：在 QEMU 里构建成功不等于能跑 | 在 Apple Silicon 上 `docker run ghcr.io/<repo>:0.3.0 --version` 成功（会自动选 arm64 manifest）；重开发布则需先有真实 arm64 部署目标 |
 | 2 | `relay send --data-dir` 跨容器 | `MULTI_PROJECT.md` §3 的"挂对端 socket"建立在未验证前提上 | 两容器实验；不通就把该行改为"不可行" |
 | 3 | CI 首跑 | 2026-09-07 推送到 GitHub 私有仓库，main 上 `ci.yml` 两段已绿；2026-09-08 `v0.1.0` 跑通了 tag 这条（第一次因并发组死锁失败，修复见第 4 行）。PR 与 `lock.yml` 两条仍未跑过 | 推送后首个 PR 两段全绿；`lock.yml` 手动触发能开 PR，且 PR 分支上出现由 dispatch 触发的 ci 运行 |
-| 4 | GHCR 镜像被服务器拉取 | 2026-09-09 `v0.2.0` 已发布并**验证过匿名可拉**（仓库与包当前 public，`ghcr.io/v2/.../tags/list` 无凭据可读，manifest 只含 amd64）。发布链路本身已验证：bake `--push`、registry 缓存、amd64-only 三条都跑通。**但仍没有服务器真的拉过**，且若转为 private，服务器会重新需要一个带 `read:packages` 的 PAT 做 `docker login ghcr.io`——这是人工步骤，deploy 技能不得自动化 | 目标主机上 `docker pull` 两个镜像成功 |
-| 5 | `deploy` 技能真实主机首跑 | 技能与文档已实现（`.claude/skills/deploy/`），本地测试通过，但从未连过真实主机；依赖上一行先跑通，否则服务器上没有版本可拉 | 在真实主机上 `plan` 与 `deploy` 各跑通一次，且 `status` 能看到容器 running |
+| 4 | GHCR 镜像被服务器拉取 | 2026-09-09 `v0.2.0` 已发布并**验证过匿名可拉**（仓库与包当前 public，`ghcr.io/v2/.../tags/list` 无凭据可读，manifest 只含 amd64）。发布链路本身已验证：bake `--push`、registry 缓存、amd64-only 三条都跑通。**但仍没有服务器真的拉过**，且若转为 private，服务器会重新需要一个带 `read:packages` 的 PAT 做 `docker login ghcr.io`——这是人工步骤，deploy 技能不得自动化。2026-09-09 起由首个裸机实例迁移 demo 收口：构建机作为第一个 deploy 目标拉 `v0.2.0` | 目标主机上 `docker pull` 两个镜像成功 |
+| 5 | `deploy` 技能真实主机首跑 | 技能与文档已实现（`.claude/skills/deploy/`），本地测试通过，但从未连过真实主机；依赖上一行先跑通，否则服务器上没有版本可拉。同一 demo 收口 | 在真实主机上 `plan` 与 `deploy` 各跑通一次，且 `status` 能看到容器 running |
+| 5a | `import-instance` 真实源首跑 | 2026-09-10 对真实源主机跑通了 `plan` 与 `import`（只读），产物通过 `deploy plan` 离线校验并已提交部署仓库；尚未在构建机起来。两处阻塞：源实例的 `ANTHROPIC_BASE_URL` 是内网地址，构建机不可达，需要可达的网关或把 demo 放进同一内网；飞书 demo 应用的 id/secret 与 open_id 由用户填写后才能 `deploy`。 | 对首个裸机源实例 `plan` 与 `import` 各跑通一次，产物经 `deploy plan` 校验通过，并在构建机上起来 |
 
 ## P2 加固
 
@@ -19,6 +20,7 @@
 | 6 | compose 加固：`read_only: true` + tmpfs + healthcheck | 未做；`cap_drop`、`no-new-privileges`、`init`、pids 上限已有，但**这一层完全没有测试覆盖**——`make smoke` 走裸 `docker run`，不经过 compose。cc-connect 凭据无效时不退出只刷 websocket error，healthcheck 不能只看进程 | 起真实实例后 `docker inspect` 能读到 `PidsLimit`、`CapDrop`、`SecurityOpt` 实际生效（`docker compose config` 只证明 YAML 没写错，不算验收）；实例 `healthy` 且无 `read-only file system` |
 | 7 | pi 会话端到端 | 已决定（2026-09-06）：pi 变体保留；2026-09-07 起与 Claude Code 镜像平级、共享工具链、互不包含。先把 Claude Code 生态跑通，pi 之后再验证。`agent.type = "pi"` 已被接受并启动引擎，未用真实凭据驱动过会话 | 真实飞书应用 + `-pi` 镜像，发一条消息拿到回复 |
 | 8 | state 卷备份/恢复脚本 | 无脚本；卷内含 git 私钥 | `scripts/state-backup.sh`，文档标注备份件密级 |
+| 9 | 每实例一个 compose 项目的首次真实部署 | 2026-09-11 改成实例目录自带 `docker-compose.yaml`、`deploy` 逐目录 `compose up`、新增 `remove`；`make check` 全绿，但**没有主机真的按新形态跑过**。已在跑的 litellm-gateway 要迁一次：它的卷名带旧项目前缀，新 compose 里用 `name:` 钉住，且首次部署前要先 `down` 旧项目，否则容器名冲突 | 一台主机上 `deploy <host> <instance>` 成功、`status` 按实例分段输出、旧卷里的会话历史还在；再删一个实例走一遍 `remove` |
 
 ## 已否决
 

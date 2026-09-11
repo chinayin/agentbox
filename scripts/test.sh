@@ -150,6 +150,47 @@ setup_instance "$TMP/i5"; rm -rf "$TMP/i5/ws"
 out="$(run_entry "$TMP/i5" FEISHU_APP_ID=x)"; rc=$?
 [ $rc -eq 2 ] && ok "a missing workspace exits 2" || bad "a missing workspace exits 2" "rc=$rc"
 
+# Skills come from a manifest next to the config, installed into HOME by npx skills. A fake npx
+# records the calls: what matters is the flags (one skill per add, agent name claude-code) and that
+# an already-installed skill is skipped, because both have bitten us (docs/SKILLS.md).
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/npx" <<'FAKE'
+#!/usr/bin/env bash
+echo "npx $*" >> "$NPX_LOG"
+FAKE
+chmod +x "$TMP/bin/npx"
+setup_instance "$TMP/i6"
+cat > "$TMP/i6/skill-lock.json" <<'LOCK'
+{"version": 3, "skills": {
+  "alpha": {"source": "owner/one", "skillPath": "skills/alpha/SKILL.md"},
+  "beta":  {"source": "owner/two", "skillPath": "skills/beta/SKILL.md"}}}
+LOCK
+NPX_LOG="$TMP/npx.log"; : > "$NPX_LOG"
+out="$(env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
+	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub 2>&1)"; rc=$?
+[ $rc -eq 0 ] && ok "an instance with a skill manifest still starts" || bad "an instance with a skill manifest still starts" "rc=$rc / $out"
+[ "$(grep -c '^npx' "$NPX_LOG")" = 2 ] \
+	&& ok "each skill in the manifest is added by its own npx call" || bad "each skill in the manifest is added by its own npx call" "$(cat "$NPX_LOG")"
+grep -q -- '--yes skills add owner/one -g -s alpha -a claude-code -y' "$NPX_LOG" \
+	&& ok "the add carries the skill name and the claude-code agent" || bad "the add carries the skill name and the claude-code agent" "$(cat "$NPX_LOG")"
+mkdir -p "$TMP/i6/state/.claude/skills/alpha"
+: > "$NPX_LOG"
+env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
+	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub >/dev/null 2>&1
+[ "$(grep -c '^npx' "$NPX_LOG")" = 1 ] && ! grep -q ' alpha ' "$NPX_LOG" \
+	&& ok "an already-installed skill is not fetched again" || bad "an already-installed skill is not fetched again" "$(cat "$NPX_LOG")"
+# A broken manifest must not take the agent down with it.
+echo 'not json' > "$TMP/i6/skill-lock.json"
+out="$(env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
+	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub 2>&1)"; rc=$?
+[ $rc -eq 0 ] && grep -q 'unreadable' <<<"$out" \
+	&& ok "an unreadable manifest warns instead of killing the agent" || bad "an unreadable manifest warns instead of killing the agent" "rc=$rc / $out"
+# No manifest at all is the common case and must stay silent.
+NPX_LOG="$TMP/npx2.log"; : > "$NPX_LOG"
+env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i1/state" WORK_DIR="$TMP/i1/ws" \
+	AGENTBOX_CONFIG="$TMP/i1/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub >/dev/null 2>&1
+[ ! -s "$NPX_LOG" ] && ok "no manifest means no install attempt" || bad "no manifest means no install attempt" "$(cat "$NPX_LOG")"
+
 # escape hatch
 out="$(run_entry "$TMP/i1" AGENTBOX_PRECHECK=0)"; rc=$?
 [ $rc -eq 0 ] && ok "PRECHECK=0 skips the prechecks" || bad "PRECHECK=0 skips the prechecks" "rc=$rc"
@@ -404,18 +445,36 @@ grep -nE '^VERSION="[0-9]' "$ENTRY" "$ROOT"/scripts/*.sh 2>/dev/null | grep -q .
 grep -rn '跨实例共享' "$ROOT/README.md" "$ROOT"/docs/*.md "$ROOT/docker-compose.yaml" "$ROOT"/examples "$ENTRY" 2>/dev/null | grep -q . \
 	&& bad "cache is no longer described as shared across instances" "see the lines above" || ok "cache is no longer described as shared across instances"
 
-# ---------- template hygiene ----------
+# ---------- instance compose files ----------
+# One structural check for every docker-compose.yaml the repo generates (new-instance and
+# import-instance), against the template they are both cut from: the service is renamed and
+# inherits the shared anchor, paths are relative to the instance directory, the shared block the
+# deploy skill enforces is intact, and no template hint comment survives into a generated file.
+# $1 label, $2 file, $3 service name
+check_instance_compose() {
+	local label="$1" f="$2" n="$3"
+	[ -f "$f" ] && grep -q '^x-agentbox: &agentbox$' "$f" && grep -q "^  ${n}:\$" "$f" && grep -q '^    <<: \*agentbox$' "$f" \
+		&& grep -q "^    container_name: agentbox-${n}\$" "$f" && grep -q '^  env_file: \[./env\]$' "$f" \
+		&& grep -q '^      - ./config.toml:/agent/config.toml:ro$' "$f" && grep -q "/${n}:/workspace\$" "$f" \
+		&& grep -q '^      - state:/state$' "$f" && grep -q '^      - cache:/cache$' "$f" \
+		&& grep -q '^  state:$' "$f" && grep -q '^  cache:$' "$f" && grep -q '^    external: true$' "$f" \
+		&& grep -q 'cap_drop: \[ALL\]' "$f" && grep -q 'no-new-privileges:true' "$f" && grep -q 'pids: 512' "$f" \
+		&& ! grep -q '^      #' "$f" && ! grep -q 'demo' "$f" \
+		&& ok "${label} docker-compose.yaml has the shared instance structure" || bad "${label} docker-compose.yaml has the shared instance structure" "$(cat "$f" 2>/dev/null)"
+}
+
 # ---------- new-instance skill scaffold ----------
 # The skill's scaffold copies examples/demo; these guard the copy against template drift and
 # make sure the skill can never produce a non-placeholder value or clobber an existing instance.
 group "new-instance scaffold"
 SCAFFOLD="$ROOT/.claude/skills/new-instance/scripts/scaffold.sh"
 sc="$TMP/scaffold"; mkdir -p "$sc/examples"; cp -R "$ROOT/examples/demo" "$sc/examples/"; cp "$ROOT/.gitignore" "$sc/"
-if snippet="$(bash "$SCAFFOLD" --root "$sc" --agent pi --mount kubeconfig data 2>"$sc/err")"; then
+if out="$(bash "$SCAFFOLD" --root "$sc" --agent pi --mount kubeconfig --mount ssh_key data 2>"$sc/err")"; then
 	ok "scaffold exits 0 for a fresh name"
 else
 	bad "scaffold exits 0 for a fresh name" "$(cat "$sc/err")"
 fi
+[ -z "$out" ] && ok "scaffold prints nothing on stdout (the files are the product)" || bad "scaffold prints nothing on stdout (the files are the product)" "$out"
 python3 -c 'import sys,tomllib; c=tomllib.load(open(sys.argv[1],"rb")); p=c["projects"][0]; assert p["name"]=="data" and p["agent"]["type"]=="pi" and p["agent"]["options"]["env"]["KUBECONFIG"]=="/agent/kubeconfig"' "$sc/examples/data/config.toml" 2>/dev/null \
 	&& ok "scaffolded config.toml parses with name, agent type and KUBECONFIG applied" \
 	|| bad "scaffolded config.toml parses with name, agent type and KUBECONFIG applied" "see $sc/examples/data/config.toml"
@@ -440,10 +499,15 @@ have="$(grep -oE '^[A-Z_]+=' "$sc/examples/data/env.example" | tr -d = | sort -u
 grep -vE '^(#|$)' "$sc/examples/data/env.example" | grep -vE '=(cli_|ou_|sk-)?x+$|=https://[a-z.-]+\.example\.com$' | grep -q . \
 	&& bad "scaffolded env.example holds placeholders only" "$(grep -vE '^(#|$)' "$sc/examples/data/env.example" | grep -vE '=(cli_|ou_|sk-)?x+$|example\.com')" \
 	|| ok "scaffolded env.example holds placeholders only"
-printf '%s\n' "$snippet" | grep -q '^  data:$' && printf '%s\n' "$snippet" | grep -q 'AGENTBOX_IMAGE_PI' \
-	&& printf '%s\n' "$snippet" | grep -q 'examples/data/kubeconfig:/agent/kubeconfig:ro' && printf '%s\n' "$snippet" | grep -q '^  data-cache:$' \
-	&& ok "snippet names the service, the pi image, the kubeconfig mount and the volumes" \
-	|| bad "snippet names the service, the pi image, the kubeconfig mount and the volumes" "$snippet"
+scf="$sc/examples/data/docker-compose.yaml"
+grep -q 'image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}-pi$' "$scf" \
+	&& ok "pi scaffold switches the anchor image to the -pi tag" || bad "pi scaffold switches the anchor image to the -pi tag" "$(grep image: "$scf")"
+# --mount order is preserved, and every mount is relative to the instance directory
+[ "$(grep -oE '/agent/(kubeconfig|ssh_key):ro$' "$scf" | tr '\n' ' ')" = "/agent/kubeconfig:ro /agent/ssh_key:ro " ] \
+	&& grep -q '^      - ./kubeconfig:/agent/kubeconfig:ro$' "$scf" && grep -q '^      - ./ssh_key:/agent/ssh_key:ro$' "$scf" \
+	&& ok "scaffold adds one ./FILE:/agent/FILE:ro mount per --mount, in the given order" \
+	|| bad "scaffold adds one ./FILE:/agent/FILE:ro mount per --mount, in the given order" "$(grep ':ro$' "$scf")"
+check_instance_compose "new-instance" "$scf" data
 [ -d "$sc/runtime/workspaces/data" ] && ok "scaffold creates the workspace directory" || bad "scaffold creates the workspace directory" ""
 bash "$SCAFFOLD" --root "$sc" data >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "scaffold refuses to overwrite an existing instance (exit 1)" || bad "scaffold refuses to overwrite an existing instance (exit 1)" "rc=$rc"
@@ -483,6 +547,30 @@ grep -qxF '.claude/skills/*/.env' "$ROOT/.gitignore" && ok "skill .env files are
 group "deploy skill"
 dp="$TMP/dp"; mkdir -p "$dp/skill/scripts"; cp "$DP_SRC" "$dp/skill/scripts/"
 mkdir -p "$dp/repo/hosts/h1/instances/a1" "$dp/other/hosts/h2/instances/a2"
+# Every instance is its own compose project; the fixture files carry the shared block the deploy
+# skill enforces (cap_drop, no-new-privileges, pids, external network, version variable).
+compose_fixture() {
+	cat > "$1" <<'YML'
+x-agentbox: &agentbox
+  image: ghcr.io/owner/agentbox:${AGENTBOX_VERSION}
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  deploy: {resources: {limits: {pids: 512}}}
+  networks: [agentbox]
+  env_file: [./env]
+services:
+  svc:
+    <<: *agentbox
+    volumes: [./config.toml:/agent/config.toml:ro, state:/state]
+volumes:
+  state:
+networks:
+  agentbox:
+    external: true
+YML
+}
+compose_fixture "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
+compose_fixture "$dp/other/hosts/h2/instances/a2/docker-compose.yaml"
 printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\n' > "$dp/repo/hosts/h1/host.env"
 printf 'DEPLOY_HOST=user@h2.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\n' > "$dp/other/hosts/h2/host.env"
 # Every host needs a complete, valid instance once check_all_instances validates locally: config.toml
@@ -575,22 +663,81 @@ env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" plan h1 >/dev/nul
 printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\nDEPLOY_KEY=/tmp/nope.pem\nDEPLOY_SOCKS=127.0.0.1:7890\n' > "$dp/repo/hosts/h1/host.env"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm hostenv ) 2>/dev/null
 
-# deploy actually pushes config: sync a whitelist, derive the remote .env, fix permissions, then
-# start containers. All of this must show up in --dry-run output without ever connecting.
-cat > "$dp/repo/hosts/h1/docker-compose.yaml" <<'YML'
-services:
-  a1:
-    image: ghcr.io/owner/agentbox:${AGENTBOX_VERSION}
-    env_file: [./instances/a1/env]
-YML
-( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm compose ) 2>/dev/null
+# The instance compose file is policy: a hand edit that drops the shared block, adds a forbidden
+# key, or leaves the version variable out must fail plan locally and name what is wrong. A
+# host-level compose file (the pre-2026-09-11 shape) is refused outright rather than ignored.
+sed -i.bak '/cap_drop/d' "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
+printf '    privileged: true\n' >> "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'missing cap_drop' <<<"$out" && grep -q 'forbidden privileged' <<<"$out" \
+	&& ok "plan refuses an instance compose that drops the shared block or adds privileged, naming both" \
+	|| bad "plan refuses an instance compose that drops the shared block or adds privileged, naming both" "rc=$rc $out"
+mv "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml.bak" "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
+rm "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'docker-compose.yaml' <<<"$out" \
+	&& ok "plan refuses an instance without its own docker-compose.yaml" || bad "plan refuses an instance without its own docker-compose.yaml" "rc=$rc $out"
+( cd "$dp/repo" && git checkout -q -- hosts/h1/instances/a1/docker-compose.yaml ) 2>/dev/null
+printf 'services: {}\n' > "$dp/repo/hosts/h1/docker-compose.yaml"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'no longer read' <<<"$out" \
+	&& ok "plan refuses a host-level docker-compose.yaml instead of silently ignoring it" || bad "plan refuses a host-level docker-compose.yaml instead of silently ignoring it" "rc=$rc $out"
+rm "$dp/repo/hosts/h1/docker-compose.yaml"
+
+# deploy actually pushes config: sync a whitelist, derive each instance's .env, fix permissions,
+# then start every instance from its own directory. All of this must show up in --dry-run output
+# without ever connecting.
+# Image version: --image-version > hosts/<host>/host.env > repo-level defaults.env. A fleet moves
+# together from one line; a host that must stay behind pins its own. Each step commits because
+# plan refuses a dirty repo.
+h1env='DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\n'
+printf 'AGENTBOX_VERSION=9.9.9\n' > "$dp/repo/defaults.env"
+printf "$h1env" > "$dp/repo/hosts/h1/host.env"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm defaults ) 2>/dev/null
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q '9.9.9 (from defaults.env)' <<<"$out" \
+	&& ok "defaults.env supplies the version when host.env omits it" || bad "defaults.env supplies the version when host.env omits it" "rc=$rc $out"
+printf "${h1env}AGENTBOX_VERSION=0.1.0\n" > "$dp/repo/hosts/h1/host.env"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm pin ) 2>/dev/null
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q '0.1.0 (from hosts/h1/host.env)' <<<"$out" \
+	&& ok "host.env pins a single host past the repo default" || bad "host.env pins a single host past the repo default" "rc=$rc $out"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --image-version 0.2.0 --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q '0.2.0 (from --image-version)' <<<"$out" \
+	&& ok "--image-version wins over both files" || bad "--image-version wins over both files" "rc=$rc $out"
+rm "$dp/repo/defaults.env"
+printf "$h1env" > "$dp/repo/hosts/h1/host.env"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm noversion ) 2>/dev/null
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'defaults.env' <<<"$out" && grep -q 'host.env' <<<"$out" \
+	&& ok "no version anywhere names both files and exits 1" || bad "no version anywhere names both files and exits 1" "rc=$rc $out"
+printf "${h1env}AGENTBOX_VERSION=0.1.0\n" > "$dp/repo/hosts/h1/host.env"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm version ) 2>/dev/null
+
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "deploy --dry-run exits 0" || bad "deploy --dry-run exits 0" "rc=$rc $out"
 grep -q 'rsync' <<<"$out" && grep -q 'docker compose up' <<<"$out" && grep -q 'chmod 600' <<<"$out" \
 	&& ok "dry-run shows rsync, compose and the 0600 step" || bad "dry-run shows rsync, compose and the 0600 step" "$out"
+# 2026-09-10: plain `compose up -d` left the container running on a config-only change, so the
+# first real deploy shipped a config the container never read. config.toml is a bind mount and
+# rsync swaps the inode; only a recreate picks it up.
+grep -q 'docker compose up -d --force-recreate' <<<"$out" \
+	&& ok "compose up recreates containers so a config-only change lands" || bad "compose up recreates containers so a config-only change lands" "$out"
+# one compose project per instance: compose runs from inside the instance directory, validates the
+# rendered file first, and the derived .env lands in that directory, not at the deploy root
+grep -q "cd '/data/agentbox/instances/a1' && docker compose config -q && docker compose pull && docker compose up -d --force-recreate" <<<"$out" \
+	&& ok "each instance is deployed from its own directory as its own compose project" || bad "each instance is deployed from its own directory as its own compose project" "$out"
+grep -q 'instances/<name>/.env with AGENTBOX_VERSION=0.1.0' <<<"$out" && ! grep -q "write /data/agentbox/.env" <<<"$out" \
+	&& ok "the derived .env is written per instance directory" || bad "the derived .env is written per instance directory" "$out"
+grep -q 'retire it with remove' <<<"$out" \
+	&& ok "deploy refuses to mirror away an instance the server still runs (remove first)" || bad "deploy refuses to mirror away an instance the server still runs (remove first)" "$out"
+grep -q 'docker network' <<<"$out" && grep -q 'agentbox' <<<"$out" \
+	&& ok "dry-run shows the deploy skill ensuring the agentbox network exists" || bad "dry-run shows the deploy skill ensuring the agentbox network exists" "$out"
+grep -q 'chown -R 1000:1000' <<<"$out" && grep -q 'config.toml and claude/ excepted' <<<"$out" \
+	&& ok "dry-run shows file credentials tightened and the instance directory chowned" || bad "dry-run shows file credentials tightened and the instance directory chowned" "$out"
 # the transport is a whitelist: nothing from the agentbox source tree may appear in the rsync source
-grep -q "$dp/repo/hosts/h1/" <<<"$out" && ! grep -qE 'Dockerfile|entrypoint\.sh|mise\.toml' <<<"$out" \
-	&& ok "rsync source is the host directory only, no agentbox source" || bad "rsync source is the host directory only, no agentbox source" "$out"
+grep -q "rsync .* $dp/repo/hosts/h1/instances " <<<"$out" && ! grep -qE 'Dockerfile|entrypoint\.sh|mise\.toml|hosts/h1/docker-compose' <<<"$out" \
+	&& ok "rsync source is the instances tree only, no host compose, no agentbox source" || bad "rsync source is the instances tree only, no host compose, no agentbox source" "$out"
 grep -q 'AGENTBOX_VERSION=0.1.0' <<<"$out" \
 	&& ok "the remote .env is derived, not synced" || bad "the remote .env is derived, not synced" "$out"
 ! grep -qE 'DEPLOY_KEY|DEPLOY_SOCKS|DEPLOY_HOST=' <<<"$out" \
@@ -604,6 +751,321 @@ out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run 
 	&& ok "status dry-run shows compose ps" || bad "status dry-run shows compose ps" "rc=$rc $out"
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run status 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && ok "status without a host exits 1" || bad "status without a host exits 1" "rc=$rc"
+# remove retires an instance the repo no longer has: refuse while the directory still exists (a
+# deploy would bring it back), and never touch volumes.
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run remove h1 a1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'still in the deploy repo' <<<"$out" \
+	&& ok "remove refuses an instance the repo still has (exit 1)" || bad "remove refuses an instance the repo still has (exit 1)" "rc=$rc $out"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run remove h1 gone 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "instances/gone' && docker compose down" <<<"$out" && grep -q "rm -rf '/data/agentbox/instances/gone'" <<<"$out" && ! grep -q 'down -v\|volume rm' <<<"$out" \
+	&& ok "remove dry-run shows compose down and the directory deletion, volumes untouched" || bad "remove dry-run shows compose down and the directory deletion, volumes untouched" "rc=$rc $out"
+env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run remove h1 >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "remove without an instance exits 1" || bad "remove without an instance exits 1" "rc=$rc"
+
+# ---------- import-instance skill ----------
+# Reverse of new-instance: reads a running bare-metal cc-connect instance and writes the agentbox
+# shape into the deploy repo. Fixture is a fake source instance under mktemp; nothing dials out.
+group "import-instance skill"
+IM_SRC="$ROOT/.claude/skills/import-instance/scripts"
+im="$TMP/im"; mkdir -p "$im/skills/import-instance/scripts" "$im/skills/deploy" "$im/repo/hosts/h1/instances" "$im/other/hosts/h2/instances"
+cp "$IM_SRC"/* "$im/skills/import-instance/scripts/"
+# render.py resolves lock files via ROOT, which the driver derives from its own script path
+# (SKILL_DIR/../../..); under this fixture's shallower copy that lands on $TMP, not $ROOT. Mirror
+# the real lock files there so the driver's tool-coverage step reads the genuine mise*.lock content.
+cp "$ROOT/mise.lock" "$ROOT/mise.claude.lock" "$ROOT/mise.pi.lock" "$TMP/"
+# The driver also reads the instance compose template from ROOT (examples/demo/docker-compose.yaml).
+mkdir -p "$TMP/examples/demo" && cp "$ROOT/examples/demo/docker-compose.yaml" "$TMP/examples/demo/"
+printf 'AGENTBOX_IMPORT_SOURCE=user@src.example.test\nAGENTBOX_IMPORT_KEY=~/nope.pem\n' > "$im/skills/import-instance/.env"
+printf 'AGENTBOX_DEPLOY_REPO=%s\n' "$im/repo" > "$im/skills/deploy/.env"
+printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.2.0\n' > "$im/repo/hosts/h1/host.env"
+printf 'DEPLOY_HOST=user@h2.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.2.0\n' > "$im/other/hosts/h2/host.env"
+IMPORT="$im/skills/import-instance/scripts/import-instance.sh"
+bash "$IMPORT" --help >/dev/null 2>&1 && ok "import-instance --help exits 0" || bad "import-instance --help exits 0" ""
+out="$(env -u AGENTBOX_IMPORT_SOURCE -u AGENTBOX_DEPLOY_REPO bash "$IMPORT" --dry-run plan /srv/x 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'user@src.example.test' <<<"$out" && grep -q 'collect.sh' <<<"$out" \
+	&& ok "import-instance reads the source host from the skill .env and plans an ssh collect" || bad "import-instance reads the source host from the skill .env and plans an ssh collect" "rc=$rc $out"
+out="$(AGENTBOX_IMPORT_SOURCE=other@env.example.test bash "$IMPORT" --dry-run plan /srv/x 2>&1)"
+grep -q 'other@env.example.test' <<<"$out" && ! grep -q 'src.example.test' <<<"$out" \
+	&& ok "environment overrides the import-instance skill .env" || bad "environment overrides the import-instance skill .env" "$out"
+out="$(bash "$IMPORT" --source flag@flag.example.test --dry-run plan /srv/x 2>&1)"
+grep -q 'flag@flag.example.test' <<<"$out" && ok "flag overrides the import-instance skill .env" || bad "flag overrides the import-instance skill .env" "$out"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$IMPORT" --dry-run import --host h1 --name x /srv/x 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "$im/repo/hosts/h1/instances/x" <<<"$out" \
+	&& ok "import-instance reads the deploy repo path from the deploy skill .env" || bad "import-instance reads the deploy repo path from the deploy skill .env" "rc=$rc $out"
+out="$(AGENTBOX_DEPLOY_REPO="$im/other" bash "$IMPORT" --dry-run import --host h2 --name x /srv/x 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "$im/other/hosts/h2" <<<"$out" && ! grep -q "$im/repo" <<<"$out" \
+	&& ok "environment overrides the deploy repo path for import-instance" || bad "environment overrides the deploy repo path for import-instance" "rc=$rc $out"
+out="$(bash "$IMPORT" --repo "$im/other" --dry-run import --host h2 --name x /srv/x 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "$im/other/hosts/h2" <<<"$out" \
+	&& ok "--repo overrides the deploy repo path for import-instance" || bad "--repo overrides the deploy repo path for import-instance" "rc=$rc $out"
+mv "$im/skills/import-instance/.env" "$im/skills/import-instance/.env.off"
+env -u AGENTBOX_IMPORT_SOURCE bash "$IMPORT" --dry-run plan /srv/x >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "import-instance without any source host exits 1" || bad "import-instance without any source host exits 1" "rc=$rc"
+mv "$im/skills/import-instance/.env.off" "$im/skills/import-instance/.env"
+env -u AGENTBOX_DEPLOY_REPO bash "$IMPORT" --dry-run import --host nosuch --name x /srv/x >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 2 ] && ok "import-instance rejects a host missing from the deploy repo (exit 2)" || bad "import-instance rejects a host missing from the deploy repo (exit 2)" "rc=$rc"
+bash "$IMPORT" --dry-run import --host h1 /srv/x >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "import without --name exits 1" || bad "import without --name exits 1" "rc=$rc"
+bash "$IMPORT" --dry-run import --host h1 --name Bad_Name /srv/x >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "import rejects an invalid instance name (exit 1)" || bad "import rejects an invalid instance name (exit 1)" "rc=$rc"
+bash "$IMPORT" --dry-run frobnicate /srv/x >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "import-instance rejects an unknown action (exit 1)" || bad "import-instance rejects an unknown action (exit 1)" "rc=$rc"
+[ -f "$ROOT/.claude/skills/import-instance/.env.example" ] && ! grep -v '127\.0\.0\.1' "$ROOT/.claude/skills/import-instance/.env.example" | grep -qE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' \
+	&& ok "import-instance .env.example carries no real address" || bad "import-instance .env.example carries no real address" ""
+
+# Fake source: an instance dir, an owner home with credentials and user skills, a workspace with
+# project skills. Values are fixtures and must never show up in any output of the skill.
+src="$im/src/inst"; shome="$im/src/home"; sws="$im/src/ws"
+mkdir -p "$src" "$shome/.kube" "$shome/.ssh" "$shome/.claude/skills/alpha" "$shome/.claude/skills/beta" "$shome/.agents" \
+	"$shome/.config/systemd/user" "$sws/.claude/skills/gamma" "$sws/skills/delta"
+cat > "$src/config.toml" <<TOML
+language = "zh"
+
+[log]
+level = "info"
+
+[[projects]]
+name = "src-ops"
+admin_from = "ou_fixture_admin"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+work_dir = "$sws" # keep this comment
+mode = "bypassPermissions"
+
+[projects.agent.options.env]
+ANTHROPIC_BASE_URL = "\${ANTHROPIC_BASE_URL}"
+ANTHROPIC_AUTH_TOKEN = "\${ANTHROPIC_AUTH_TOKEN}"
+ANTHROPIC_MODEL = "vendor/model-x"
+GATEWAY_ADMIN_TOKEN = "sk-fixture-secret-in-config"
+EXTRA_API_SECRET = 'fixture-single-quoted'
+KUBECONFIG = "$shome/.kube/dev.yaml:$shome/.kube/prod.yaml"
+HTTPS_PROXY = "http://proxy.example.test:7890"
+NO_PROXY = "localhost,127.0.0.1"
+CLAUDE_CODE_MAX_CONTEXT_TOKENS = "999"
+
+[[projects.platforms]]
+type = "feishu"
+
+[projects.platforms.options]
+app_id = "\${FEISHU_APP_ID}"
+app_secret = "\${FEISHU_APP_SECRET}"
+allow_from = "ou_fixture_user"
+TOML
+printf 'FEISHU_APP_ID=cli_fixture\nFEISHU_APP_SECRET=fixture-feishu-secret\nANTHROPIC_BASE_URL=https://gw.example.test\nANTHROPIC_AUTH_TOKEN=sk-fixture-env-secret\nWORK_DIR=%s\n' "$sws" > "$src/.env"
+chmod 600 "$src/.env"
+printf 'apiVersion: v1\nkind: Config\nfixture-kube-dev\n' > "$shome/.kube/dev.yaml"
+printf 'apiVersion: v1\nkind: Config\nfixture-kube-prod\n' > "$shome/.kube/prod.yaml"
+printf -- '-----BEGIN FIXTURE KEY-----\nfixture-ssh-private\n-----END FIXTURE KEY-----\n' > "$shome/.ssh/id_fixture"
+printf 'ssh-ed25519 AAAAfixture user@host\n' > "$shome/.ssh/id_fixture.pub"
+printf 'Host git.example.test\n  IdentityFile ~/.ssh/id_fixture\n' > "$shome/.ssh/config"
+printf 'git.example.test ssh-ed25519 AAAAfixture\n' > "$shome/.ssh/known_hosts"
+chmod 600 "$shome/.kube"/* "$shome/.ssh/id_fixture"
+printf -- '---\nname: alpha\n---\nRuns curl only.\n' > "$shome/.claude/skills/alpha/SKILL.md"
+printf -- '---\nname: beta\n---\nRuns kubectl.\n' > "$shome/.claude/skills/beta/SKILL.md"
+printf '#!/usr/bin/env bash\ndocker compose up -d\n' > "$shome/.claude/skills/beta/test.sh"
+printf 'FIXTURE_SKILL_SECRET=do-not-print-me\n' > "$shome/.claude/skills/beta/.env"
+printf '{"skills":{"alpha":{"source":"owner/repo","skillPath":"skills/alpha"}}}\n' > "$shome/.agents/.skill-lock.json"
+printf -- '---\nname: gamma\n---\nThis skill shells out to docker at runtime.\n' > "$sws/.claude/skills/gamma/SKILL.md"
+printf -- '---\nname: delta\n---\nPure helm.\n' > "$sws/skills/delta/SKILL.md"
+printf '[Service]\nExecStart=/usr/lib/node_modules/cc-connect/bin/cc-connect\nEnvironmentFile=%s/.env\nEnvironment="CC_LOG_FILE=/var/log/x"\n' "$src" > "$shome/.config/systemd/user/cc-connect.service"
+COLLECT="$im/skills/import-instance/scripts/collect.sh"
+inv="$(bash "$COLLECT" --home "$shome" "$src" 2>"$im/collect.err")"; rc=$?
+[ "$rc" -eq 0 ] && ok "collect exits 0 on the fixture" || bad "collect exits 0 on the fixture" "rc=$rc $(cat "$im/collect.err")"
+grep -q "^home	$shome$" <<<"$inv" && grep -q "^work_dir	$sws$" <<<"$inv" \
+	&& ok "collect reports home and work_dir" || bad "collect reports home and work_dir" "$inv"
+grep -q '^env_key	FEISHU_APP_SECRET$' <<<"$inv" && ! grep -q 'fixture-feishu-secret' <<<"$inv" \
+	&& ok "collect lists .env key names and no values" || bad "collect lists .env key names and no values" ""
+grep -q '^kube_file	dev.yaml	' <<<"$inv" && grep -q '^kube_file	prod.yaml	' <<<"$inv" \
+	&& ok "collect lists kubeconfig files" || bad "collect lists kubeconfig files" "$inv"
+grep -q '^ssh_key	id_fixture$' <<<"$inv" && grep -q '^ssh_pub	id_fixture.pub$' <<<"$inv" && ! grep -qE '^ssh_key	(config|known_hosts)$' <<<"$inv" \
+	&& ok "collect tells private keys from public keys, config and known_hosts" || bad "collect tells private keys from public keys, config and known_hosts" "$inv"
+! grep -q 'fixture-ssh-private' <<<"$inv" && ! grep -q 'fixture-kube-dev' <<<"$inv" \
+	&& ok "collect never prints credential file contents" || bad "collect never prints credential file contents" ""
+grep -q '^user_skill	alpha	-$' <<<"$inv" && grep -q '^user_skill	beta	test.sh$' <<<"$inv" && grep -q "^skill_lock	$shome/.agents/.skill-lock.json$" <<<"$inv" \
+	&& ok "collect lists user-level skills with docker hits and the skill lock" || bad "collect lists user-level skills with docker hits and the skill lock" "$inv"
+grep -q $'^skill_cred\tbeta\t.env$' <<<"$inv" && ! grep -q 'do-not-print-me' <<<"$inv" \
+	&& ok "collect flags a credential-looking file under a user skill without reading it" || bad "collect flags a credential-looking file under a user skill without reading it" "$inv"
+grep -q '^ws_skill	.claude/skills/gamma	SKILL.md$' <<<"$inv" && grep -q '^ws_skill	skills/delta	-$' <<<"$inv" \
+	&& ok "collect lists workspace skills with their docker hits" || bad "collect lists workspace skills with their docker hits" "$inv"
+grep -q '^unit	EnvironmentFile	' <<<"$inv" && grep -q '^unit	Environment	CC_LOG_FILE$' <<<"$inv" \
+	&& ok "collect reads the systemd unit keys, not the values" || bad "collect reads the systemd unit keys, not the values" "$inv"
+grep -q '^tool	git	' <<<"$inv" && ok "collect reports tool versions" || bad "collect reports tool versions" "$inv"
+sed -n '/^__AGENTBOX_CONFIG_BEGIN__$/,/^__AGENTBOX_CONFIG_END__$/p' <<<"$inv" | grep -q '^mode = "bypassPermissions"$' \
+	&& ok "collect embeds config.toml between the markers" || bad "collect embeds config.toml between the markers" ""
+bash "$COLLECT" --home "$shome" "$im/nosuch" >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 2 ] && ok "collect exits 2 when config.toml is missing" || bad "collect exits 2 when config.toml is missing" "rc=$rc"
+# Read-only by construction: no redirection other than to stderr or /dev/null, and none of the
+# commands that change a file system. Comment lines are skipped; the help heredoc must avoid them.
+hits="$(grep -vE '^[[:space:]]*#' "$IM_SRC/collect.sh" | sed -E 's#2>/dev/null|>/dev/null|>&2|2>&1|</dev/null##g' | grep -E '(^|[^0-9&])>' || true)"
+[ -z "$hits" ] && ok "collect.sh has no redirection that could write a file" || bad "collect.sh has no redirection that could write a file" "$hits"
+hits="$(grep -vE '^[[:space:]]*#' "$IM_SRC/collect.sh" | grep -nwE 'tee|rm|chmod|chown|systemctl|mkdir|install|mv|cp|truncate|sed -i' || true)"
+[ -z "$hits" ] && ok "collect.sh calls no command that writes" || bad "collect.sh calls no command that writes" "$hits"
+grep -q 'HOME=/dev/null' "$IM_SRC/collect.sh" \
+	&& ok "collect.sh probes tools with an unwritable HOME so third-party binaries cannot write on the source" \
+	|| bad "collect.sh probes tools with an unwritable HOME so third-party binaries cannot write on the source" ""
+# Remote arguments (source dir, --home) must be shell-escaped before they reach the source host,
+# and rssh (the one place every remote command goes through) must actually be used, not dead code.
+grep -q "printf '%q'" "$IM_SRC/import-instance.sh" \
+	&& ok "remote arguments are shell-escaped before they reach the source host" \
+	|| bad "remote arguments are shell-escaped before they reach the source host" "no printf '%q' found"
+rssh_hits="$(grep -c 'rssh' "$IM_SRC/import-instance.sh")"
+[ "$rssh_hits" -ge 2 ] && ok "rssh is defined and actually used" || bad "rssh is defined and actually used" "count=$rssh_hits"
+
+# plan on the fixture: read-only, offline, and every mapping decision visible in the text
+AGENTBOX_IMPORT_SOCKS=127.0.0.1:1 bash "$IMPORT" --local --home "$shome" plan "$src" > "$im/plan.out" 2>"$im/plan.err"; rc=$?
+[ "$rc" -eq 0 ] && ok "local plan exits 0 even with an unusable SOCKS proxy (no connection)" || bad "local plan exits 0 even with an unusable SOCKS proxy (no connection)" "rc=$rc $(cat "$im/plan.err")"
+plan="$(cat "$im/plan.out")"
+for s in '== artifacts' '== config rewrites' '== file credentials' '== skills' '== tools' '== red items'; do
+	grep -q "^$s" <<<"$plan" && ok "plan has section '$s'" || bad "plan has section '$s'" ""
+done
+grep -q 'work_dir.*\${WORK_DIR}' <<<"$plan" && ok "plan rewrites work_dir to \${WORK_DIR}" || bad "plan rewrites work_dir to \${WORK_DIR}" "$plan"
+grep -qE 'ANTHROPIC_MODEL.*\$\{ANTHROPIC_MODEL\}.*literal' <<<"$plan" && ok "plan turns a literal into a placeholder carried to env" || bad "plan turns a literal into a placeholder carried to env" "$plan"
+grep -qE 'GATEWAY_ADMIN_TOKEN.*secret' <<<"$plan" && ! grep -q 'sk-fixture-secret-in-config' <<<"$plan$(cat "$im/plan.err")" \
+	&& ok "plan flags a secret literal in config without printing it" || bad "plan flags a secret literal in config without printing it" "$plan"
+grep -qE 'EXTRA_API_SECRET.*secret' <<<"$plan" && ! grep -q 'fixture-single-quoted' <<<"$plan$(cat "$im/plan.err")" \
+	&& ok "plan flags a single-quoted secret literal without printing it" || bad "plan flags a single-quoted secret literal without printing it" "$plan"
+grep -q 'KUBECONFIG.*/agent/kubeconfig-dev.yaml:/agent/kubeconfig-prod.yaml' <<<"$plan" && ok "plan maps KUBECONFIG to /agent paths" || bad "plan maps KUBECONFIG to /agent paths" "$plan"
+grep -qE 'HTTPS_PROXY.*egress' <<<"$plan" && ok "plan warns that proxy values may not apply to the new host" || bad "plan warns that proxy values may not apply to the new host" "$plan"
+grep -qE 'CLAUDE_CODE_MAX_CONTEXT_TOKENS.*literal carried to env' <<<"$plan" \
+	&& ok "TOKEN inside a longer identifier is not treated as a secret" || bad "TOKEN inside a longer identifier is not treated as a secret" "$plan"
+sed -n '/^== red items/,$p' <<<"$plan" | grep -q 'CLAUDE_CODE_MAX_CONTEXT_TOKENS' \
+	&& bad "CLAUDE_CODE_MAX_CONTEXT_TOKENS is not a red item" "found in red items" || ok "CLAUDE_CODE_MAX_CONTEXT_TOKENS is not a red item"
+grep -qE '^ *WORK_DIR.*discard' <<<"$plan" && ok "plan discards .env keys the config does not reference" || bad "plan discards .env keys the config does not reference" "$plan"
+grep -q 'id_fixture.*ssh_key' <<<"$plan" && grep -q 'GIT_SSH_COMMAND' <<<"$plan" && ok "plan mounts the first ssh key and wires GIT_SSH_COMMAND" || bad "plan mounts the first ssh key and wires GIT_SSH_COMMAND" "$plan"
+grep -qE 'alpha.*reinstalled from the manifest' <<<"$plan" && grep -qE 'beta.*test.sh' <<<"$plan" && ok "plan reinstalls user skills from the manifest and lists docker in self-tests" || bad "plan reinstalls user skills from the manifest and lists docker in self-tests" "$plan"
+grep -qE 'gamma.*SKILL.md' <<<"$plan" && sed -n '/^== red items/,$p' <<<"$plan" | grep -q 'gamma' \
+	&& ok "docker in a skill's runtime path is a red item" || bad "docker in a skill's runtime path is a red item" "$plan"
+sed -n '/^== red items/,$p' <<<"$plan" | grep -q 'bypassPermissions' && ok "bypassPermissions is a red item" || bad "bypassPermissions is a red item" "$plan"
+red="$(sed -n '/^== red items/,$p' <<<"$plan")"
+grep -q 'beta' <<<"$red" && grep -q '\.env' <<<"$red" \
+	&& ok "a credential-looking file under a skill is a red item" || bad "a credential-looking file under a skill is a red item" "$plan"
+! grep -q 'do-not-print-me' <<<"$plan$(cat "$im/plan.err")" \
+	&& ok "a skill's credential-looking file content never appears in plan output" || bad "a skill's credential-looking file content never appears in plan output" ""
+grep -qE '^ *git .*(system|not in lock)' <<<"$plan" && ok "tool table classifies git" || bad "tool table classifies git" "$plan"
+grep -qE 'allow_from|admin_from' <<<"$plan" && ok "plan reminds that open_ids are per app" || bad "plan reminds that open_ids are per app" "$plan"
+! grep -q 'fixture-feishu-secret' <<<"$plan$(cat "$im/plan.err")" && ! grep -q 'sk-fixture-env-secret' <<<"$plan$(cat "$im/plan.err")" \
+	&& ok "plan output carries no value from the source .env" || bad "plan output carries no value from the source .env" ""
+# tool coverage against the real lock files: a covered tool and a not-in-lock tool
+tinv="$im/tools.inv"; { echo "$inv" | grep -v '^tool	'; printf 'tool\tkubectl\t/usr/bin/kubectl\tClient Version: v1.36.4\ntool\tfoo\t/usr/bin/foo\tfoo 9.9\ntool\tdocker\t/usr/bin/docker\tDocker version 29.7.2\ntool\tcli\t/usr/bin/cli\tcli 1.0\ntool\thelm\t/usr/local/bin/helm\t?\n'; } > "$tinv"
+tplan="$(python3 "$IM_SRC/render.py" --inventory "$tinv" --lock "$ROOT/mise.lock" --lock "$ROOT/mise.claude.lock" --name t 2>&1)"
+grep -qE '^ *kubectl .*covered' <<<"$tplan" && grep -qE '^ *foo .*not in lock' <<<"$tplan" && sed -n '/^== red items/,$p' <<<"$tplan" | grep -q 'foo' \
+	&& ok "tool coverage marks covered and not-in-lock tools, the latter red" || bad "tool coverage marks covered and not-in-lock tools, the latter red" "$tplan"
+sed -n '/^== red items/,$p' <<<"$tplan" | grep -q 'docker' && ok "docker on the source is always a red item" || bad "docker on the source is always a red item" "$tplan"
+grep -qE '^ *cli .*ambiguous' <<<"$tplan" && grep -q 'cli/cli' <<<"$tplan" && grep -q 'gitlab-org/cli' <<<"$tplan" && sed -n '/^== red items/,$p' <<<"$tplan" | grep -q 'cli' \
+	&& ok "an ambiguous tool-name match is flagged, not silently reported as not in lock" || bad "an ambiguous tool-name match is flagged, not silently reported as not in lock" "$tplan"
+grep -qE '^ *helm .*unknown' <<<"$tplan" && ! grep -qE '^ *helm .*major differs' <<<"$tplan" \
+	&& ok "a failed version probe is reported unknown, not major differs" || bad "a failed version probe is reported unknown, not major differs" "$tplan"
+# Every LOCK_ALIAS id (the bare node/go/python ids excepted) must resolve in one of the shipped
+# lock files, or the tool-coverage table would silently report "not in lock" for something that is
+# actually pinned -- render.py's own load_lock() decides what "resolves" means here.
+lock_check="$(python3 - "$IM_SRC/render.py" "$ROOT/mise.lock" "$ROOT/mise.claude.lock" "$ROOT/mise.pi.lock" <<'PY'
+import importlib.util, sys
+render_path, *lock_paths = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("render", render_path)
+render = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(render)
+lock = render.load_lock(lock_paths)
+missing = sorted({v for v in render.LOCK_ALIAS.values() if v not in ("node", "go", "python") and v not in lock})
+print("\n".join(missing))
+PY
+)"
+[ -z "$lock_check" ] && ok "every LOCK_ALIAS id exists in a shipped lock file" || bad "every LOCK_ALIAS id exists in a shipped lock file" "$lock_check"
+# multi-line (triple-quoted) TOML strings are passed through untouched, not misparsed
+minv="$im/multiline.inv"
+{
+	printf 'owner\ttester\nuid\t501\nhome\t/home/tester\nwork_dir\t/home/tester/ws\n'
+	printf '__AGENTBOX_CONFIG_BEGIN__\n[projects.agent.options]\nwork_dir = "/home/tester/ws"\n\n[projects.agent.options.env]\nNOTE = """\nline1\n"""\n__AGENTBOX_CONFIG_END__\n'
+} > "$minv"
+mplan="$(python3 "$IM_SRC/render.py" --inventory "$minv" --lock "$ROOT/mise.lock" --name t 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && sed -n '/^== red items/,$p' <<<"$mplan" | grep -q 'NOTE' && ! grep -qE 'NOTE.*\$\{NOTE\}' <<<"$mplan" \
+	&& ok "a multi-line TOML string is left to a human, not misparsed as an empty rewrite" || bad "a multi-line TOML string is left to a human, not misparsed as an empty rewrite" "rc=$rc $mplan"
+# a source config that already sets GIT_SSH_COMMAND must be rewritten in place, not duplicated: a
+# second inserted line would make the rewritten TOML fail to parse, and the source's own key path
+# must never be lifted into env as a literal.
+gsinv="$im/gitssh.inv"
+{
+	printf 'owner\ttester\nuid\t501\nhome\t/home/tester\nwork_dir\t/home/tester/ws\nssh_key\tid_x\n'
+	printf '__AGENTBOX_CONFIG_BEGIN__\n[projects.agent.options]\nwork_dir = "/home/tester/ws"\n\n[projects.agent.options.env]\nGIT_SSH_COMMAND = "ssh -i /home/x/.ssh/k"\n__AGENTBOX_CONFIG_END__\n'
+} > "$gsinv"
+gsout="$im/gitssh-out"; mkdir -p "$gsout"; : > "$gsout/env"
+gserr="$(python3 "$IM_SRC/render.py" --inventory "$gsinv" --lock "$ROOT/mise.lock" --name t --out "$gsout" --copy-list "$im/gitssh-copies" --template "$ROOT/examples/demo/docker-compose.yaml" 2>&1 >/dev/null)"; rc=$?
+[ "$rc" -eq 0 ] && ok "render.py exits 0 when the source already sets GIT_SSH_COMMAND" || bad "render.py exits 0 when the source already sets GIT_SSH_COMMAND" "rc=$rc $gserr"
+python3 - "$gsout/config.toml" <<'PY' && ok "GIT_SSH_COMMAND is rewritten in place to the mounted key, not duplicated" || bad "GIT_SSH_COMMAND is rewritten in place to the mounted key, not duplicated" "see config.toml"
+import sys, tomllib
+c = tomllib.load(open(sys.argv[1], "rb"))
+e = c["projects"]["agent"]["options"]["env"]
+assert e["GIT_SSH_COMMAND"] == "ssh -i /agent/ssh_key -o IdentitiesOnly=yes", e["GIT_SSH_COMMAND"]
+PY
+! grep -q '^GIT_SSH_COMMAND=' "$gsout/env" \
+	&& ok "env does not gain a duplicate GIT_SSH_COMMAND literal with the source's key path" || bad "env does not gain a duplicate GIT_SSH_COMMAND literal with the source's key path" "$(cat "$gsout/env")"
+# argparse usage errors and missing files exit clean, no Python traceback
+out="$(python3 "$IM_SRC/render.py" --lock "$ROOT/mise.lock" --name t 2>&1 >/dev/null)"; rc=$?
+[ "$rc" -eq 1 ] && [[ "$out" == Error:* ]] && ok "render.py without --inventory exits 1 with an Error: line" || bad "render.py without --inventory exits 1 with an Error: line" "rc=$rc $out"
+out="$(python3 "$IM_SRC/render.py" --inventory "$im/nosuch.inv" --lock "$ROOT/mise.lock" --name t 2>&1 >/dev/null)"; rc=$?
+[ "$rc" -eq 2 ] && grep -q 'Error:' <<<"$out" && ! grep -q 'Traceback' <<<"$out" \
+	&& ok "render.py exits 2 on a missing inventory file, no traceback" || bad "render.py exits 2 on a missing inventory file, no traceback" "rc=$rc $out"
+# ~/.gnupg keeps its own line and its own reason, distinct from the state-volume note
+grep -qE '\.gnupg.*docs/TOOLS\.md' <<<"$plan" && ok "plan explains the .gnupg credential channel separately" || bad "plan explains the .gnupg credential channel separately" "$plan"
+
+# import on the fixture: files land only under the target, secrets only in files, plan on stdout
+touch "$im/marker"; sleep 1
+tgt="$im/repo/hosts/h1/instances/srcops"
+HOME="$im/fakehome" AGENTBOX_DEPLOY_REPO="$im/repo" bash "$IMPORT" --local --home "$shome" import --host h1 --name srcops "$src" > "$im/import.out" 2>"$im/import.err"; rc=$?
+[ "$rc" -eq 0 ] && ok "local import exits 0" || bad "local import exits 0" "rc=$rc $(cat "$im/import.err")"
+[ -f "$tgt/docker-compose.yaml" ] && [ -f "$tgt/config.toml" ] && [ -f "$tgt/env" ] && [ -f "$tgt/kubeconfig-dev.yaml" ] && [ -f "$tgt/kubeconfig-prod.yaml" ] && [ -f "$tgt/ssh_key" ] \
+	&& [ -f "$tgt/skill-lock.json" ] && [ ! -e "$tgt/claude" ] \
+	&& ok "import writes compose, config, env, credentials and the skill manifest" || bad "import writes compose, config, env, credentials and the skill manifest" "$(find "$tgt" 2>/dev/null)"
+[ "$(stat -f %Lp "$tgt/env" 2>/dev/null || stat -c %a "$tgt/env")" = 600 ] && [ "$(stat -f %Lp "$tgt/ssh_key" 2>/dev/null || stat -c %a "$tgt/ssh_key")" = 600 ] \
+	&& [ "$(stat -f %Lp "$tgt/kubeconfig-dev.yaml" 2>/dev/null || stat -c %a "$tgt/kubeconfig-dev.yaml")" = 600 ] \
+	&& ok "env and credential files land as 0600" || bad "env and credential files land as 0600" ""
+grep -q '^FEISHU_APP_SECRET=fixture-feishu-secret$' "$tgt/env" && grep -q '^ANTHROPIC_MODEL=vendor/model-x$' "$tgt/env" \
+	&& grep -q '^GATEWAY_ADMIN_TOKEN=sk-fixture-secret-in-config$' "$tgt/env" && grep -q '^HTTPS_PROXY=http://proxy.example.test:7890$' "$tgt/env" \
+	&& ok "env keeps the source values and gains the lifted literals" || bad "env keeps the source values and gains the lifted literals" "$(sed 's/=.*/=<v>/' "$tgt/env")"
+! grep -q '^WORK_DIR=' "$tgt/env" && ok "env drops WORK_DIR" || bad "env drops WORK_DIR" ""
+grep -q 'fixture-ssh-private' "$tgt/ssh_key" && grep -q 'fixture-kube-prod' "$tgt/kubeconfig-prod.yaml" \
+	&& ok "credential files are copied verbatim" || bad "credential files are copied verbatim" ""
+python3 - "$tgt/config.toml" <<'PY' && ok "rewritten config parses and carries the new shape" || bad "rewritten config parses and carries the new shape" "see config.toml"
+import sys, tomllib
+c = tomllib.load(open(sys.argv[1], "rb")); p = c["projects"][0]; o = p["agent"]["options"]; e = o["env"]
+assert o["work_dir"] == "${WORK_DIR}", o["work_dir"]
+assert e["ANTHROPIC_MODEL"] == "${ANTHROPIC_MODEL}" and e["GATEWAY_ADMIN_TOKEN"] == "${GATEWAY_ADMIN_TOKEN}"
+assert e["KUBECONFIG"] == "/agent/kubeconfig-dev.yaml:/agent/kubeconfig-prod.yaml", e["KUBECONFIG"]
+assert e["GIT_SSH_COMMAND"] == "ssh -i /agent/ssh_key -o IdentitiesOnly=yes"
+assert e["ANTHROPIC_AUTH_TOKEN"] == "${ANTHROPIC_AUTH_TOKEN}"
+assert p["platforms"][0]["options"]["allow_from"] == "ou_fixture_user"
+assert c["log"]["level"] == "info" and o["mode"] == "bypassPermissions"
+PY
+grep -q '^work_dir = "${WORK_DIR}" # keep this comment$' "$tgt/config.toml" && ok "rewrite keeps trailing comments" || bad "rewrite keeps trailing comments" "$(grep work_dir "$tgt/config.toml")"
+diff <(grep -vE '^(work_dir|ANTHROPIC_MODEL|GATEWAY_ADMIN_TOKEN|EXTRA_API_SECRET|KUBECONFIG|HTTPS_PROXY|NO_PROXY|CLAUDE_CODE_MAX_CONTEXT_TOKENS|GIT_SSH_COMMAND) ' "$src/config.toml") <(grep -vE '^(work_dir|ANTHROPIC_MODEL|GATEWAY_ADMIN_TOKEN|EXTRA_API_SECRET|KUBECONFIG|HTTPS_PROXY|NO_PROXY|CLAUDE_CODE_MAX_CONTEXT_TOKENS|GIT_SSH_COMMAND) ' "$tgt/config.toml") >/dev/null \
+	&& ok "every line outside the rewritten keys is preserved verbatim" || bad "every line outside the rewritten keys is preserved verbatim" "$(diff "$src/config.toml" "$tgt/config.toml")"
+! grep -qE 'fixture-feishu-secret|sk-fixture-env-secret|sk-fixture-secret-in-config|fixture-ssh-private' "$im/import.out" "$im/import.err" \
+	&& ok "import prints no secret on stdout or stderr" || bad "import prints no secret on stdout or stderr" ""
+stray="$(find "$im" -newer "$im/marker" -type f -not -path "$tgt/*" -not -path "$im/import.*" 2>/dev/null)"
+[ -z "$stray" ] && [ ! -e "$im/fakehome" ] && ok "import writes nothing outside the target instance directory" || bad "import writes nothing outside the target instance directory" "$stray"
+icf="$tgt/docker-compose.yaml"
+grep -q 'image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}$' "$icf" \
+	&& grep -q '^      - ./kubeconfig-dev.yaml:/agent/kubeconfig-dev.yaml:ro$' "$icf" && grep -q '^      - ./kubeconfig-prod.yaml:/agent/kubeconfig-prod.yaml:ro$' "$icf" \
+	&& grep -q '^      - ./ssh_key:/agent/ssh_key:ro$' "$icf" && grep -q '^      - ./skill-lock.json:/agent/skill-lock.json:ro$' "$icf" \
+	&& ok "imported compose mounts every credential and the skill manifest relative to the instance directory" \
+	|| bad "imported compose mounts every credential and the skill manifest relative to the instance directory" "$(cat "$icf" 2>/dev/null)"
+! grep -q 'add under' "$im/import.out" && ok "import prints the plan only, no compose snippet to paste" || bad "import prints the plan only, no compose snippet to paste" ""
+check_instance_compose "import-instance" "$icf" srcops
+bash "$IMPORT" --local --home "$shome" --repo "$im/repo" import --host h1 --name srcops "$src" >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "import refuses an existing target (exit 1)" || bad "import refuses an existing target (exit 1)" "rc=$rc"
+# the imported instance satisfies the deploy skill's local validation as-is
+env -u AGENTBOX_DEPLOY_REPO bash "$DP_SRC" --repo "$im/repo" --dry-run plan h1 srcops >/dev/null 2>"$im/dp.err"; rc=$?
+[ "$rc" -eq 0 ] && ok "deploy plan accepts the imported instance without edits" || bad "deploy plan accepts the imported instance without edits" "rc=$rc $(cat "$im/dp.err")"
+
+# a render failure (unparseable rewritten config.toml) must not leave a half-written target
+mkdir -p "$im/src/broken"
+cp "$src/config.toml" "$src/.env" "$im/src/broken/"
+printf 'broken =\n' >> "$im/src/broken/config.toml"
+bash "$IMPORT" --local --home "$shome" --repo "$im/repo" import --host h1 --name broken "$im/src/broken" >/dev/null 2>"$im/broken.err"; rc=$?
+[ "$rc" -ne 0 ] && grep -q 'Error:' "$im/broken.err" && grep -q 'does not parse' "$im/broken.err" && [ ! -e "$im/repo/hosts/h1/instances/broken" ] \
+	&& ok "a render failure leaves no half-written target directory" || bad "a render failure leaves no half-written target directory" "rc=$rc $(cat "$im/broken.err") $(find "$im/repo/hosts/h1/instances/broken" 2>/dev/null)"
 
 group "template hygiene"
 for f in "$ROOT"/examples/*/config.toml; do
@@ -613,6 +1075,13 @@ for f in "$ROOT"/examples/*/config.toml; do
 	grep -qE '^[[:space:]]*mode[[:space:]]*=[[:space:]]*"bypassPermissions"' "$f" && bad "${n} does not default to bypassPermissions" "the template default should be acceptEdits" || ok "${n} does not default to bypassPermissions"
 done
 [ -f "$DEMO_ENV" ] && ok "the instance secret template ends in .example" || bad "the instance secret template ends in .example" "missing"
+# The demo compose template is what both generators cut from and what deploy.sh's check_compose
+# enforces; the two must agree on the shared block or every generated instance fails plan.
+dc="$ROOT/examples/demo/docker-compose.yaml"
+grep -q 'cap_drop: \[ALL\]' "$dc" && grep -q 'no-new-privileges:true' "$dc" && grep -qE 'pids: [0-9]+' "$dc" \
+	&& grep -q 'external: true' "$dc" && grep -q 'image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}$' "$dc" \
+	&& grep -q '^  env_file: \[./env\]$' "$dc" && grep -q '^      - ./config.toml:/agent/config.toml:ro$' "$dc" \
+	&& ok "the demo compose template carries the shared block deploy.sh enforces" || bad "the demo compose template carries the shared block deploy.sh enforces" ""
 ls "$ROOT"/examples/*/env "$ROOT/.env" >/dev/null 2>&1 && bad "no real env file in the repo" "an env file without .example was found" || ok "no real env file in the repo"
 
 group "workflow invariants"
