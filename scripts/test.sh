@@ -1018,8 +1018,12 @@ HOME="$im/fakehome" AGENTBOX_DEPLOY_REPO="$im/repo" bash "$IMPORT" --local --hom
 [ -f "$tgt/docker-compose.yaml" ] && [ -f "$tgt/config.toml" ] && [ -f "$tgt/env" ] && [ -f "$tgt/kubeconfig-dev.yaml" ] && [ -f "$tgt/kubeconfig-prod.yaml" ] && [ -f "$tgt/ssh_key" ] \
 	&& [ -f "$tgt/skill-lock.json" ] && [ ! -e "$tgt/claude" ] \
 	&& ok "import writes compose, config, env, credentials and the skill manifest" || bad "import writes compose, config, env, credentials and the skill manifest" "$(find "$tgt" 2>/dev/null)"
-[ "$(stat -f %Lp "$tgt/env" 2>/dev/null || stat -c %a "$tgt/env")" = 600 ] && [ "$(stat -f %Lp "$tgt/ssh_key" 2>/dev/null || stat -c %a "$tgt/ssh_key")" = 600 ] \
-	&& [ "$(stat -f %Lp "$tgt/kubeconfig-dev.yaml" 2>/dev/null || stat -c %a "$tgt/kubeconfig-dev.yaml")" = 600 ] \
+# GNU stat first, BSD second: GNU `stat -f %Lp` does not fail, it prints filesystem fields, so the
+# BSD-first order passed on macOS and failed on the Linux CI runner (2026-09-11, first CI run of
+# this group). collect.sh already uses this order.
+fmode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
+[ "$(fmode "$tgt/env")" = 600 ] && [ "$(fmode "$tgt/ssh_key")" = 600 ] \
+	&& [ "$(fmode "$tgt/kubeconfig-dev.yaml")" = 600 ] \
 	&& ok "env and credential files land as 0600" || bad "env and credential files land as 0600" ""
 grep -q '^FEISHU_APP_SECRET=fixture-feishu-secret$' "$tgt/env" && grep -q '^ANTHROPIC_MODEL=vendor/model-x$' "$tgt/env" \
 	&& grep -q '^GATEWAY_ADMIN_TOKEN=sk-fixture-secret-in-config$' "$tgt/env" && grep -q '^HTTPS_PROXY=http://proxy.example.test:7890$' "$tgt/env" \
