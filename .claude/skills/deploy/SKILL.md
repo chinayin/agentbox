@@ -17,7 +17,8 @@ or ask for a path in chat: point the user at `.env.example` and stop.
 
 Every per-host detail (ssh address, key, proxy, remote directory, target version) lives in the
 deploy repo at `hosts/<host>/host.env`. Connection fields stay local; only `AGENTBOX_VERSION` is
-derived into the remote `.env`.
+derived into the remote `.env`. The version also has a repo-level default in `defaults.env`, so a
+fleet moves together from one line while a host that must stay behind keeps its own in `host.env`.
 
 ## Actions
 
@@ -32,8 +33,10 @@ derived into the remote `.env`.
   never connects, so it is safe at any time.
 - `deploy` interrupts any session in progress on the containers it restarts. Omitting `instance`
   restarts every instance on that host. Prefer naming one instance.
-- Omit nothing else: the target version comes from `host.env`, not from a flag. Upgrading or
-  rolling back is an edit to `host.env` followed by a deploy.
+- The target version resolves as `--image-version` > that host's `host.env` > the repo's
+  `defaults.env`, and `plan` prints which one it used. Upgrading or rolling back is an edit to one
+  of those files followed by a deploy, so the deployed version stays readable from git history;
+  `--image-version` is for trying a tag once, and never silently becomes the new state.
 - `--force` proceeds despite uncommitted changes in the deploy repo. Say once why that is a bad
   idea and keep the default unless the user insists.
 

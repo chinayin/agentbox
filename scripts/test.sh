@@ -598,6 +598,33 @@ services:
     env_file: [./instances/a1/env]
 YML
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm compose ) 2>/dev/null
+# Image version: --image-version > hosts/<host>/host.env > repo-level defaults.env. A fleet moves
+# together from one line; a host that must stay behind pins its own. Each step commits because
+# plan refuses a dirty repo.
+h1env='DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\n'
+printf 'AGENTBOX_VERSION=9.9.9\n' > "$dp/repo/defaults.env"
+printf "$h1env" > "$dp/repo/hosts/h1/host.env"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm defaults ) 2>/dev/null
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q '9.9.9 (from defaults.env)' <<<"$out" \
+	&& ok "defaults.env supplies the version when host.env omits it" || bad "defaults.env supplies the version when host.env omits it" "rc=$rc $out"
+printf "${h1env}AGENTBOX_VERSION=0.1.0\n" > "$dp/repo/hosts/h1/host.env"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm pin ) 2>/dev/null
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q '0.1.0 (from hosts/h1/host.env)' <<<"$out" \
+	&& ok "host.env pins a single host past the repo default" || bad "host.env pins a single host past the repo default" "rc=$rc $out"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --image-version 0.2.0 --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q '0.2.0 (from --image-version)' <<<"$out" \
+	&& ok "--image-version wins over both files" || bad "--image-version wins over both files" "rc=$rc $out"
+rm "$dp/repo/defaults.env"
+printf "$h1env" > "$dp/repo/hosts/h1/host.env"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm noversion ) 2>/dev/null
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'defaults.env' <<<"$out" && grep -q 'host.env' <<<"$out" \
+	&& ok "no version anywhere names both files and exits 1" || bad "no version anywhere names both files and exits 1" "rc=$rc $out"
+printf "${h1env}AGENTBOX_VERSION=0.1.0\n" > "$dp/repo/hosts/h1/host.env"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm version ) 2>/dev/null
+
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "deploy --dry-run exits 0" || bad "deploy --dry-run exits 0" "rc=$rc $out"
 grep -q 'rsync' <<<"$out" && grep -q 'docker compose up' <<<"$out" && grep -q 'chmod 600' <<<"$out" \

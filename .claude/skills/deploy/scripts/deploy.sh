@@ -25,6 +25,7 @@ if [ -f "${SKILL_DIR}/.env" ]; then
 fi
 
 REPO="${AGENTBOX_DEPLOY_REPO:-}"
+VERSION_FLAG=""
 LOG_DIR="${ROOT}/runtime/deploy"
 ACTION=""
 HOST=""
@@ -50,14 +51,17 @@ Actions:
 
 Options:
       --repo PATH    deploy repository (or the AGENTBOX_DEPLOY_REPO environment variable)
+      --image-version TAG
+                     image tag for this run only; wins over defaults.env and host.env
       --force        proceed even though the deploy repo has uncommitted changes
       --dry-run      only print the commands that would run
   -v, --verbose      extra diagnostics (to stderr)
   -h, --help         show this help
 
 The deploy repo path can live in the skill's .env file (.claude/skills/deploy/.env, gitignored;
-copy .env.example). Flags and environment win. Per-host connection details and the target image
-version live in the deploy repo at hosts/<host>/host.env.
+copy .env.example). Flags and environment win. Per-host connection details live in the deploy repo
+at hosts/<host>/host.env. The image version comes from --image-version, else that host.env, else
+AGENTBOX_VERSION in the repo-level defaults.env; the plan prints which one it used.
 
 Deploy logs are written to runtime/deploy/<timestamp>-<action>-<host>.log under the repo root.
 
@@ -68,6 +72,7 @@ USAGE
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--repo)  REPO="${2:?missing value}"; shift 2 ;;
+		--image-version) VERSION_FLAG="${2:?missing value}"; shift 2 ;;
 		--force) FORCE=1; shift ;;
 		--dry-run) DRY_RUN=1; shift ;;
 		-v|--verbose) VERBOSE=1; shift ;;
@@ -103,13 +108,26 @@ DEPLOY_HOST_KEY_ALIAS=""
 DEPLOY_SOCKS=""
 DEPLOY_DIR="/data/agentbox"
 AGENTBOX_VERSION=""
+VERSION_SOURCE=""
 declare -a SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
 
 # hosts/<host>/host.env: connection fields stay local, AGENTBOX_VERSION is derived to the remote.
+# The version is the one field a fleet usually moves together, so it also has a repo-level default
+# in defaults.env; a host that must stay behind pins its own in host.env. Connection fields are
+# per-host by nature and are never read from defaults.env.
 load_host_env() {
-	local f="${HOST_DIR}/host.env" line name val
+	local f="${HOST_DIR}/host.env" d="${REPO}/defaults.env" line name val
 	[ -d "${HOST_DIR}" ] || die "host ${HOST} not found in ${REPO}/hosts"
 	[ -f "${f}" ] || die "missing ${f}"
+	if [ -f "${d}" ]; then
+		while IFS= read -r line || [ -n "${line}" ]; do
+			case "${line}" in ''|\#*) continue ;; esac
+			name="${line%%=*}"; val="${line#*=}"
+			if [ "${name}" = AGENTBOX_VERSION ]; then
+				AGENTBOX_VERSION="${val}"; VERSION_SOURCE="defaults.env"
+			fi
+		done < "${d}"
+	fi
 	while IFS= read -r line || [ -n "${line}" ]; do
 		case "${line}" in ''|\#*) continue ;; esac
 		name="${line%%=*}"; val="${line#*=}"
@@ -120,9 +138,13 @@ load_host_env() {
 		# shellcheck disable=SC2088  # matching a literal leading ~/ from the file is the point here
 		case "${val}" in "~/"*) val="${HOME}/${val#\~/}" ;; esac
 		printf -v "${name}" '%s' "${val}"
+		if [ "${name}" = AGENTBOX_VERSION ]; then VERSION_SOURCE="hosts/${HOST}/host.env"; fi
 	done < "${f}"
+	if [ -n "${VERSION_FLAG}" ]; then
+		AGENTBOX_VERSION="${VERSION_FLAG}"; VERSION_SOURCE="--image-version"
+	fi
 	[ -n "${DEPLOY_HOST}" ] || die "${f} does not set DEPLOY_HOST"
-	[ -n "${AGENTBOX_VERSION}" ] || die "${f} does not set AGENTBOX_VERSION"
+	[ -n "${AGENTBOX_VERSION}" ] || die "no image version: set AGENTBOX_VERSION in ${f} or ${d}, or pass --image-version"
 	[ -n "${DEPLOY_KEY}" ] && SSH_OPTS+=(-i "${DEPLOY_KEY}")
 	# BSD nc SOCKS5 syntax; ssh substitutes %h %p.
 	[ -n "${DEPLOY_SOCKS}" ] && SSH_OPTS+=(-o "ProxyCommand=nc -X 5 -x ${DEPLOY_SOCKS} %h %p")
@@ -215,7 +237,7 @@ print_plan() {
 	local n compose="${HOST_DIR}/docker-compose.yaml"
 	echo "  repo:      ${REPO}" >&2
 	echo "  host:      ${DEPLOY_HOST}  dir ${DEPLOY_DIR}" >&2
-	echo "  version:   ${AGENTBOX_VERSION}" >&2
+	echo "  version:   ${AGENTBOX_VERSION} (from ${VERSION_SOURCE})" >&2
 	if [ -f "${compose}" ]; then
 		echo "  compose:   ${compose}" >&2
 	else

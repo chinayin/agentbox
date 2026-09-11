@@ -12,6 +12,7 @@ repository or adding a new host to it.
 ```
 agentbox-deploy/
   README.md
+  defaults.env
   hosts/
     hk-test/
       host.env
@@ -56,7 +57,21 @@ AGENTBOX_VERSION=x.x.x
   real IP to keep `known_hosts` correct.
 - `DEPLOY_DIR` is the directory this host's compose project lives in on the server (see below).
 - `AGENTBOX_VERSION` is the only thing an upgrade or rollback touches: edit this line to a
-  different tag, then run `deploy`.
+  different tag, then run `deploy`. Omit it and the repo-level `defaults.env` supplies it; keep it
+  only for a host that must stay behind the rest of the fleet.
+
+## `defaults.env`
+
+Optional, at the repo root, and read for exactly one variable:
+
+```env
+AGENTBOX_VERSION=x.x.x
+```
+
+Moving every host to a new image is then this one line rather than one edit per host. Connection
+fields are per-host by nature and are never read from here. `--image-version TAG` overrides both
+files for a single run, which is how you try a tag without writing it down; the version a host
+actually runs stays in git either way, and `plan` prints which source it came from.
 
 ## Production `docker-compose.yaml`
 
