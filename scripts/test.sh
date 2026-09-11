@@ -192,35 +192,21 @@ env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
 	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub >/dev/null 2>&1
 [ "$(grep -c '^npx' "$NPX_LOG")" = 1 ] && ! grep -q ' alpha ' "$NPX_LOG" \
 	&& ok "an already-installed skill is not fetched again" || bad "an already-installed skill is not fetched again" "$(cat "$NPX_LOG")"
-# The image ships a preset manifest; the instance manifest is read second and wins on a name.
-# PRESET_SRC is rewritten into a copy of the entrypoint, the same trick the cn profile test uses.
-sed "s|^\tlocal preset=/etc/agentbox/skills-lock.json|\tlocal preset=$TMP/preset.json|" "$ENTRY" > "$TMP/entry-preset.sh"
-printf '{"version":1,"skills":{"preinstalled":{"source":"owner/preset"},"alpha":{"source":"owner/preset-alpha"}}}\n' > "$TMP/preset.json"
+# The fake npx installs nothing, so every skill in the manifest counts as failed: the summary and
+# the marker are what an operator finds days later, when the startup log is out of the tail window.
 rm -rf "$TMP/i6/state/.claude/skills"; : > "$NPX_LOG"
-cat > "$TMP/i6/skills-lock.json" <<'LOCK'
-{"version": 1, "skills": {"alpha": {"source": "owner/one"}}}
-LOCK
-env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
-	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$TMP/entry-preset.sh" --stub >/dev/null 2>&1
-grep -q 'skills add owner/preset -g -s preinstalled' "$NPX_LOG" \
-	&& ok "a preset skill is installed without the instance naming it" || bad "a preset skill is installed without the instance naming it" "$(cat "$NPX_LOG")"
-grep -q 'skills add owner/one -g -s alpha' "$NPX_LOG" && ! grep -q 'owner/preset-alpha' "$NPX_LOG" \
-	&& ok "the instance manifest wins over the preset on the same name" || bad "the instance manifest wins over the preset on the same name" "$(cat "$NPX_LOG")"
-# The fake npx installs nothing, so every skill above counts as failed: the summary and the marker
-# are what an operator finds days later, when the startup log is out of the tail window.
 out="$(env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
-	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$TMP/entry-preset.sh" --stub 2>&1)"
+	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub 2>&1)"
 grep -q 'of 2 skills in the manifest are not installed' <<<"$out" \
 	&& ok "a failed install is summarised at startup" || bad "a failed install is summarised at startup" "$out"
 [ -s "$TMP/i6/state/.agents/.agentbox-skills-missing" ] \
 	&& ok "a failed install leaves a marker in the state volume" || bad "a failed install leaves a marker in the state volume" "no marker"
-mkdir -p "$TMP/i6/state/.claude/skills/alpha" "$TMP/i6/state/.claude/skills/preinstalled"
+mkdir -p "$TMP/i6/state/.claude/skills/alpha" "$TMP/i6/state/.claude/skills/beta"
 env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
-	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$TMP/entry-preset.sh" --stub >/dev/null 2>&1
+	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub >/dev/null 2>&1
 [ ! -e "$TMP/i6/state/.agents/.agentbox-skills-missing" ] \
 	&& ok "the marker is cleared once every skill is installed" || bad "the marker is cleared once every skill is installed" "marker still there"
 rm -rf "$TMP/i6/state/.claude/skills"
-printf '{"version": 3, "skills": {"alpha": {"source": "owner/one"}, "beta": {"source": "owner/two"}}}\n' > "$TMP/i6/skills-lock.json"
 
 # The pi image carries no claude binary: same manifest, different agent and directory.
 rm -rf "$TMP/i6/state/.claude/skills" "$TMP/i6/state/.pi"; : > "$NPX_LOG"
@@ -803,6 +789,22 @@ grep -q 'AGENTBOX_VERSION=0.1.0' <<<"$out" \
 vout="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run -v deploy h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ! grep -q 'sk-x' <<<"$vout" \
 	&& ok "instance secrets never appear in dry-run -v output" || bad "instance secrets never appear in dry-run -v output" "rc=$rc $vout"
+# The fleet default lives in the deploy repo, not in the image: deploy merges repo root with the
+# instance's own file and ships one manifest, so an instance can override a default by name and a
+# repo with no default ships the instance file untouched.
+printf '{"version":1,"skills":{"preinstalled":{"source":"owner/preset"},"alpha":{"source":"owner/preset-alpha"}}}\n' > "$dp/repo/skills-lock.json"
+printf '{"version":1,"skills":{"alpha":{"source":"owner/instance-alpha"}}}\n' > "$dp/repo/hosts/h1/instances/a1/skills-lock.json"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm manifests ) 2>/dev/null
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'skills-lock.json.*merged with' <<<"$out" \
+	&& ok "deploy plans the merged skill manifest" || bad "deploy plans the merged skill manifest" "rc=$rc $out"
+sed -n '/^merged_manifest() {/,/^}/p' "$dp/skill/scripts/deploy.sh" > "$TMP/mm.sh"
+merged="$(REPO="$dp/repo" HOST_DIR="$dp/repo/hosts/h1" bash -c '. "$1"; merged_manifest a1' _ "$TMP/mm.sh")"
+grep -q '"owner/instance-alpha"' <<<"$merged" && ! grep -q 'preset-alpha' <<<"$merged" && grep -q '"owner/preset"' <<<"$merged" \
+	&& ok "the instance manifest overrides the repo default by skill name" || bad "the instance manifest overrides the repo default by skill name" "$merged"
+rm "$dp/repo/skills-lock.json" "$dp/repo/hosts/h1/instances/a1/skills-lock.json"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm nomanifests ) 2>/dev/null
+
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run status h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'compose ps' <<<"$out" \
 	&& ok "status dry-run shows compose ps" || bad "status dry-run shows compose ps" "rc=$rc $out"

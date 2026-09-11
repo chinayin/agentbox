@@ -111,13 +111,11 @@ precheck() {
 	fi
 }
 
-# Install the skills the manifests name. The file is whatever `npx skills add` writes -- the
+# Install the skills the manifest names. The file is whatever `npx skills add` writes -- the
 # project lock (skills-lock.json) or the global one (~/.agents/.skill-lock.json); both carry
-# skills.<name>.source, which is all that is read here. Nothing about it is agentbox's own format.
-#
-# The image ships a preset manifest for skills every instance should have; the instance manifest is
-# read second and wins on a name. There is no way to unset a preset entry: keep the preset to
-# skills that are useful to every instance.
+# skills.<name>.source, which is all that is read here. Nothing about it is agentbox's own format,
+# and the image ships no default: a fleet-wide default belongs in the deploy repo, which merges it
+# into this file before shipping it (.claude/skills/deploy/references/deploy-repo.md).
 #
 # Why not `npx skills experimental_install`, which restores from exactly this file: as of
 # skills 2026-09, it writes .agents/skills/<name> without the .claude/skills entry Claude Code
@@ -125,11 +123,11 @@ precheck() {
 # agent directory. `skills add` does, which is why it is used here -- one add per skill, because
 # several in one command silently stop after the first (docs/SKILLS.md).
 install_skills() {
-	local preset=/etc/agentbox/skills-lock.json instance agent dir name src failed=0 total=0
-	instance="$(dirname "${CONFIG}")/skills-lock.json"
-	[ -f "${preset}" ] || [ -f "${instance}" ] || return 0
+	local lock agent dir name src failed=0 total=0
+	lock="$(dirname "${CONFIG}")/skills-lock.json"
+	[ -f "${lock}" ] || return 0
 	if ! command -v npx >/dev/null 2>&1; then
-		warn "npx not found; no skill from ${preset} or ${instance} was installed"
+		warn "npx not found; the skills in ${lock} were not installed"
 		return 0
 	fi
 	# This entrypoint serves both images. npx skills knows each agent and installs into the directory
@@ -140,7 +138,7 @@ install_skills() {
 	elif command -v pi >/dev/null 2>&1; then
 		agent=pi; dir="${HOME}/.pi/agent/skills"
 	else
-		warn "no agent CLI in this image; no skill from ${preset} or ${instance} was installed"
+		warn "no agent CLI in this image; the skills in ${lock} were not installed"
 		return 0
 	fi
 	while IFS="$(printf '\t')" read -r name src; do
@@ -153,7 +151,7 @@ install_skills() {
 			warn "skill ${name} from ${src} failed to install"
 		fi
 		[ -d "${dir}/${name}" ] || failed=$((failed + 1))
-	done < <(lock_entries "${preset}" "${instance}" || true)
+	done < <(lock_entries "${lock}" || true)
 	report_missing_skills "${failed}" "${total}"
 }
 
@@ -172,27 +170,20 @@ report_missing_skills() {
 		> "${marker}" 2>/dev/null || true
 }
 
-# name<TAB>source per skill, later files winning on a name. A manifest that does not parse is a
-# warning, not a dead agent.
+# name<TAB>source per skill. A manifest that does not parse is a warning, not a dead agent.
 lock_entries() {
-	python3 - "$@" <<'LOCK'
+	python3 - "$1" <<'LOCK'
 import json, sys
-merged = {}
-for path in sys.argv[1:]:
-    try:
-        with open(path, "rb") as fh:
-            lock = json.load(fh)
-    except FileNotFoundError:
-        continue
-    except (OSError, ValueError) as e:
-        print(f"Warning: skill manifest {path} is unreadable: {e}", file=sys.stderr)
-        continue
-    for name, meta in (lock.get("skills") or {}).items():
-        src = (meta or {}).get("source") or (meta or {}).get("sourceUrl")
-        if src:
-            merged[name] = src
-for name, src in merged.items():
-    print(f"{name}\t{src}")
+try:
+    with open(sys.argv[1], "rb") as fh:
+        lock = json.load(fh)
+except (OSError, ValueError) as e:
+    print(f"Warning: skill manifest {sys.argv[1]} is unreadable: {e}", file=sys.stderr)
+    sys.exit(1)
+for name, meta in (lock.get("skills") or {}).items():
+    src = (meta or {}).get("source") or (meta or {}).get("sourceUrl")
+    if src:
+        print(f"{name}\t{src}")
 LOCK
 }
 

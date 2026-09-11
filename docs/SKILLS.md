@@ -7,7 +7,7 @@
 | 落法 | 位置 | 适用 |
 |---|---|---|
 | 清单驱动（默认） | 挂 `/agent/skills-lock.json`，entrypoint 首启按清单 `npx skills add -g` 装进 `/state/.claude/skills` | 用户级技能的常规落法。实例只带一份清单，技能本体不进配置仓库 |
-| 预装（镜像自带） | 镜像内 `/etc/agentbox/skills-lock.json`，格式与上一行同，entrypoint 先读它再读实例那份 | 每个实例都该有的通用技能。同名以实例清单为准；**没有「取消某条预装」的写法**，所以预装只放与实例无关的能力 |
+| 默认清单（部署仓库） | 部署仓库根 `skills-lock.json`，`deploy` 把它与实例那份合并后下发，容器仍只挂一份 | 整个 fleet 都该有的通用技能。实例同名覆盖；要让某个实例不装某条，就从仓库根那份里拿掉。**镜像里不带默认清单**——镜像不含身份（[ARCHITECTURE §1](ARCHITECTURE.md)），默认值属于配置那一侧，与 `defaults.env` 的版本号同构 |
 | 托管层 | 宿主目录 `:ro` 挂到 `/etc/claude-code` | 组织级策略：`managed-settings.json`、`CLAUDE.md`、`managed-mcp.json`。技能也认（`.claude/skills/<name>/`），但那条路 `npx skills` 不认，只用于必须由宿主锁死、不允许 agent 自行更新的技能 |
 | 进工作区 | 仓库自带 `.claude/skills/` | 只属于这个项目的技能，随代码版本化 |
 
