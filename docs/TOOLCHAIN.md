@@ -10,7 +10,7 @@
 | Kubernetes 交付链 | kubectl、helm、helmfile、kustomize、helm-diff | `aqua:`，helm-diff 为 `github:` |
 | 云厂商 CLI | aws-cli、aliyun-cli、cloudflared | `aqua:`，aliyun-cli 为 `github:` |
 | 代码托管 CLI | gh、glab | `aqua:`，glab 为 `gitlab:` |
-| 通用工具 | ripgrep、fd、jq、uv、bats、shellcheck、yamlfmt | `aqua:` |
+| 通用工具 | ripgrep、fd、jq、uv、bats、shellcheck、yamlfmt、direnv、pnpm、betterleaks | `aqua:` |
 | 桥接器 | cc-connect | `github:` |
 | agent（每个一份覆盖层） | claude-code（`mise.claude.toml`）、pi（`mise.pi.toml`） | `aqua:` |
 

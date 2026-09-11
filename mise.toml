@@ -45,6 +45,11 @@ locked = true
 "aqua:bats-core/bats-core" = "latest"
 "aqua:koalaman/shellcheck" = "latest"
 "aqua:google/yamlfmt" = "latest"
+"aqua:direnv/direnv" = "latest"
+# Standalone pnpm binary: node 26 ships no corepack, so the package manager is a tool of its own.
+"aqua:pnpm/pnpm" = "latest"
+# Secret scanner used by workspace pre-commit hooks.
+"aqua:betterleaks/betterleaks" = "latest"
 
 # Agent CLIs are not here: each lives in its own overlay (mise.claude.toml, mise.pi.toml), selected by MISE_ENV.
 
