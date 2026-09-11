@@ -374,13 +374,13 @@ fi
 # state volume. This is the one check that the whole path works in the image: npx present, network
 # out, and the result landing where Claude Code looks. test.sh can only get as far as a fake npx.
 printf 'FEISHU_APP_ID=fixture\n' > "${TMP}/env"
-cat > "${TMP}/skill-lock.json" <<'LOCK'
+cat > "${TMP}/skills-lock.json" <<'LOCK'
 {"version": 3, "skills": {"gen-ssh-key": {"source": "chinayin/coding-skillhub", "skillPath": "skills/gen-ssh-key/SKILL.md"}}}
 LOCK
 run_capture "${IMAGE}" \
 	--env-file "${TMP}/env" \
 	-v "${TMP}/config.toml:/agent/config.toml:ro" \
-	-v "${TMP}/skill-lock.json:/agent/skill-lock.json:ro" \
+	-v "${TMP}/skills-lock.json:/agent/skills-lock.json:ro" \
 	-v "${TMP}/state:/state" \
 	-v "${TMP}/workspace:/workspace" \
 	-- --stub
@@ -395,7 +395,7 @@ fi
 run_capture "${IMAGE}" \
 	--env-file "${TMP}/env" \
 	-v "${TMP}/config.toml:/agent/config.toml:ro" \
-	-v "${TMP}/skill-lock.json:/agent/skill-lock.json:ro" \
+	-v "${TMP}/skills-lock.json:/agent/skills-lock.json:ro" \
 	-v "${TMP}/state:/state" \
 	-v "${TMP}/workspace:/workspace" \
 	-- --stub

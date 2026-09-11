@@ -243,7 +243,7 @@ case "${ACTION}" in
 	import)
 		if [ "${DRY_RUN}" -eq 1 ]; then
 			plan_collect_line
-			echo "plan: write ${TARGET}/{docker-compose.yaml,config.toml,env} plus credential files and skill-lock.json (0600 for credentials)" >&2
+			echo "plan: write ${TARGET}/{docker-compose.yaml,config.toml,env} plus credential files and skills-lock.json (0600 for credentials)" >&2
 			echo "plan: docker-compose.yaml uses image ${IMAGE}:\${AGENTBOX_VERSION} and the demo template's shared block" >&2
 			exit 0
 		fi

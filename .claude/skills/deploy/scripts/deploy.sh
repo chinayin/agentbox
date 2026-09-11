@@ -327,6 +327,32 @@ make_rsync_ssh() {
 
 # Whitelist transport, one direction only: the host directory's instances/ tree. The agentbox source
 # tree is never involved, and nothing is ever pulled back from the server.
+# The repo-level skills-lock.json is the fleet default, the instance's own file overrides it by
+# skill name, and what the container gets is the merge -- the same shape as defaults.env for the
+# image version. Merging here and not in the image keeps the image free of defaults that an
+# instance cannot refuse, and keeps one manifest mounted per instance.
+merged_manifest() {
+	python3 - "${REPO}/skills-lock.json" "${HOST_DIR}/instances/$1/skills-lock.json" <<'MERGE'
+import json, sys
+merged, seen = {}, False
+for path in sys.argv[1:]:
+    try:
+        with open(path, "rb") as fh:
+            lock = json.load(fh)
+    except FileNotFoundError:
+        continue
+    except (OSError, ValueError) as e:
+        print(f"Error: {path} is not readable JSON: {e}", file=sys.stderr)
+        sys.exit(1)
+    seen = True
+    merged.update((lock.get("skills") or {}))
+if not seen:
+    sys.exit(9)
+json.dump({"version": 1, "skills": merged}, sys.stdout, indent=2, sort_keys=True)
+print()
+MERGE
+}
+
 sync_host() {
 	step "syncing ${HOST} config to ${DEPLOY_HOST}:${DEPLOY_DIR}"
 	local tmp n
@@ -361,11 +387,19 @@ sync_host() {
 	# directory gets it, not just the ones this run restarts, because --delete just removed them.
 	if [ "${DRY_RUN}" -eq 1 ]; then
 		echo "plan: write ${DEPLOY_DIR}/instances/<name>/.env with AGENTBOX_VERSION=${AGENTBOX_VERSION} for every instance" >&2
+		echo "plan: write ${DEPLOY_DIR}/instances/<name>/skills-lock.json, ${REPO}/skills-lock.json merged with the instance's own" >&2
 		echo "plan: chmod 600 every file under ${DEPLOY_DIR}/instances/*/ (config.toml and claude/ excepted) and chown -R 1000:1000 each instance directory" >&2
 	else
 		while IFS= read -r n; do
 			[ -n "${n}" ] || continue
 			rssh "printf 'AGENTBOX_VERSION=%s\n' '${AGENTBOX_VERSION}' > '${DEPLOY_DIR}/instances/${n}/.env'"
+			local manifest rc=0
+			manifest="$(merged_manifest "${n}")" || rc=$?
+			if [ "${rc}" -eq 0 ]; then
+				printf '%s\n' "${manifest}" | rssh "cat > '${DEPLOY_DIR}/instances/${n}/skills-lock.json'"
+			elif [ "${rc}" -ne 9 ]; then
+				die "merging the skill manifest for ${n} failed"
+			fi
 		done < <(all_instances)
 		# Every file credential (env, kubeconfig-*, ssh_key) is 0600; config.toml stays readable
 		# because the container reads it through the bind mount, and claude/ is a read-only code
@@ -447,8 +481,11 @@ do_deploy() {
 	remote_up
 }
 
+# The skills an instance failed to install are reported once, at startup, and 20 lines of log do not
+# reach back that far after a day. The entrypoint leaves a marker in the state volume for exactly
+# this reason, so read it here: a silently skill-less agent looks healthy in `ps`.
 do_status() {
-	rssh "for d in '${DEPLOY_DIR}'/instances/*/; do echo \"==> \$(basename \"\$d\")\"; (cd \"\$d\" && docker compose ps && docker compose logs --tail 20); done"
+	rssh "for d in '${DEPLOY_DIR}'/instances/*/; do n=\$(basename \"\$d\"); echo \"==> \$n\"; (cd \"\$d\" && docker compose ps && docker compose logs --tail 20); for c in \$(cd \"\$d\" && docker compose ps -q); do docker exec \"\$c\" cat /state/.agents/.agentbox-skills-missing 2>/dev/null && echo \"Warning: \$n is missing skills (see above)\"; done; done"
 }
 
 # Retire an instance: the repo no longer has its directory (deleted and committed), the server still

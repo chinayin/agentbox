@@ -156,11 +156,24 @@ out="$(run_entry "$TMP/i5" FEISHU_APP_ID=x)"; rc=$?
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/npx" <<'FAKE'
 #!/usr/bin/env bash
+# Drains stdin the way the real npx does: without it the manifest loop looks fine here and only
+# installs its first skill in a real container.
+cat >/dev/null
 echo "npx $*" >> "$NPX_LOG"
 FAKE
 chmod +x "$TMP/bin/npx"
+# The image decides the agent: claude-code and pi read different skill directories, so the
+# entrypoint picks by whichever CLI is present. Both fakes exist; PATH order is what a test varies.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/claude"
+mkdir -p "$TMP/pibin"; printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/pibin/pi"
+# A pi image has npx but no claude, so pibin is a complete PATH of its own: putting $TMP/bin
+# behind it would put claude back in reach and the detection would pick the wrong agent.
+cp "$TMP/bin/npx" "$TMP/pibin/npx"
+cp "$TMP/bin/cc-connect" "$TMP/pibin/cc-connect"
+ln -sf "$(command -v python3)" "$TMP/pibin/python3"
+chmod +x "$TMP/bin/claude" "$TMP/pibin/pi" "$TMP/pibin/npx" "$TMP/pibin/cc-connect"
 setup_instance "$TMP/i6"
-cat > "$TMP/i6/skill-lock.json" <<'LOCK'
+cat > "$TMP/i6/skills-lock.json" <<'LOCK'
 {"version": 3, "skills": {
   "alpha": {"source": "owner/one", "skillPath": "skills/alpha/SKILL.md"},
   "beta":  {"source": "owner/two", "skillPath": "skills/beta/SKILL.md"}}}
@@ -179,8 +192,38 @@ env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
 	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub >/dev/null 2>&1
 [ "$(grep -c '^npx' "$NPX_LOG")" = 1 ] && ! grep -q ' alpha ' "$NPX_LOG" \
 	&& ok "an already-installed skill is not fetched again" || bad "an already-installed skill is not fetched again" "$(cat "$NPX_LOG")"
+# The fake npx installs nothing, so every skill in the manifest counts as failed: the summary and
+# the marker are what an operator finds days later, when the startup log is out of the tail window.
+rm -rf "$TMP/i6/state/.claude/skills"; : > "$NPX_LOG"
+out="$(env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
+	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub 2>&1)"
+grep -q 'of 2 skills in the manifest are not installed' <<<"$out" \
+	&& ok "a failed install is summarised at startup" || bad "a failed install is summarised at startup" "$out"
+[ -s "$TMP/i6/state/.agents/.agentbox-skills-missing" ] \
+	&& ok "a failed install leaves a marker in the state volume" || bad "a failed install leaves a marker in the state volume" "no marker"
+mkdir -p "$TMP/i6/state/.claude/skills/alpha" "$TMP/i6/state/.claude/skills/beta"
+env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
+	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub >/dev/null 2>&1
+[ ! -e "$TMP/i6/state/.agents/.agentbox-skills-missing" ] \
+	&& ok "the marker is cleared once every skill is installed" || bad "the marker is cleared once every skill is installed" "marker still there"
+rm -rf "$TMP/i6/state/.claude/skills"
+
+# The pi image carries no claude binary: same manifest, different agent and directory.
+rm -rf "$TMP/i6/state/.claude/skills" "$TMP/i6/state/.pi"; : > "$NPX_LOG"
+printf '{"version": 1, "skills": {"alpha": {"source": "owner/one"}}}\n' > "$TMP/i6/skills-lock.json"
+env -i PATH="$TMP/pibin:/usr/bin:/bin" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
+	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub >/dev/null 2>&1
+grep -q -- '-a pi' "$NPX_LOG" && ! grep -q -- '-a claude-code' "$NPX_LOG" \
+	&& ok "the pi image installs skills for pi, not claude-code" || bad "the pi image installs skills for pi, not claude-code" "$(cat "$NPX_LOG")"
+mkdir -p "$TMP/i6/state/.pi/agent/skills/alpha"; : > "$NPX_LOG"
+env -i PATH="$TMP/pibin:/usr/bin:/bin" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
+	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub >/dev/null 2>&1
+[ ! -s "$NPX_LOG" ] && ok "a skill already installed for pi is not fetched again" || bad "a skill already installed for pi is not fetched again" "$(cat "$NPX_LOG")"
+printf '{"version": 3, "skills": {"alpha": {"source": "owner/one"}, "beta": {"source": "owner/two"}}}\n' > "$TMP/i6/skills-lock.json"
+rm -rf "$TMP/i6/state/.pi"
+
 # A broken manifest must not take the agent down with it.
-echo 'not json' > "$TMP/i6/skill-lock.json"
+echo 'not json' > "$TMP/i6/skills-lock.json"
 out="$(env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
 	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub 2>&1)"; rc=$?
 [ $rc -eq 0 ] && grep -q 'unreadable' <<<"$out" \
@@ -746,9 +789,28 @@ grep -q 'AGENTBOX_VERSION=0.1.0' <<<"$out" \
 vout="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run -v deploy h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ! grep -q 'sk-x' <<<"$vout" \
 	&& ok "instance secrets never appear in dry-run -v output" || bad "instance secrets never appear in dry-run -v output" "rc=$rc $vout"
+# The fleet default lives in the deploy repo, not in the image: deploy merges repo root with the
+# instance's own file and ships one manifest, so an instance can override a default by name and a
+# repo with no default ships the instance file untouched.
+printf '{"version":1,"skills":{"preinstalled":{"source":"owner/preset"},"alpha":{"source":"owner/preset-alpha"}}}\n' > "$dp/repo/skills-lock.json"
+printf '{"version":1,"skills":{"alpha":{"source":"owner/instance-alpha"}}}\n' > "$dp/repo/hosts/h1/instances/a1/skills-lock.json"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm manifests ) 2>/dev/null
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'skills-lock.json.*merged with' <<<"$out" \
+	&& ok "deploy plans the merged skill manifest" || bad "deploy plans the merged skill manifest" "rc=$rc $out"
+sed -n '/^merged_manifest() {/,/^}/p' "$dp/skill/scripts/deploy.sh" > "$TMP/mm.sh"
+merged="$(REPO="$dp/repo" HOST_DIR="$dp/repo/hosts/h1" bash -c '. "$1"; merged_manifest a1' _ "$TMP/mm.sh")"
+grep -q '"owner/instance-alpha"' <<<"$merged" && ! grep -q 'preset-alpha' <<<"$merged" && grep -q '"owner/preset"' <<<"$merged" \
+	&& ok "the instance manifest overrides the repo default by skill name" || bad "the instance manifest overrides the repo default by skill name" "$merged"
+rm "$dp/repo/skills-lock.json" "$dp/repo/hosts/h1/instances/a1/skills-lock.json"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm nomanifests ) 2>/dev/null
+
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run status h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'compose ps' <<<"$out" \
 	&& ok "status dry-run shows compose ps" || bad "status dry-run shows compose ps" "rc=$rc $out"
+# A skill-less agent is healthy in ps; the marker is the only thing that says otherwise.
+grep -q '.agentbox-skills-missing' <<<"$out" \
+	&& ok "status reads the missing-skills marker out of each container" || bad "status reads the missing-skills marker out of each container" "$out"
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run status 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && ok "status without a host exits 1" || bad "status without a host exits 1" "rc=$rc"
 # remove retires an instance the repo no longer has: refuse while the directory still exists (a
@@ -1016,7 +1078,7 @@ tgt="$im/repo/hosts/h1/instances/srcops"
 HOME="$im/fakehome" AGENTBOX_DEPLOY_REPO="$im/repo" bash "$IMPORT" --local --home "$shome" import --host h1 --name srcops "$src" > "$im/import.out" 2>"$im/import.err"; rc=$?
 [ "$rc" -eq 0 ] && ok "local import exits 0" || bad "local import exits 0" "rc=$rc $(cat "$im/import.err")"
 [ -f "$tgt/docker-compose.yaml" ] && [ -f "$tgt/config.toml" ] && [ -f "$tgt/env" ] && [ -f "$tgt/kubeconfig-dev.yaml" ] && [ -f "$tgt/kubeconfig-prod.yaml" ] && [ -f "$tgt/ssh_key" ] \
-	&& [ -f "$tgt/skill-lock.json" ] && [ ! -e "$tgt/claude" ] \
+	&& [ -f "$tgt/skills-lock.json" ] && [ ! -e "$tgt/claude" ] \
 	&& ok "import writes compose, config, env, credentials and the skill manifest" || bad "import writes compose, config, env, credentials and the skill manifest" "$(find "$tgt" 2>/dev/null)"
 # GNU stat first, BSD second: GNU `stat -f %Lp` does not fail, it prints filesystem fields, so the
 # BSD-first order passed on macOS and failed on the Linux CI runner (2026-09-11, first CI run of
@@ -1052,7 +1114,7 @@ stray="$(find "$im" -newer "$im/marker" -type f -not -path "$tgt/*" -not -path "
 icf="$tgt/docker-compose.yaml"
 grep -q 'image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}$' "$icf" \
 	&& grep -q '^      - ./kubeconfig-dev.yaml:/agent/kubeconfig-dev.yaml:ro$' "$icf" && grep -q '^      - ./kubeconfig-prod.yaml:/agent/kubeconfig-prod.yaml:ro$' "$icf" \
-	&& grep -q '^      - ./ssh_key:/agent/ssh_key:ro$' "$icf" && grep -q '^      - ./skill-lock.json:/agent/skill-lock.json:ro$' "$icf" \
+	&& grep -q '^      - ./ssh_key:/agent/ssh_key:ro$' "$icf" && grep -q '^      - ./skills-lock.json:/agent/skills-lock.json:ro$' "$icf" \
 	&& ok "imported compose mounts every credential and the skill manifest relative to the instance directory" \
 	|| bad "imported compose mounts every credential and the skill manifest relative to the instance directory" "$(cat "$icf" 2>/dev/null)"
 ! grep -q 'add under' "$im/import.out" && ok "import prints the plan only, no compose snippet to paste" || bad "import prints the plan only, no compose snippet to paste" ""

@@ -25,7 +25,7 @@ so that docker run --rm -it agentbox bash works for debugging.
 
 Mount contract:
   /agent/config.toml   ro   instance declaration (path overridable via AGENTBOX_CONFIG)
-  /agent/skill-lock.json ro optional, skill manifest; named skills are installed into /state
+  /agent/skills-lock.json ro optional, skill manifest; named skills are installed into /state
   /workspace           rw   workspace, bind-mounted from the host
   /state               rw   session and identity state; HOME points here
   /cache               rw   build cache, one per trust domain
@@ -111,26 +111,63 @@ precheck() {
 	fi
 }
 
-# Install the skills the manifest names. npx skills is the only tool that reads this file, and it
-# knows two scopes: project (cwd) and global (HOME). HOME is the state volume, so a global install
-# persists across restarts and an already-installed skill costs no network -- which is why the
-# skills themselves are not mounted: the manifest is the only thing an instance carries.
-# One add per skill: several in one command silently stop after the first (docs/SKILLS.md).
+# Install the skills the manifest names. The file is whatever `npx skills add` writes -- the
+# project lock (skills-lock.json) or the global one (~/.agents/.skill-lock.json); both carry
+# skills.<name>.source, which is all that is read here. Nothing about it is agentbox's own format,
+# and the image ships no default: a fleet-wide default belongs in the deploy repo, which merges it
+# into this file before shipping it (.claude/skills/deploy/references/deploy-repo.md).
+#
+# Why not `npx skills experimental_install`, which restores from exactly this file: as of
+# skills 2026-09, it writes .agents/skills/<name> without the .claude/skills entry Claude Code
+# reads, so a restored skill is invisible. Swap this loop for that command once it materializes the
+# agent directory. `skills add` does, which is why it is used here -- one add per skill, because
+# several in one command silently stop after the first (docs/SKILLS.md).
 install_skills() {
-	local lock name src
-	lock="$(dirname "${CONFIG}")/skill-lock.json"
+	local lock agent dir name src failed=0 total=0
+	lock="$(dirname "${CONFIG}")/skills-lock.json"
 	[ -f "${lock}" ] || return 0
 	if ! command -v npx >/dev/null 2>&1; then
 		warn "npx not found; the skills in ${lock} were not installed"
 		return 0
 	fi
+	# This entrypoint serves both images. npx skills knows each agent and installs into the directory
+	# that agent reads, and the two differ (2026-09-11: claude-code -> ~/.claude/skills, pi ->
+	# ~/.pi/agent/skills), so the agent name decides both the flag and the skip check.
+	if command -v claude >/dev/null 2>&1; then
+		agent=claude-code; dir="${HOME}/.claude/skills"
+	elif command -v pi >/dev/null 2>&1; then
+		agent=pi; dir="${HOME}/.pi/agent/skills"
+	else
+		warn "no agent CLI in this image; the skills in ${lock} were not installed"
+		return 0
+	fi
 	while IFS="$(printf '\t')" read -r name src; do
 		[ -n "${name}" ] || continue
-		if [ -d "${HOME}/.claude/skills/${name}" ]; then continue; fi
-		info "installing skill ${name} from ${src}"
-		npx --yes skills add "${src}" -g -s "${name}" -a claude-code -y >&2 \
-			|| warn "skill ${name} from ${src} failed to install"
+		total=$((total + 1))
+		if [ -d "${dir}/${name}" ]; then continue; fi
+		info "installing skill ${name} from ${src} for ${agent}"
+		# </dev/null or npx eats the rest of the manifest stream and only the first skill installs.
+		if ! npx --yes skills add "${src}" -g -s "${name}" -a "${agent}" -y >&2 </dev/null; then
+			warn "skill ${name} from ${src} failed to install"
+		fi
+		[ -d "${dir}/${name}" ] || failed=$((failed + 1))
 	done < <(lock_entries "${lock}" || true)
+	report_missing_skills "${failed}" "${total}"
+}
+
+# A skill that did not install leaves the agent quietly less capable, and the warning above scrolls
+# out of `docker compose logs --tail`. Leave a marker next to the lock npx maintains, so the state
+# is readable at any time, not only right after a restart.
+report_missing_skills() {
+	local failed="$1" total="$2" marker="${HOME}/.agents/.agentbox-skills-missing"
+	if [ "${failed}" -eq 0 ]; then
+		rm -f "${marker}" 2>/dev/null || true
+		return 0
+	fi
+	warn "${failed} of ${total} skills in the manifest are not installed"
+	mkdir -p "${HOME}/.agents" 2>/dev/null || true
+	printf '%s\n' "${failed} of ${total} skills failed to install at $(date -u +%Y-%m-%dT%H:%M:%SZ); see the container log" \
+		> "${marker}" 2>/dev/null || true
 }
 
 # name<TAB>source per skill. A manifest that does not parse is a warning, not a dead agent.
@@ -144,7 +181,7 @@ except (OSError, ValueError) as e:
     print(f"Warning: skill manifest {sys.argv[1]} is unreadable: {e}", file=sys.stderr)
     sys.exit(1)
 for name, meta in (lock.get("skills") or {}).items():
-    src = meta.get("source") or meta.get("sourceUrl")
+    src = (meta or {}).get("source") or (meta or {}).get("sourceUrl")
     if src:
         print(f"{name}\t{src}")
 LOCK

@@ -37,7 +37,7 @@ services:
       - demo-cache:/cache
       # Optional mounts, see the mount contract table in README:
       # - ${TOOLKIT_DIR:-./runtime/toolkit}:/opt/toolkit:ro
-      # - ./examples/demo/skill-lock.json:/agent/skill-lock.json:ro
+      # - ./examples/demo/skills-lock.json:/agent/skills-lock.json:ro
       # - ./examples/demo/claude:/etc/claude-code:ro
       # - ./examples/demo/kubeconfig:/agent/kubeconfig:ro
       # - ${WORKSPACES_ROOT:-./runtime/workspaces}/other:/refs/other:ro

@@ -33,7 +33,7 @@
 
 | 源侧 | 去向 |
 |---|---|
-| `$HOME/.claude/skills/<x>`（用户级，`npx skills` 安装） | 技能本体**不复制**。只复制清单到 `instances/<name>/skill-lock.json`，实例的 `docker-compose.yaml` 加 `./skill-lock.json:/agent/skill-lock.json:ro`，entrypoint 首启按清单装进 state 卷（见 `docs/SKILLS.md`）。源上没有清单时这些技能不会跟过去，规划表里会标出来 |
+| `$HOME/.claude/skills/<x>`（用户级，`npx skills` 安装） | 技能本体**不复制**。只复制清单到 `instances/<name>/skills-lock.json`，实例的 `docker-compose.yaml` 加 `./skills-lock.json:/agent/skills-lock.json:ro`，entrypoint 首启按清单装进 state 卷（见 `docs/SKILLS.md`）。源上没有清单时这些技能不会跟过去，规划表里会标出来 |
 | `work_dir/.claude/skills/*`、`work_dir/skills/*` | 不动，随工作区 |
 | `$HOME/.claude/settings.json`、`$HOME/.claude.json`、会话 | 不迁，state 卷从空开始 |
 
