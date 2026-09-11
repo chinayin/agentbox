@@ -125,23 +125,34 @@ precheck() {
 # agent directory. `skills add` does, which is why it is used here -- one add per skill, because
 # several in one command silently stop after the first (docs/SKILLS.md).
 install_skills() {
-	local preset=/etc/agentbox/skills-lock.json instance name src failed=0 total=0
+	local preset=/etc/agentbox/skills-lock.json instance agent dir name src failed=0 total=0
 	instance="$(dirname "${CONFIG}")/skills-lock.json"
 	[ -f "${preset}" ] || [ -f "${instance}" ] || return 0
 	if ! command -v npx >/dev/null 2>&1; then
 		warn "npx not found; no skill from ${preset} or ${instance} was installed"
 		return 0
 	fi
+	# This entrypoint serves both images. npx skills knows each agent and installs into the directory
+	# that agent reads, and the two differ (2026-09-11: claude-code -> ~/.claude/skills, pi ->
+	# ~/.pi/agent/skills), so the agent name decides both the flag and the skip check.
+	if command -v claude >/dev/null 2>&1; then
+		agent=claude-code; dir="${HOME}/.claude/skills"
+	elif command -v pi >/dev/null 2>&1; then
+		agent=pi; dir="${HOME}/.pi/agent/skills"
+	else
+		warn "no agent CLI in this image; no skill from ${preset} or ${instance} was installed"
+		return 0
+	fi
 	while IFS="$(printf '\t')" read -r name src; do
 		[ -n "${name}" ] || continue
 		total=$((total + 1))
-		if [ -d "${HOME}/.claude/skills/${name}" ]; then continue; fi
-		info "installing skill ${name} from ${src}"
+		if [ -d "${dir}/${name}" ]; then continue; fi
+		info "installing skill ${name} from ${src} for ${agent}"
 		# </dev/null or npx eats the rest of the manifest stream and only the first skill installs.
-		if ! npx --yes skills add "${src}" -g -s "${name}" -a claude-code -y >&2 </dev/null; then
+		if ! npx --yes skills add "${src}" -g -s "${name}" -a "${agent}" -y >&2 </dev/null; then
 			warn "skill ${name} from ${src} failed to install"
 		fi
-		[ -d "${HOME}/.claude/skills/${name}" ] || failed=$((failed + 1))
+		[ -d "${dir}/${name}" ] || failed=$((failed + 1))
 	done < <(lock_entries "${preset}" "${instance}" || true)
 	report_missing_skills "${failed}" "${total}"
 }

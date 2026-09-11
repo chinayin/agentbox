@@ -162,6 +162,16 @@ cat >/dev/null
 echo "npx $*" >> "$NPX_LOG"
 FAKE
 chmod +x "$TMP/bin/npx"
+# The image decides the agent: claude-code and pi read different skill directories, so the
+# entrypoint picks by whichever CLI is present. Both fakes exist; PATH order is what a test varies.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/claude"
+mkdir -p "$TMP/pibin"; printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/pibin/pi"
+# A pi image has npx but no claude, so pibin is a complete PATH of its own: putting $TMP/bin
+# behind it would put claude back in reach and the detection would pick the wrong agent.
+cp "$TMP/bin/npx" "$TMP/pibin/npx"
+cp "$TMP/bin/cc-connect" "$TMP/pibin/cc-connect"
+ln -sf "$(command -v python3)" "$TMP/pibin/python3"
+chmod +x "$TMP/bin/claude" "$TMP/pibin/pi" "$TMP/pibin/npx" "$TMP/pibin/cc-connect"
 setup_instance "$TMP/i6"
 cat > "$TMP/i6/skills-lock.json" <<'LOCK'
 {"version": 3, "skills": {
@@ -211,6 +221,20 @@ env -i PATH="$TMP/bin:$BASE_PATH" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
 	&& ok "the marker is cleared once every skill is installed" || bad "the marker is cleared once every skill is installed" "marker still there"
 rm -rf "$TMP/i6/state/.claude/skills"
 printf '{"version": 3, "skills": {"alpha": {"source": "owner/one"}, "beta": {"source": "owner/two"}}}\n' > "$TMP/i6/skills-lock.json"
+
+# The pi image carries no claude binary: same manifest, different agent and directory.
+rm -rf "$TMP/i6/state/.claude/skills" "$TMP/i6/state/.pi"; : > "$NPX_LOG"
+printf '{"version": 1, "skills": {"alpha": {"source": "owner/one"}}}\n' > "$TMP/i6/skills-lock.json"
+env -i PATH="$TMP/pibin:/usr/bin:/bin" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
+	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub >/dev/null 2>&1
+grep -q -- '-a pi' "$NPX_LOG" && ! grep -q -- '-a claude-code' "$NPX_LOG" \
+	&& ok "the pi image installs skills for pi, not claude-code" || bad "the pi image installs skills for pi, not claude-code" "$(cat "$NPX_LOG")"
+mkdir -p "$TMP/i6/state/.pi/agent/skills/alpha"; : > "$NPX_LOG"
+env -i PATH="$TMP/pibin:/usr/bin:/bin" HOME="$TMP/i6/state" WORK_DIR="$TMP/i6/ws" \
+	AGENTBOX_CONFIG="$TMP/i6/config.toml" NPX_LOG="$NPX_LOG" FEISHU_APP_ID=x bash "$ENTRY" --stub >/dev/null 2>&1
+[ ! -s "$NPX_LOG" ] && ok "a skill already installed for pi is not fetched again" || bad "a skill already installed for pi is not fetched again" "$(cat "$NPX_LOG")"
+printf '{"version": 3, "skills": {"alpha": {"source": "owner/one"}, "beta": {"source": "owner/two"}}}\n' > "$TMP/i6/skills-lock.json"
+rm -rf "$TMP/i6/state/.pi"
 
 # A broken manifest must not take the agent down with it.
 echo 'not json' > "$TMP/i6/skills-lock.json"

@@ -24,6 +24,15 @@
 
 **为什么不用官方的 `npx skills experimental_install`**（它正是「按这份 lock 还原」那个命令）：2026-09-11 实测，它把技能写进 `<项目>/.agents/skills/<name>` 却不建 `.claude/skills/` 那一份，Claude Code 看不见；配套的 `experimental_sync` 只扫 node_modules，对 GitHub 源的技能报 `No SKILL.md files found in node_modules`。所以装用 `skills add`。等上游把 `experimental_install` 补全，entrypoint 里那个循环可以直接换成它一条命令。
 
+**两个镜像共用这条路,装的位置不同。** entrypoint 按镜像里有哪个 agent CLI 决定,`npx skills` 自己知道每个 agent 读哪里(2026-09-11 实测):
+
+| 镜像 | 检测到 | `-a` 取值 | 技能落点(global) |
+|---|---|---|---|
+| `agentbox:<版本>` | `claude` | `claude-code` | `/state/.claude/skills/<name>` |
+| `agentbox:<版本>-pi` | `pi` | `pi` | `/state/.pi/agent/skills/<name>` |
+
+两个都没有就只告警不安装。注意 pi 的 global 落点是 `.pi/agent/skills`,project 作用域才是 `.pi/skills`,别记混。pi 是否真的从这个目录加载技能尚未端到端验证,见 [ROADMAP](ROADMAP.md) 第 7 行。
+
 **为什么默认是清单而不是把技能挂进去。** `npx skills` 只认两个作用域：project（cwd 的 `.claude/skills`）与 global（`~/.agents/.skill-lock.json` + `~/.claude/skills`）。`/etc/claude-code` 不在其中——挂在那儿的技能，`skills list` 看不见、`skills update` 更新不了，只能靠外部脚本模拟一个 HOME 去伺候它。而 `HOME=/state`，global 作用域天然就落在 state 卷里：装一次持久有效，重启不联网（entrypoint 按目录名跳过已装的），更新就是容器内一句 `npx skills update -g`。2026-09-11 实测：容器内 `npx skills add <src> -g -s <name> -a claude-code -y` 正常装进 `/state/.claude/skills/<name>`（实体目录，非软链），lock 落 `/state/.agents/.skill-lock.json`。
 
 清单缺失、npx 不可用、单条安装失败都只 `Warning:` 不中断启动——技能没装上，agent 仍然应该能收消息。清单本身解析不了同样只告警。
