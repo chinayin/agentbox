@@ -18,7 +18,7 @@
 | # | 事项 | 现状 | 验收 |
 |---|---|---|---|
 | 6 | compose 加固：`read_only: true` + tmpfs + healthcheck | 未做；`cap_drop`、`no-new-privileges`、`init`、pids 上限已有，但**这一层完全没有测试覆盖**——`make smoke` 走裸 `docker run`，不经过 compose。cc-connect 凭据无效时不退出只刷 websocket error，healthcheck 不能只看进程 | 起真实实例后 `docker inspect` 能读到 `PidsLimit`、`CapDrop`、`SecurityOpt` 实际生效（`docker compose config` 只证明 YAML 没写错，不算验收）；实例 `healthy` 且无 `read-only file system` |
-| 7 | pi 会话端到端 | 已决定（2026-09-06）：pi 变体保留；2026-09-07 起与 Claude Code 镜像平级、共享工具链、互不包含。先把 Claude Code 生态跑通，pi 之后再验证。`agent.type = "pi"` 已被接受并启动引擎，未用真实凭据驱动过会话 | 真实飞书应用 + `-pi` 镜像，发一条消息拿到回复 |
+| 7 | pi 会话端到端 | 已决定（2026-09-06）：pi 变体保留；2026-09-07 起与 Claude Code 镜像平级、共享工具链、互不包含。先把 Claude Code 生态跑通，pi 之后再验证。`agent.type = "pi"` 已被接受并启动引擎，未用真实凭据驱动过会话。2026-09-11 起还多一条未验证的：entrypoint 按清单给 pi 装技能时用 `npx skills` 的映射装进 `/state/.pi/agent/skills`（claude 那侧已实测 agent 能列出来），**pi 是否真的从这个目录加载技能没验过** | 真实飞书应用 + `-pi` 镜像，发一条消息拿到回复；同一实例挂一份 `skills-lock.json`，pi 会话里能用上其中的技能 |
 | 8 | state 卷备份/恢复脚本 | 无脚本；卷内含 git 私钥 | `scripts/state-backup.sh`，文档标注备份件密级 |
 | 9 | 每实例一个 compose 项目的首次真实部署 | 2026-09-11 改成实例目录自带 `docker-compose.yaml`、`deploy` 逐目录 `compose up`、新增 `remove`；`make check` 全绿，但**没有主机真的按新形态跑过**。已在跑的 litellm-gateway 要迁一次：它的卷名带旧项目前缀，新 compose 里用 `name:` 钉住，且首次部署前要先 `down` 旧项目，否则容器名冲突 | 一台主机上 `deploy <host> <instance>` 成功、`status` 按实例分段输出、旧卷里的会话历史还在；再删一个实例走一遍 `remove` |
 

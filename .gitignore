@@ -9,6 +9,7 @@ id_ed25519*
 
 # local artifacts and tool caches
 runtime/
+.claude/worktrees/
 .codegraph/
 .superpowers/
 __pycache__/
