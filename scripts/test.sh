@@ -156,6 +156,9 @@ out="$(run_entry "$TMP/i5" FEISHU_APP_ID=x)"; rc=$?
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/npx" <<'FAKE'
 #!/usr/bin/env bash
+# Drains stdin the way the real npx does: without it the manifest loop looks fine here and only
+# installs its first skill in a real container.
+cat >/dev/null
 echo "npx $*" >> "$NPX_LOG"
 FAKE
 chmod +x "$TMP/bin/npx"

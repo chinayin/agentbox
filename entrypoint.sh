@@ -137,7 +137,8 @@ install_skills() {
 		total=$((total + 1))
 		if [ -d "${HOME}/.claude/skills/${name}" ]; then continue; fi
 		info "installing skill ${name} from ${src}"
-		if ! npx --yes skills add "${src}" -g -s "${name}" -a claude-code -y >&2; then
+		# </dev/null or npx eats the rest of the manifest stream and only the first skill installs.
+		if ! npx --yes skills add "${src}" -g -s "${name}" -a claude-code -y >&2 </dev/null; then
 			warn "skill ${name} from ${src} failed to install"
 		fi
 		[ -d "${HOME}/.claude/skills/${name}" ] || failed=$((failed + 1))
