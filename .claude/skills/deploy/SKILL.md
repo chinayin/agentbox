@@ -40,9 +40,13 @@ fleet moves together from one line while a host that must stay behind keeps its 
   which compose projects will restart. It never connects, so it is safe at any time.
 - `deploy` interrupts any session in progress on the containers it restarts. Omitting `instance`
   restarts every instance on that host, one compose project at a time. Prefer naming one instance.
+- An instance directory may carry `workspace-init/`: `deploy` syncs it into the instance's
+  workspace without overwriting files already there, and keeps it out of the server's `instances/`
+  mirror. `plan` lists the instances it will seed. If the workspace is a git checkout, the clone must exist before the
+  first deploy that carries a seed (`references/deploy-repo.md`).
 - `remove` retires an instance whose directory has been deleted from the deploy repo and
   committed: it runs `docker compose down` from the server's copy, then deletes that directory.
-  Volumes are kept. Run it before the next `deploy`, which refuses to mirror away a directory the
+  Volumes and the workspace are kept, and a seeded workspace still holds plaintext secrets: say so. Run it before the next `deploy`, which refuses to mirror away a directory the
   server still runs. Say what it stops before running it.
 - The target version resolves as `--image-version` > that host's `host.env` > the repo's
   `defaults.env`, and `plan` prints which one it used. Upgrading or rolling back is an edit to one

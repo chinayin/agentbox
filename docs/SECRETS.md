@@ -34,8 +34,14 @@ entrypoint           →  启动前校验每个占位符可解析，缺则 exit 
 部署仓库 hosts/<host>/instances/<name>/env  →  rsync 0600 到服务器  →  compose 的 env_file  →  容器环境变量
 ```
 
-本地开发用的 `examples/<name>/env` 不在这条链路上，部署仓库的布局见
-`.claude/skills/deploy/references/deploy-repo.md`。
+agent 自己要读写的文件型密钥（如某个仓库 gitignored 的 `secrets/`）不走 env，也不能 `:ro` 挂，走另一条：
+
+```
+部署仓库 hosts/<host>/instances/<name>/workspace-init/  →  rsync --ignore-existing 直接进服务器工作区（已有文件不覆盖）
+```
+
+它不进服务器的 `instances/` 镜像，服务器上只有工作区一份；部署仓库那份是备份不是同步源。本地开发用的 `examples/<name>/env`
+不在这两条链路上，部署仓库的布局见 `.claude/skills/deploy/references/deploy-repo.md`。
 
 ```toml
 # config.toml

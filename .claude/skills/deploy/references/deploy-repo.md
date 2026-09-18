@@ -19,6 +19,7 @@ agentbox-deploy/
       instances/
         aliyun/{docker-compose.yaml,config.toml,env,kubeconfig}
         demo/{docker-compose.yaml,config.toml,env}
+        uufly/{docker-compose.yaml,config.toml,env,workspace-init/}
     prod-cn/
       host.env
       instances/...
@@ -72,7 +73,21 @@ There is deliberately no fleet-wide default, in the image or here: an instance e
 or does not have it. Two instances that want the same skill repeat two lines, which is cheaper to
 read than an inheritance rule.
 
-## `defaults.env`
+## `instances/<name>/workspace-init/`（可选）
+
+A one-time seed for the instance's workspace, for files the agent must own and may rewrite: a
+repository's gitignored `secrets/`, a tool's local config. Those cannot be `:ro` bind mounts and
+are not environment variables, so they travel as files. `deploy` syncs the directory straight into
+`DEPLOY_DIR/workspaces/<name>/` with `rsync --ignore-existing`: a file the workspace already has is
+never overwritten, so the agent's later edits survive every redeploy while a fresh workspace still
+gets everything. It is excluded from the `instances/` mirror, so the workspace is the only copy of
+those secrets on the host; this directory in the repo is the backup, not a sync channel. Sync a
+changed file back here by hand when you want the backup refreshed.
+
+Files keep the mode they have in the repo (keep secrets `0600` here), and the whole workspace is
+chowned to UID 1000 after the sync, the owner every file in a workspace has anyway. If the
+workspace is a git checkout, clone it before the first `deploy` that carries a seed: `git clone`
+refuses a non-empty directory, and the seed makes it non-empty.
 
 Optional, at the repo root, and read for exactly one variable:
 
@@ -143,13 +158,15 @@ repo root's `docker-compose.yaml` stays a development file pointing at a local `
 
 Hosts set up earlier had one `hosts/<host>/docker-compose.yaml` with every instance as a service,
 run as one compose project named after `DEPLOY_DIR`. To move such a host: generate or write
-`instances/<name>/docker-compose.yaml` for each service, pin each `state` / `cache` volume to the
-name the old project gave it (`volumes: state: name: <old-project>_<name>-state`, read it from
-`docker volume ls` on the server) so no session history is lost, delete the host-level file, and
-commit. Before the first per-instance `deploy`, stop the old project on the server once —
-`docker compose -f DEPLOY_DIR/docker-compose.yaml down` (no `-v`) — otherwise the new project's
-`container_name` collides with the running container. Then `deploy` as usual and delete the stale
-`DEPLOY_DIR/docker-compose.yaml` and `DEPLOY_DIR/.env`.
+`instances/<name>/docker-compose.yaml` for each service, delete the host-level file, and commit.
+The new project gets fresh, empty `<name>_state` / `<name>_cache` volumes; the old
+`<old-project>_<name>-state` volumes stay behind untouched. Only if that session history must
+survive, pin the volume to the old name (`volumes: state: name: <old-project>_<name>-state`, read
+it from `docker volume ls` on the server); otherwise remove the old volumes by hand once the new
+project is confirmed running. Before the first per-instance `deploy`, stop the old project on the
+server once — `docker compose -f DEPLOY_DIR/docker-compose.yaml down` (no `-v`) — otherwise the
+new project's `container_name` collides with the running container. Then `deploy` as usual and
+delete the stale `DEPLOY_DIR/docker-compose.yaml` and `DEPLOY_DIR/.env`.
 
 ## Server layout
 
@@ -164,7 +181,7 @@ The server holds only deploy artifacts, no source:
   instances/<name>/kubeconfig-*        0600, owned by UID 1000 (file credentials, one file each)
   instances/<name>/ssh_key             0600, owned by UID 1000
   instances/<name>/claude/             read-only managed layer for /etc/claude-code (skills, lock)
-  workspaces/<name>/                   created and chowned to UID 1000 by deploy
+  workspaces/<name>/                   created and chowned to UID 1000 by deploy; seeded from the repo's workspace-init/
 ```
 
 `state` and `cache` are docker named volumes (`<name>_state`, `<name>_cache`), not part of this
@@ -174,7 +191,10 @@ wipe it without a human running `docker volume rm`.
 
 `instances/` on the server mirrors the repo (`rsync --delete`). A directory deleted from the repo
 must be retired with `deploy.sh remove <host> <name>` before the next deploy: it stops the
-containers through the server's copy of the compose file, then deletes the directory. A plain
+containers through the server's copy of the compose file, then deletes the directory. The
+workspace under `workspaces/<name>/` is kept like the volumes; when the instance moved to another
+host, its seeded secrets are now plaintext on a host that no longer needs them, so delete that
+workspace by hand once the new host is confirmed working. A plain
 deploy refuses while the server holds an instance the repo no longer has, because mirroring the
 compose file away would leave running containers with nothing to `down` them.
 

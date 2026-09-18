@@ -4,7 +4,9 @@
 # Every instance is its own compose project: hosts/<host>/instances/<name>/ holds docker-compose.yaml,
 # config.toml, env and file credentials, and `docker compose` runs from inside that directory on the
 # server, so an instance moves between hosts as one directory and one instance's broken file cannot
-# block another's deploy.
+# block another's deploy. An optional workspace-init/ in that directory seeds the instance's
+# workspace: it goes straight into the workspace without overwriting, and never into the server's
+# instances/ mirror, so the workspace is the only copy on the host.
 # The repo path comes from, in order of precedence: --repo, AGENTBOX_DEPLOY_REPO, the skill's .env
 # file (../.env next to this script, gitignored; template in ../.env.example).
 # Per-host connection details live in the deploy repo at hosts/<host>/host.env and never in here.
@@ -53,7 +55,7 @@ Actions:
   deploy   HOST [INSTANCE]   push config and secrets, pull the image, start containers
   status   HOST              remote container state and recent logs, per instance
   remove   HOST INSTANCE     stop an instance the deploy repo no longer has and delete its directory
-                             on the server; its state and cache volumes are kept
+                             on the server; its state and cache volumes and its workspace are kept
 
 Options:
       --repo PATH    deploy repository (or the AGENTBOX_DEPLOY_REPO environment variable)
@@ -68,6 +70,10 @@ The deploy repo path can live in the skill's .env file (.claude/skills/deploy/.e
 copy .env.example). Flags and environment win. Per-host connection details live in the deploy repo
 at hosts/<host>/host.env. The image version comes from --image-version, else that host.env, else
 AGENTBOX_VERSION in the repo-level defaults.env; the plan prints which one it used.
+
+An instance directory may carry workspace-init/: deploy syncs it into the instance's workspace
+without overwriting files already there, and leaves it out of the instances/ mirror, so a file the
+agent later rewrites is never reset by a redeploy and the workspace is the only copy on the host.
 
 Deploy logs are written to runtime/deploy/<timestamp>-<action>-<host>.log under the repo root.
 
@@ -274,8 +280,12 @@ print_plan() {
 	echo "  repo:      ${REPO}" >&2
 	echo "  host:      ${DEPLOY_HOST}  dir ${DEPLOY_DIR}" >&2
 	echo "  version:   ${AGENTBOX_VERSION} (from ${VERSION_SOURCE})" >&2
-	echo "  will sync: instances/ (docker-compose.yaml + config.toml + env + file credentials, env as 0600)" >&2
+	echo "  will sync: instances/ (docker-compose.yaml + config.toml + env + file credentials, env as 0600; workspace-init/ excluded)" >&2
 	echo "  instances/ on the server is mirrored; a directory the repo no longer has must be retired with remove first" >&2
+	while IFS= read -r n; do
+		[ -n "${n}" ] && [ -d "${HOST_DIR}/instances/${n}/workspace-init" ] || continue
+		echo "  will seed: workspaces/${n} from instances/${n}/workspace-init (existing files kept)" >&2
+	done < <(list_instances)
 	echo "  will restart these compose projects (one per instance), interrupting any session in progress:" >&2
 	while IFS= read -r n; do
 		[ -n "${n}" ] || continue
@@ -334,7 +344,10 @@ sync_host() {
 	# shellcheck disable=SC2064  # expand tmp now, on purpose
 	trap "rm -rf '${tmp}'" RETURN
 	make_rsync_ssh "${tmp}/ssh"
-	local -a args=(-a --delete)
+	# workspace-init/ is the one thing in an instance directory that is not for the instances/ mirror:
+	# it belongs in the workspace (init_workspaces takes it there directly). --delete-excluded also
+	# clears one that an earlier deploy may have left in the mirror.
+	local -a args=(-a --delete --delete-excluded --exclude=/instances/*/workspace-init)
 	[ "${VERBOSE}" -eq 1 ] && args+=(-v)
 	if [ "${DRY_RUN}" -eq 1 ]; then
 		echo "plan: refuse if the server holds an instance directory the repo no longer has (retire it with remove first)" >&2
@@ -361,7 +374,7 @@ sync_host() {
 	# directory gets it, not just the ones this run restarts, because --delete just removed them.
 	if [ "${DRY_RUN}" -eq 1 ]; then
 		echo "plan: write ${DEPLOY_DIR}/instances/<name>/.env with AGENTBOX_VERSION=${AGENTBOX_VERSION} for every instance" >&2
-		echo "plan: chmod 600 every file under ${DEPLOY_DIR}/instances/*/ (config.toml and claude/ excepted) and chown -R 1000:1000 each instance directory" >&2
+		echo "plan: chmod 600 every file under ${DEPLOY_DIR}/instances/*/ (config.toml and claude/ excepted) and chown -R 1000:1000 ${DEPLOY_DIR}/instances" >&2
 	else
 		while IFS= read -r n; do
 			[ -n "${n}" ] || continue
@@ -371,6 +384,11 @@ sync_host() {
 		# because the container reads it through the bind mount, and claude/ is a read-only code
 		# tree the agent must be able to list. docs/TOOLS.md section 3 explains the split.
 		rssh "find '${DEPLOY_DIR}'/instances -mindepth 2 -type f ! -name config.toml ! -path '*/claude/*' -exec chmod 600 {} +"
+		# Every instance directory, not just the ones this run restarts: rsync -a runs as root and
+		# lands every file with the local uid, so a deploy naming one instance would otherwise leave
+		# the others' 0600 credentials unreadable to the container (UID 1000) at its next restart.
+		# Seen on hk-build 2026-09-11: deploying uufly re-owned litellm-gateway's skills-lock.json.
+		rssh "chown -R 1000:1000 '${DEPLOY_DIR}/instances'"
 		rssh "install -d -o 1000 -g 1000 -m 0755 '${DEPLOY_DIR}/workspaces'"
 	fi
 }
@@ -382,7 +400,6 @@ prepare_workspaces() {
 	while IFS= read -r n; do
 		[ -n "${n}" ] || continue
 		rssh "install -d -o 1000 -g 1000 -m 0755 '${DEPLOY_DIR}/workspaces/${n}'"
-		rssh "chown -R 1000:1000 '${DEPLOY_DIR}/instances/${n}'"
 	done < <(list_instances)
 }
 
@@ -441,9 +458,39 @@ remote_up() {
 	echo "${log}"
 }
 
+# instances/<name>/workspace-init/ seeds the workspace with files the agent must own and may rewrite
+# (a repo's gitignored secrets/, a local tool config), which rules out a :ro bind mount. It is synced
+# straight into the workspace: --ignore-existing never overwrites, so the agent's later edits survive
+# every redeploy while a fresh workspace still gets everything, and nothing lands in instances/ on the
+# server, so the workspace holds the only copy of those secrets. The whole workspace is then chowned
+# to the agent uid: the local rsync cannot map owners, and every file there belongs to the agent
+# anyway. Only the instances this run restarts are seeded; prepare_workspaces has made their
+# directories.
+init_workspaces() {
+	local n src ws tmp
+	tmp="$(mktemp -d)"
+	# shellcheck disable=SC2064  # expand tmp now, on purpose
+	trap "rm -rf '${tmp}'" RETURN
+	make_rsync_ssh "${tmp}/ssh"
+	while IFS= read -r n; do
+		[ -n "${n}" ] && [ -d "${HOST_DIR}/instances/${n}/workspace-init" ] || continue
+		src="${HOST_DIR}/instances/${n}/workspace-init/"
+		ws="${DEPLOY_DIR}/workspaces/${n}"
+		if [ "${DRY_RUN}" -eq 1 ]; then
+			echo "plan: rsync -a --ignore-existing ${src} ${DEPLOY_HOST}:${ws}/ (existing files kept)" >&2
+			echo "plan: chown -R 1000:1000 ${ws}" >&2
+			continue
+		fi
+		step "seeding ${ws} from workspace-init"
+		rsync -a --ignore-existing -e "${tmp}/ssh" "${src}" "${DEPLOY_HOST}:${ws}/"
+		rssh "chown -R 1000:1000 '${ws}'"
+	done < <(list_instances)
+}
+
 do_deploy() {
 	sync_host
 	[ "${DRY_RUN}" -eq 1 ] || prepare_workspaces
+	init_workspaces
 	remote_up
 }
 
@@ -456,8 +503,9 @@ do_status() {
 
 # Retire an instance: the repo no longer has its directory (deleted and committed), the server still
 # does. Stop its containers through its own compose file, then delete the directory. State and cache
-# volumes are left alone on purpose: the state volume carries session history and tool-written
-# credentials, and deleting it is a separate, deliberate `docker volume rm` by a human.
+# volumes and the workspace are left alone on purpose: the state volume carries session history and
+# tool-written credentials, the workspace may carry seeded secrets and the agent's own work, and
+# deleting either is a separate, deliberate step by a human.
 do_remove() {
 	[ -n "${INSTANCE}" ] || { usage >&2; die "remove needs an instance name"; }
 	[ ! -e "${HOST_DIR}/instances/${INSTANCE}" ] \
@@ -465,7 +513,7 @@ do_remove() {
 	local d="${DEPLOY_DIR}/instances/${INSTANCE}"
 	step "retiring ${INSTANCE} on ${DEPLOY_HOST}: compose down, delete ${d}; volumes are kept"
 	rssh "if [ ! -f '${d}/docker-compose.yaml' ]; then echo 'Error: ${d}/docker-compose.yaml not found on the server' >&2; exit 1; fi; cd '${d}' && docker compose down && cd / && rm -rf '${d}'"
-	echo "kept: docker volumes of compose project ${INSTANCE}; remove them by hand only if the state is truly no longer needed" >&2
+	echo "kept: docker volumes of compose project ${INSTANCE} and ${DEPLOY_DIR}/workspaces/${INSTANCE} (may hold seeded secrets); remove them by hand only if truly no longer needed" >&2
 }
 
 main() {

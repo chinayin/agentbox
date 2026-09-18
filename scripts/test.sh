@@ -798,6 +798,27 @@ out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run 
 	&& ok "deploy ships the instance manifest without merging anything into it" || bad "deploy ships the instance manifest without merging anything into it" "rc=$rc $out"
 rm "$dp/repo/hosts/h1/instances/a1/skills-lock.json"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm nomanifest ) 2>/dev/null
+# workspace-init/ seeds the instance's workspace: files the agent must own and may rewrite (a repo's
+# gitignored secrets/), so no :ro mount. It goes straight into the workspace without overwriting, and
+# stays out of the instances/ mirror, otherwise the host would hold a second plaintext copy.
+! grep -q 'will seed' <<<"$out" && ! grep -q 'ignore-existing' <<<"$out" \
+	&& ok "an instance without workspace-init gets no seed step" || bad "an instance without workspace-init gets no seed step" "$out"
+mkdir -p "$dp/repo/hosts/h1/instances/a1/workspace-init/secrets"
+printf 'TOKEN=sk-init\n' > "$dp/repo/hosts/h1/instances/a1/workspace-init/secrets/x.env"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm seed ) 2>/dev/null
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run -v deploy h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "rsync -a --ignore-existing $dp/repo/hosts/h1/instances/a1/workspace-init/ user@h1.example.test:/data/agentbox/workspaces/a1/" <<<"$out" \
+	&& ok "workspace-init is synced into the workspace without overwriting" || bad "workspace-init is synced into the workspace without overwriting" "rc=$rc $out"
+grep -q 'chown -R 1000:1000 /data/agentbox/workspaces/a1' <<<"$out" \
+	&& ok "the seeded workspace is chowned to the agent uid" || bad "the seeded workspace is chowned to the agent uid" "$out"
+grep -qF -- '--delete-excluded --exclude=/instances/*/workspace-init' <<<"$out" \
+	&& ok "workspace-init stays out of the instances/ mirror" || bad "workspace-init stays out of the instances/ mirror" "$out"
+grep -q 'will seed: workspaces/a1 from instances/a1/workspace-init' <<<"$out" \
+	&& ok "plan announces the seed step" || bad "plan announces the seed step" "$out"
+! grep -q 'sk-init' <<<"$out" \
+	&& ok "workspace-init contents never appear in dry-run -v output" || bad "workspace-init contents never appear in dry-run -v output" "$out"
+rm -r "$dp/repo/hosts/h1/instances/a1/workspace-init"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm noseed ) 2>/dev/null
 
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run status h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'compose ps' <<<"$out" \
