@@ -67,6 +67,8 @@ make lock      # 升级工具链到上游最新（通常由 CI 的 lock.yml 跑�
 | [TOOLCHAIN](docs/TOOLCHAIN.md) | 工具链组成、版本策略、lock 生成、加工具、CI 与发布 |
 | [CN_MIRRORS](docs/CN_MIRRORS.md) | 境内构建的三层下载模型 |
 | [MULTI_PROJECT](docs/MULTI_PROJECT.md) | 信任域切分、跨实例调用、共享依赖 |
+| [MULTI_CLOUD](docs/MULTI_CLOUD.md) | 多云运维：主 bot 调度各云专才 bot 的两种拓扑、协议规则、每家云的接入件 |
+| [CLOUD_ACCOUNTS](docs/CLOUD_ACCOUNTS.md) | 一家云多个账号：bot 与账号两根轴的拆法、别名名册、AssumeRole 凭据、防误动账号的三道强制层 |
 | [SECRETS](docs/SECRETS.md) | 密级模型、占位符机制、红线 |
 | [TOOLS](docs/TOOLS.md) | 每个工具的凭据位置、环境变量、推荐提供通道 |
 | [SKILLS](docs/SKILLS.md) | 技能与 Claude 全局配置的落法、托管目录、安装 SOP |

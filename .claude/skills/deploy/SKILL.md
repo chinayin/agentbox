@@ -29,7 +29,16 @@ fleet moves together from one line while a host that must stay behind keeps its 
 .claude/skills/deploy/scripts/deploy.sh deploy <host> [instance]
 .claude/skills/deploy/scripts/deploy.sh status <host>
 .claude/skills/deploy/scripts/deploy.sh remove <host> <instance>
+.claude/skills/deploy/scripts/verify-profiles.sh <host> <instance>
 ```
+
+- `verify-profiles.sh` is for an instance that carries cloud profile files under
+  `instances/<name>/profiles/` with an `accounts.yaml` registry (`docs/CLOUD_ACCOUNTS.md`). It runs
+  each cloud CLI locally against the instance's own files, never the operator's `~/.aws` or
+  `~/.aliyun`, and asserts that GetCallerIdentity returns the registered `account_id`. Run it before
+  `deploy` whenever a profile file or the registry changed; a FAIL means the bot would act on a
+  different account than the one people name in chat. A CLI missing on this machine gives SKIP,
+  not PASS. Exit 1 on any FAIL, 2 when the registry or files are absent.
 
 - `status` also prints each container's missing-skills marker when there is one: an agent whose
   skills failed to install is `running` and healthy-looking, and the startup warning is long gone

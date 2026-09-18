@@ -1231,6 +1231,78 @@ grep -q '^  workflow_call:' "$ROOT/.github/workflows/ci.yml" \
 	&& ok "ci.yml is callable by release.yml (workflow_call)" \
 	|| bad "ci.yml is callable by release.yml (workflow_call)" "release.yml's needs: ci would never start"
 
+group "verify-profiles"
+
+# Deploy-time check of an instance's cloud profiles against its accounts.yaml (docs/CLOUD_ACCOUNTS.md).
+# Fixture: a fake deploy repo plus stub CLIs, so the test needs no network and no real keys.
+VP="$ROOT/.claude/skills/deploy/scripts/verify-profiles.sh"
+vp="$TMP/vp"; mkdir -p "$vp/bin" "$vp/hosts/h/instances/i/profiles/aws" "$vp/hosts/h/instances/i/profiles/aliyun" "$vp/hosts/h/instances/i/profiles/tccli"
+cat > "$vp/hosts/h/instances/i/profiles/aws/config" <<'INI'
+[profile good]
+aws_access_key_id = AKIAFIXTURE
+aws_secret_access_key = fixture
+[profile wrongkey]
+aws_access_key_id = AKIAFIXTURE2
+aws_secret_access_key = fixture
+[profile unlisted]
+aws_access_key_id = AKIAFIXTURE3
+aws_secret_access_key = fixture
+INI
+cat > "$vp/hosts/h/instances/i/profiles/aliyun/config.json" <<'JSON'
+{"current": "none", "profiles": [{"name": "ali-good", "mode": "AK", "access_key_id": "LTAIFIXTURE", "access_key_secret": "x", "region_id": "cn-hangzhou"}], "meta_path": ""}
+JSON
+echo '{"secretId": "x", "secretKey": "y"}' > "$vp/hosts/h/instances/i/profiles/tccli/qc.credential"
+# Stub CLIs answer from the profile name; aws also proves it was pointed at the INSTANCE file.
+cat > "$vp/bin/aws" <<'SH'
+#!/usr/bin/env bash
+case "${AWS_CONFIG_FILE:-}" in */instances/i/profiles/aws/config) ;; *) echo nocfg; exit 0 ;; esac
+for a in "$@"; do [ "$prev" = "--profile" ] && p="$a"; prev="$a"; done
+case "$p" in good) echo 111111111111 ;; wrongkey) echo 999999999999 ;; *) exit 1 ;; esac
+SH
+cat > "$vp/bin/aliyun" <<'SH'
+#!/usr/bin/env bash
+for a in "$@"; do [ "$prev" = "--config-path" ] && c="$a"; prev="$a"; done
+case "$c" in */instances/i/profiles/aliyun/config.json) echo '{"AccountId":"2222"}' ;; *) echo '{"AccountId":"operator-home"}' ;; esac
+SH
+chmod +x "$vp/bin/aws" "$vp/bin/aliyun"
+cat > "$vp/hosts/h/instances/i/profiles/accounts.yaml" <<'YAML'
+- profile: good
+  cloud: aws
+  account_id: "111111111111"
+- profile: wrongkey
+  cloud: aws
+  account_id: "111111111111"   # registry says one account, the key belongs to another
+- profile: ali-good
+  cloud: aliyun
+  account_id: "2222"
+- profile: ali-missing
+  cloud: aliyun
+  account_id: "3333"
+- profile: qc
+  cloud: qcloud
+  account_id: "4444"
+# - profile: commented-out
+#   cloud: volc
+#   account_id: "5555"
+YAML
+vp_path="$vp/bin:/usr/bin:/bin"
+PATH="$vp_path" bash "$VP" --repo "$vp" h i > "$vp/out" 2> "$vp/err"; rc=$?
+[ "$rc" -eq 1 ] && ok "verify-profiles exits 1 when any profile fails" || bad "verify-profiles exits 1 when any profile fails" "rc=$rc $(cat "$vp/err")"
+grep -q '^aws good 111111111111 111111111111 PASS$' "$vp/out" && ok "a matching profile is reported PASS with both ids" || bad "a matching profile is reported PASS with both ids" "$(cat "$vp/out")"
+grep -q '^aws wrongkey 111111111111 999999999999 FAIL$' "$vp/out" && grep -q 'wrongkey: registry says 111111111111 but the key belongs to 999999999999' "$vp/err" \
+	&& ok "a key on another account is FAIL and names both accounts" || bad "a key on another account is FAIL and names both accounts" "$(cat "$vp/out" "$vp/err")"
+grep -q '^aliyun ali-good 2222 2222 PASS$' "$vp/out" && ok "aliyun is checked through the instance file, not the operator's HOME" || bad "aliyun is checked through the instance file, not the operator's HOME" "$(cat "$vp/out")"
+grep -q '^aliyun ali-missing 3333 - FAIL$' "$vp/out" && grep -q 'ali-missing: not present' "$vp/err" \
+	&& ok "a registry entry absent from the profile file is FAIL" || bad "a registry entry absent from the profile file is FAIL" "$(cat "$vp/out" "$vp/err")"
+grep -q '^qcloud qc 4444 - SKIP$' "$vp/out" && ok "a missing CLI gives SKIP, never PASS" || bad "a missing CLI gives SKIP, never PASS" "$(cat "$vp/out")"
+! grep -q 'commented-out' "$vp/out" && ok "commented-out registry entries are ignored" || bad "commented-out registry entries are ignored" "$(cat "$vp/out")"
+grep -q 'aws profile unlisted exists in the file but not in the registry' "$vp/err" && ok "a file profile missing from the registry is warned about" || bad "a file profile missing from the registry is warned about" "$(cat "$vp/err")"
+! grep -q 'nocfg\|operator-home' "$vp/out" && ok "stub CLIs were pointed at the instance files" || bad "stub CLIs were pointed at the instance files" "$(cat "$vp/out")"
+PATH="$vp_path" bash "$VP" --repo "$vp" h nope > /dev/null 2> "$vp/err2"; rc=$?
+[ "$rc" -eq 2 ] && grep -q '^Error: profiles directory not found' "$vp/err2" && ok "a missing profiles directory is a precondition failure (exit 2)" || bad "a missing profiles directory is a precondition failure (exit 2)" "rc=$rc $(cat "$vp/err2")"
+bash "$VP" h > /dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "verify-profiles without <instance> is a usage error" || bad "verify-profiles without <instance> is a usage error" "rc=$rc"
+
 group "shell standards"
 
 # Every shell script in the repo, gitignored skill .env files excluded (they hold no code).

@@ -55,10 +55,12 @@ cc-connect 自带 `relay send --to <project>`、`send`、`cron`，`relay.visibil
 | 方式 | 评价 |
 |---|---|
 | 走聊天平台 | 起步推荐，零新增机制、天然审计、有人在环 |
-| 挂对端 `/state/run`，`relay send --data-dir` 指过去 | 单向可控，不需 docker 权限。**协议未公开，未实测** |
+| 挂对端 `/state/run`，`relay send --data-dir` 指过去 | **源码判定不可行**：relay 的目标必须是同一进程里的 project（[ROADMAP](ROADMAP.md) 第 2 行）。cc-connect 跨容器只有 Management API 与 Webhook 两个 TCP 入口，都要活的 `session_key` |
 | 共享任务目录 + cron | 最土最可控，适合异步批处理 |
 
 排除：挂 docker socket 让 A `docker exec b`。
+
+几个 bot 在一个飞书群里协作（主 bot 调度各云专才）的完整设计、同容器 relay 与跨实例飞书投递两种拓扑的取舍，见 [MULTI_CLOUD](MULTI_CLOUD.md)。
 
 ## 4. 共享依赖按变更频率分三类
 
