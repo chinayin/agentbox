@@ -1,8 +1,7 @@
 # secrets: only *.example is tracked
 /.env
 examples/*/env
-examples/*/kubeconfig
-examples/*/ssh_key
+examples/*/home/
 .claude/skills/*/.env
 *.pem
 id_ed25519*

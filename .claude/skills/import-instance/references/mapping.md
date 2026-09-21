@@ -11,7 +11,8 @@
 | `work_dir = "/data/agents/x"` | `work_dir = "${WORK_DIR}"` | 不进 `env`，compose 提供 |
 | `KEY = "${KEY}"` | 不变 | `env` 里沿用源侧 `.env` 的值 |
 | `KEY = "literal"` | `KEY = "${KEY}"` | `env` 里 `KEY=literal`，原值；KEY 命中密钥名模式 `(^\|_)(TOKEN\|SECRET\|PASSWORD\|PASSWD)(_\|$)\|_KEY$\|^KEY_`（大小写不敏感）时规划表额外提醒「源侧把密钥写死在 config 里，已抽到 env」；模式要求 `TOKEN`/`SECRET`/`PASSWORD`/`PASSWD` 是完整的下划线分隔片段，`CLAUDE_CODE_MAX_CONTEXT_TOKENS` 这类名字里含 `TOKENS`（非独立片段）不会被误判 |
-| `KUBECONFIG = "/home/agent/.kube/a.yaml:/home/agent/.kube/b.yaml"` | `KUBECONFIG = "/agent/kubeconfig-a.yaml:/agent/kubeconfig-b.yaml"` | 字面值；每个文件产生一条 `:ro` 挂载 |
+| `KUBECONFIG = "/home/agent/.kube/a.yaml:/home/agent/.kube/b.yaml"` | `KUBECONFIG = "/state/.kube/a.yaml:/state/.kube/b.yaml"` | 字面值；每个文件落 `home/.kube/<basename>`，容器里从复制后的家目录（`/state`）读。只有一份且叫 `config` 时整行删掉，kubectl 走默认路径 |
+| `GIT_SSH_COMMAND = "ssh -i /home/agent/.ssh/k"` | `GIT_SSH_COMMAND = "ssh -i /state/.ssh/k"` | 源家目录前缀换成 `/state`；源侧没设就不加，ssh 自己读 `~/.ssh/config` 与默认名私钥 |
 | `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` 字面值 | `${HTTP_PROXY}` 等 | `env` 里带原值，规划表提醒「目标主机的出网路径可能不同，确认后再保留」 |
 | `KEY = """..."""` / `KEY = '''...'''`（多行） | 原样透传，不改写 | red items：多行字符串未改写，需要手工转换 |
 
@@ -21,10 +22,13 @@
 
 ## 4.2 文件型凭据
 
-| 源侧 | 目标挂载 | 配套 |
+全部走 `docs/CREDENTIALS.md` §2 的家目录声明层：落到 `instances/<name>/home/`，照 `~` 的结构摆，compose 只有模板自带的 `./home:/agent/home:ro`，entrypoint 每次启动复制进容器家目录。
+
+| 源侧 | 目标 | 配套 |
 |---|---|---|
-| `KUBECONFIG` 引用的每个文件 | 复制到 `./instances/<name>/kubeconfig-<basename>`（0600），挂 `/agent/kubeconfig-<basename>:ro` | 见 4.1 |
-| `$HOME/.ssh/` 下的私钥（无 `.pub` 的同名文件） | 复制到 `./instances/<name>/ssh_key`（0600）；第一把挂 `/agent/ssh_key:ro`，多于一把时规划表列出并只挂第一把 | env 表加 `GIT_SSH_COMMAND = "ssh -i /agent/ssh_key -o IdentitiesOnly=yes"`。`known_hosts` 落 `/state/.ssh/`，`HOME` 可写，首连自动写入，不需要进容器初始化 |
+| `$HOME/.kube/*` 与 `KUBECONFIG` 引用的每个文件 | `home/.kube/<basename>`（0600） | `KUBECONFIG` 改写见 4.1 |
+| `$HOME/.ssh/` 下的私钥、`.pub`、`config` | `home/.ssh/<同名>`（0600） | 不加 `GIT_SSH_COMMAND`；私钥名不是默认名、又没有 `.ssh/config` 也没有 `GIT_SSH_COMMAND` 指着它时列为 red item |
+| `$HOME/.ssh/known_hosts`、`authorized_keys` | 不迁 | `known_hosts` 首连自动写进 `/state/.ssh/`，声明层不该带它 |
 | `$HOME/.gnupg` | 不迁 | 规划表单独列一条：签名密钥若需要，另行按 `docs/CREDENTIALS.md` 的凭据通道提供 |
 
 复制用 rsync 一次拉取，落地即 `chmod 600`；属主对齐 UID 1000 是 `deploy` 在目标主机上做的事，本机不改属主。规划表列出源路径与目标路径。

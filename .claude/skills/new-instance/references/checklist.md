@@ -13,9 +13,10 @@ steps in the final message and keep the wording; each one exists because of a re
    budgeted virtual key for `ANTHROPIC_AUTH_TOKEN`, not a master key (`docs/CREDENTIALS.md` §1).
 3. **Set `ALLOW_FROM` and `ADMIN_FROM` to explicit open_ids.** open_id is per user × app: ids taken
    from another chat app never match, and `"*"` lets anyone drive the agent.
-4. **File credentials.** For each `--mount FILE`, place the file at
-   `hosts/<host>/instances/<name>/FILE` in the deploy repo with `chmod 600` and an owner matching
-   the image's `AGENT_UID` (default 1000).
+4. **File credentials.** Lay them out under `hosts/<host>/instances/<name>/home/` exactly as
+   they sit in a home directory (`home/.kube/config`, `home/.ssh/config`, `home/.ssh/<key>`),
+   `chmod 600`; `deploy` sets the owner. The entrypoint copies them into the container's home at
+   every start (`docs/CREDENTIALS.md` §2), so no path variable is needed.
 5. **Workspace, network, start: now the `deploy` skill's job.** Creating the workspace directory
    and chowning it to UID 1000, creating the `agentbox` network on a host's first instance, and
    running `docker compose up -d` are no longer manual steps — the `deploy` skill

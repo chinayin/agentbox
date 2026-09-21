@@ -31,14 +31,14 @@
     {
       "id": 3,
       "eval_name": "pi-instance-with-kubeconfig",
-      "prompt": "新建一个实例 data，用 pi 而不是 claude code，还要挂 kubeconfig",
-      "expected_output": "examples/data scaffolded with agent.type = \"pi\", PI_KEY uncommented in env.example, KUBECONFIG=/agent/kubeconfig in the config env block, compose snippet using AGENTBOX_IMAGE_PI and mounting ./examples/data/kubeconfig:/agent/kubeconfig:ro.",
+      "prompt": "新建一个实例 data，用 pi 而不是 claude code，还要带 kubeconfig",
+      "expected_output": "examples/data scaffolded with agent.type = \"pi\", PI_KEY uncommented in env.example, no KUBECONFIG in the config env block, docker-compose.yaml on the -pi image tag with ./home:/agent/home:ro; the hand-off says the kubeconfig goes to home/.kube/config in the deploy repo.",
       "files": [],
       "assertions": [
-        "examples/data/config.toml has agent.type == \"pi\" and KUBECONFIG = \"/agent/kubeconfig\" under [projects.agent.options.env]",
+        "examples/data/config.toml has agent.type == \"pi\" and no KUBECONFIG under [projects.agent.options.env]",
         "examples/data/env.example has an uncommented PI_KEY= line with an xxxx value",
-        "the data service in docker-compose.yaml uses ${AGENTBOX_IMAGE_PI...} and mounts ./examples/data/kubeconfig:/agent/kubeconfig:ro",
-        "the final message tells the user the kubeconfig file must be chmod 600 and owned by UID 1000 and that pi is not yet verified end to end"
+        "the data service in docker-compose.yaml uses the -pi image tag and mounts ./home:/agent/home:ro, nothing else under /agent besides config.toml",
+        "the final message tells the user the kubeconfig goes to hosts/<host>/instances/data/home/.kube/config in the deploy repo as 0600 and that pi is not yet verified end to end"
       ]
     }
   ]

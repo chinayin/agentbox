@@ -74,7 +74,8 @@ for f in "${HOME_DIR}"/.ssh/*; do
 	[ -f "${f}" ] || continue
 	b="$(basename "${f}")"
 	case "${b}" in
-		config|known_hosts|known_hosts.old|authorized_keys|environment|rc) continue ;;
+		known_hosts|known_hosts.old|authorized_keys|environment|rc) continue ;;
+		config) rec ssh_config "${b}" ;;
 		*.pub) rec ssh_pub "${b}" ;;
 		*) rec ssh_key "${b}" ;;
 	esac

@@ -8,7 +8,7 @@
 |---|---|---|---|
 | 1 | `linux/arm64` 镜像在 arm64 上跑通 | 发布关闭（原因见 DECISIONS 2026-09-09）。`v0.3.0` 含 arm64 层但从未运行过 | Apple Silicon 上 `docker run ghcr.io/<repo>:0.3.0 --version` 成功；重开发布需先有真实 arm64 部署目标 |
 | 2 | `relay send --data-dir` 跨容器 | 源码判定不可行（DECISIONS 2026-09-13），未实测 | 两容器实验确认 `target engine not found` 后，把 `INSTANCES.md` §3 的「未实测」去掉 |
-| 2a | 多云主 bot 拓扑 A 跑通 | `docs/design/MULTI_CLOUD.md` §3 全部基于源码判定，容器从未启动 | 构建机上四个测试飞书应用、一个群 `/bind` 四次，主 bot 对跨两家云的问题至少 relay 一次并汇总回人 |
+| 2a | 多云 relay 拓扑（一容器多 project）真机验证 | multicloud 已按「一 bot + 四 subagent」形态上线（DECISIONS 2026-09-21），不走 relay；`docs/design/MULTI_CLOUD.md` §3 的 relay 语义仍全部基于源码判定 | 只在有人需要单独 @ 某家云的 bot 时再做：同容器两个 project，主 bot 对跨两家云的问题至少 relay 一次并汇总回人 |
 | 2b | 飞书 `include_bot` 权限与 cc-connect 放行 bot @ 消息 | `docs/design/MULTI_CLOUD.md` §4，租户能否申请该范围未确认，cc-connect 接收路径未真机跑过 | 两个测试应用互 @ 一次双方会话都收到；`mention_map` 出站 @ 能触发对方事件 |
 | 2c | `cc-connect feishu new` 扫码建飞书应用 | 只有上游文档与源码（`PersonalAgent` 模板），本仓库的应用都在后台手建 | 用镜像内的 cc-connect 扫码建一个测试应用，后台导出的权限 JSON 与 `docs/CHANNELS.md` §2.2 一致，事件与回调已订阅并为长连接 |
 | 2d | 多账号名册渲染脚本 | `docs/design/CLOUD_ACCOUNTS.md` §2 定了 `accounts.yaml` 为唯一真相与四样产物，脚本未写 | 一份含 aws/aliyun/volc 各一个别名的 YAML 渲染出四样产物；`test.sh` 断言产物里没有 `[default]`、白名单与 YAML 别名一致 |
@@ -22,4 +22,3 @@
 | 6 | compose 加固：`read_only: true` + tmpfs + healthcheck | pids、cap_drop、no-new-privileges、init 已在真实实例上 `docker inspect` 验收（DECISIONS 2026-09-21）。`read_only` 与 healthcheck 未做；`make smoke` 走裸 `docker run` 不经过 compose。cc-connect 凭据无效时不退出只刷 websocket error，healthcheck 不能只看进程 | 实例 `healthy` 且日志无 `read-only file system` |
 | 7 | pi 会话端到端 | `agent.type = "pi"` 已被 cc-connect 接受并启动引擎，未用真实凭据驱动过会话；entrypoint 按清单把技能装进 `/state/.pi/agent/skills`，pi 是否从这个目录加载未验 | 真实飞书应用 + `-pi` 镜像，发一条消息拿到回复；同一实例挂 `skills-lock.json`，pi 会话里能用上其中的技能 |
 | 8 | state 卷备份/恢复脚本 | 无脚本；卷内含 git 私钥 | `scripts/state-backup.sh`，文档标注备份件密级 |
-| 9 | home 层落地：所有产出文件型凭据的地方改走 `home/` | 标准见 `docs/CREDENTIALS.md` §2。已按此上线：litellm-gateway；uufly 已挂 `./home:/agent/home:ro` 并放占位 `.ssh/config`，四把节点私钥仍在工作区 `secrets/ssh/` 由 `ssh -F` 读，是否迁入待定；multicloud（从未启动）的 `profiles/*` 已迁成 `home/.aws/config`、`home/.aliyun/config.json`、`home/.tccli/`、`home/.volcengine/config.json` 与 `home/accounts.yaml`，`verify-profiles.sh` 改读 `home/`，首次 `up` 已验证复制件可写、两家云 `--profile` 通（DECISIONS 2026-09-21）。仍是旧写法的两处，按依赖顺序：(a) `scaffold.sh --mount kubeconfig/ssh_key` 写 `/agent/<file>:ro` 加 `KUBECONFIG`；(b) `import-instance` 把源主机 `~/.ssh`、`~/.kube` 拆成 `ssh_key`、`kubeconfig-*` 单文件 | (a) `scaffold.sh` 去掉 `--mount`，模板 compose 带 `./home:/agent/home:ro`；(b) `import-instance` 把源主机 `.ssh/`、`.kube/` 原样落到 `home/`，不再改写 `KUBECONFIG` |

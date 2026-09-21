@@ -28,8 +28,11 @@ services:
       - ${WORKSPACES_ROOT:-../../workspaces}/demo:/workspace
       - state:/state
       - cache:/cache
+      # Declared home layer (docs/CREDENTIALS.md section 2): ./home is laid out like ~ and copied into
+      # /state at every start. An instance without file credentials leaves the directory absent;
+      # docker then mounts an empty one and the entrypoint applies nothing.
+      - ./home:/agent/home:ro
       # Optional mounts, see the mount contract table in README:
-      # - ./home:/agent/home:ro
       # - ./skills-lock.json:/agent/skills-lock.json:ro
       # - ./claude:/etc/claude-code:ro
 

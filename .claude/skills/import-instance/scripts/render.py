@@ -26,8 +26,10 @@ HEADER = re.compile(r"^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(#.*)?$")
 PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 OPTIONS_TABLE = "projects.agent.options"
 ENV_TABLE = "projects.agent.options.env"
-SSH_KEY_MOUNT = "/agent/ssh_key"
-GIT_SSH_COMMAND = f'ssh -i {SSH_KEY_MOUNT} -o IdentitiesOnly=yes'
+# The container's HOME (entrypoint.sh mount contract: /state, "HOME points here"). The declared
+# home layer (instances/<name>/home/) is copied there at every start, so a source path under the
+# owner's home becomes the same path under CONTAINER_HOME.
+CONTAINER_HOME = "/state"
 
 # binary name -> lock tool id (backend prefix stripped). Unlisted names fall through to a
 # substring match on the lock id; SYSTEM tools ship with the base image and are not lock-tracked.
@@ -133,14 +135,25 @@ def coverage(name, version, lock):
     return "major differs", f"lock {lv}"
 
 
+def home_layer(recs):
+    """(source path, target under the instance directory) for every file of the owner's ~/.ssh and
+    ~/.kube that the inventory lists. They land in home/ laid out like ~ (docs/CREDENTIALS.md
+    section 2); known_hosts and authorized_keys were already left out by collect.sh."""
+    home = field(recs, "home")
+    rows = []
+    for kind, sub in (("ssh_key", ".ssh"), ("ssh_pub", ".ssh"), ("ssh_config", ".ssh"), ("kube_file", ".kube")):
+        for r in fields(recs, kind):
+            rows.append((f"{home}/{sub}/{r[0]}", f"home/{sub}/{r[0]}"))
+    return rows
+
+
 def rewrite(config_lines, recs):
     """Line-level rewrite of the source config. Returns (lines, ctx)."""
     home = field(recs, "home")
     env_keys = [r[0] for r in fields(recs, "env_key")]
     ssh_keys = [r[0] for r in fields(recs, "ssh_key")]
-    ctx = {"rewrites": [], "literals": [], "kube": [], "red": [], "notes": [], "mounts": []}
+    ctx = {"rewrites": [], "literals": [], "red": [], "notes": [], "home": home_layer(recs)}
     out, table, env_end = [], None, []
-    git_ssh_seen = False
     n = len(config_lines)
     i = 0
     while i < n:
@@ -197,6 +210,8 @@ def rewrite(config_lines, recs):
             i += 1
             continue
         if key == "KUBECONFIG":
+            # Every file it names lands in home/.kube/ and is read from CONTAINER_HOME/.kube/. A
+            # single file named config is kubectl's default and needs no variable at all.
             targets = []
             for p in val.split(":"):
                 p = p.strip()
@@ -204,21 +219,24 @@ def rewrite(config_lines, recs):
                     continue
                 src = p.replace("~", home, 1) if p.startswith("~") else p
                 base = os.path.basename(src)
-                targets.append(f"/agent/kubeconfig-{base}")
-                ctx["kube"].append((src, f"kubeconfig-{base}"))
-                ctx["mounts"].append((f"kubeconfig-{base}", f"/agent/kubeconfig-{base}"))
+                if not any(s == src for s, _ in ctx["home"]):
+                    ctx["home"].append((src, f"home/.kube/{base}"))
+                targets.append(f"{CONTAINER_HOME}/.kube/{base}")
+            if targets == [f"{CONTAINER_HOME}/.kube/config"]:
+                ctx["rewrites"].append((key, "<path>", "-", "dropped: ~/.kube/config is the default path"))
+                i += 1
+                continue
             new = ":".join(targets)
             out.append(f'{indent}{key}{eq}"{new}"{rest}')
-            ctx["rewrites"].append((key, "<paths>", new, "each file mounted :ro under /agent"))
+            ctx["rewrites"].append((key, "<paths>", new, "files land in home/.kube/, read from the copied home"))
             i += 1
             continue
-        if key == "GIT_SSH_COMMAND" and ssh_keys:
-            # The source already pins its own key path; rewrite it in place to the mounted form
-            # instead of also inserting a second GIT_SSH_COMMAND further down (duplicate TOML key,
-            # and the source's /home/.../.ssh/... path would otherwise be lifted into env as-is).
-            out.append(f'{indent}{key}{eq}"{GIT_SSH_COMMAND}"{rest}')
-            ctx["rewrites"].append((key, val, GIT_SSH_COMMAND, "rewritten: git uses the mounted key"))
-            git_ssh_seen = True
+        if key == "GIT_SSH_COMMAND" and home and f"{home}/" in val:
+            # The source pins a key by absolute path under its home; the same file sits under
+            # CONTAINER_HOME after the home layer is applied. Rewritten in place, never lifted to env.
+            new = val.replace(f"{home}/", f"{CONTAINER_HOME}/")
+            out.append(f'{indent}{key}{eq}"{new}"{rest}')
+            ctx["rewrites"].append((key, "<path>", new, "rewritten: the key is read from the copied home"))
             i += 1
             continue
         note = "literal carried to env"
@@ -231,16 +249,11 @@ def rewrite(config_lines, recs):
         ctx["rewrites"].append((key, "<literal>", f"${{{key}}}", note))
         ctx["literals"].append((key, val))
         i += 1
-    if ssh_keys:
-        ctx["mounts"].append(("ssh_key", SSH_KEY_MOUNT))
-        if git_ssh_seen:
-            pass  # already rewritten in place above
-        elif env_end:
-            pos = env_end[-1]
-            out.insert(pos, f'GIT_SSH_COMMAND = "{GIT_SSH_COMMAND}"')
-            ctx["rewrites"].append(("GIT_SSH_COMMAND", "-", GIT_SSH_COMMAND, "added: git uses the mounted key"))
-        else:
-            ctx["red"].append("ssh key found but the config has no [projects.agent.options.env] table; add GIT_SSH_COMMAND by hand")
+    # A key with a non-default name is only found through .ssh/config or GIT_SSH_COMMAND.
+    default_names = {"id_rsa", "id_ecdsa", "id_ed25519", "id_ed25519_sk", "id_ecdsa_sk", "id_dsa"}
+    odd = [k for k in ssh_keys if k not in default_names]
+    if odd and not fields(recs, "ssh_config") and not any(k == "GIT_SSH_COMMAND" for k, *_ in ctx["rewrites"]):
+        ctx["red"].append(f"ssh key {', '.join(odd)}: non-default name, no .ssh/config and no GIT_SSH_COMMAND names it; add a Host entry to home/.ssh/config")
     # placeholders after rewrite decide what the env must supply
     needed = set()
     for line in out:
@@ -272,14 +285,8 @@ def build_plan(recs, ctx, lock, host, name):
     L.append(f"  {'source':<44} {'target':<44} via")
     L.append(f"  {'config.toml':<44} {'config.toml (rewritten)':<44} bind mount /agent/config.toml:ro")
     L.append(f"  {'.env':<44} {'env (values verbatim, 0600)':<44} env_file")
-    for src, dst in ctx["kube"]:
-        L.append(f"  {src:<44} {dst + ' (0600)':<44} bind mount /agent/{dst}:ro")
-    ssh_keys = [r[0] for r in fields(recs, "ssh_key")]
-    for i, k in enumerate(ssh_keys):
-        if i == 0:
-            L.append(f"  {home + '/.ssh/' + k:<44} {'ssh_key (0600)':<44} bind mount /agent/ssh_key:ro")
-        else:
-            L.append(f"  {home + '/.ssh/' + k:<44} {'-':<44} not mounted: only the first key is; wire others by hand")
+    for src, dst in ctx["home"]:
+        L.append(f"  {src:<44} {dst + ' (0600)':<44} home layer, copied into ~ at every start")
     lock_path = field(recs, "skill_lock")
     for s in fields(recs, "user_skill"):
         dst = "-" if lock_path else "(no manifest)"
@@ -304,12 +311,10 @@ def build_plan(recs, ctx, lock, host, name):
         L.append(f"  {k:<28} {'(.env only)':<20} -> {'-':<44} discard: not referenced by config")
     L.append("")
     L.append("== file credentials")
-    if not ctx["kube"] and not ssh_keys:
+    if not ctx["home"]:
         L.append("  none found")
-    for src, dst in ctx["kube"]:
-        L.append(f"  {src} -> {dst}  chmod 600; deploy chowns it to UID 1000 on the host")
-    if ssh_keys:
-        L.append(f"  {home}/.ssh/{ssh_keys[0]} -> ssh_key  chmod 600; GIT_SSH_COMMAND points git at {SSH_KEY_MOUNT}")
+    for src, dst in ctx["home"]:
+        L.append(f"  {src} -> {dst}  chmod 600; deploy chowns it to UID 1000; the entrypoint copies it to {CONTAINER_HOME}/{dst[len('home/'):]}")
     L.append("")
     L.append("== skills")
     def skill_line(name_, where, hits):
@@ -382,7 +387,6 @@ def write_out(a, recs, new_config, ctx):
     env_path = os.path.join(out, "env")
     if not os.path.isfile(env_path):
         die(f"{env_path} must exist before rendering (copied from the source .env)", 2)
-    home = field(recs, "home")
     text = "\n".join(new_config) + "\n"
     try:
         import tomllib
@@ -413,11 +417,8 @@ def write_out(a, recs, new_config, ctx):
     os.chmod(env_path, 0o600)
     # copy list for the driver: credentials as 0600 files, skills as directories
     rows = []
-    for src, dst in ctx["kube"]:
+    for src, dst in ctx["home"]:
         rows.append(("cred", src, dst))
-    ssh_keys = [r[0] for r in fields(recs, "ssh_key")]
-    if ssh_keys:
-        rows.append(("cred", f"{home}/.ssh/{ssh_keys[0]}", "ssh_key"))
     # User-level skills are not copied: the manifest is what the instance carries, and the
     # entrypoint installs from it into the state volume (docs/SKILLS.md).
     lock_path = field(recs, "skill_lock")
@@ -434,13 +435,14 @@ TEMPLATE_IMAGE = "ghcr.io/chinayin/agentbox"
 
 
 def compose(a, recs, ctx):
-    """The instance's docker-compose.yaml: the demo template renamed, with one read-only mount per
-    credential and the skill manifest added after the cache volume. The same three substitutions as
-    new-instance's scaffold.sh; the indented "# - ..." hints are dropped from a generated file."""
+    """The instance's docker-compose.yaml: the demo template renamed, with the skill manifest mount
+    added after the cache volume when there is one. File credentials need no mount of their own: the
+    template's ./home:/agent/home:ro carries them. The same three substitutions as new-instance's
+    scaffold.sh; the indented "# ..." hints are dropped from a generated file."""
     n = a.name
     with open(a.template, encoding="utf-8") as fh:
         lines = fh.read().splitlines()
-    mounts = [f"      - ./{dst}:{mount}:ro" for dst, mount in ctx["mounts"]]
+    mounts = []
     if field(recs, "skill_lock"):
         mounts.append("      - ./skills-lock.json:/agent/skills-lock.json:ro")
     out, hits = [], {"service": 0, "container": 0, "workspace": 0, "cache": 0}

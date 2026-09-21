@@ -21,7 +21,7 @@
 | `docker-compose.yaml` | 从 `examples/demo/docker-compose.yaml` 生成。所有路径相对本目录，compose 项目名取目录名（卷自动带前缀 `<name>_state`）。加固块（`cap_drop`、`no-new-privileges`、`init`、pids 上限、外部网络）在文件内用 YAML 锚点引用，不跨文件继承；`deploy plan` 逐文件断言它完整 |
 | `config.toml` | 实例声明，只含 `${占位符}` |
 | `env` | 环境变量型凭据，0600 |
-| `home/`（可选） | 文件型凭据，照 `~` 的结构摆（[CREDENTIALS](CREDENTIALS.md) §2） |
+| `home/`（可选） | 文件型凭据，照 `~` 的结构摆（[CREDENTIALS](CREDENTIALS.md) §2）。模板 compose 固定挂 `./home:/agent/home:ro`，目录不存在时 docker 挂空目录，entrypoint 什么都不复制 |
 | `skills-lock.json`（可选） | 技能清单（[SKILLS](SKILLS.md)） |
 | `workspace/`（可选） | 工作区里由运维声明、agent 只读不改的文件：工作区的 `CLAUDE.md`、subagent 定义、项目级 settings。`deploy` 每次直接覆盖进工作区（不带 `--delete`，agent 自己的文件不动），从仓库删掉的文件要手工清；不进服务器的 `instances/` 镜像 |
 | `workspace-init/`（可选） | 工作区一次性种子：agent 要能改写、因而不能 `:ro` 挂的文件（[CREDENTIALS](CREDENTIALS.md) §2）。已存在的文件永不覆盖，所以运维要改的提示词不得放这里 |

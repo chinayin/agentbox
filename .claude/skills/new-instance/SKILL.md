@@ -42,7 +42,7 @@ When in doubt, prefer the new instance: cross-domain calls are meant to have fri
 ## Step 2: scaffold
 
 ```bash
-.claude/skills/new-instance/scripts/scaffold.sh [--agent pi] [--mount kubeconfig] [--mount ssh_key] <name>
+.claude/skills/new-instance/scripts/scaffold.sh [--agent pi] <name>
 ```
 
 - `<name>` is lowercase letters, digits and dashes. It becomes the service name, the container
@@ -50,11 +50,10 @@ When in doubt, prefer the new instance: cross-domain calls are meant to have fri
   name (so the volumes are `<name>_state` / `<name>_cache` on the server).
 - `--agent pi` sets `agent.type = "pi"`, uncomments `PI_KEY` in the env template and switches the
   image in `docker-compose.yaml` to the `-pi` tag. Default is `claudecode`.
-- `--mount FILE` adds `./FILE:/agent/FILE:ro` to the instance's `docker-compose.yaml` (see
-  `docs/CREDENTIALS.md` §3 for which tool reads which path). `kubeconfig` also gets
-  `KUBECONFIG=/agent/kubeconfig` written into the config's env block. Anything other than
-  `kubeconfig` / `ssh_key` must be added to `.gitignore` under `examples/*/` before the real file
-  is created.
+- File credentials (kubeconfig, ssh keys, cloud CLI profiles) are not a scaffold option. The
+  scaffolded `docker-compose.yaml` already mounts `./home:/agent/home:ro`; the deploy repo
+  instance lays the files out under `home/` like `~` (`docs/CREDENTIALS.md` §2) and the entrypoint
+  copies them into place at every start. No path variable is written into the config.
 - The script refuses to overwrite an existing `examples/<name>` (exit 1) and prints nothing on
   stdout; the three files are the product. Run with `--dry-run` first if you want to show the
   user the plan.
@@ -95,7 +94,7 @@ deploy repo.
 
 ```
 Created:
-- examples/<name>/docker-compose.yaml   (image tag ..., mounts: ...)
+- examples/<name>/docker-compose.yaml   (image tag ...)
 - examples/<name>/config.toml           (agent.type = ...)
 - examples/<name>/env.example
 - runtime/workspaces/<name>/

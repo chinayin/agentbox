@@ -591,15 +591,15 @@ check_instance_compose() {
 group "new-instance scaffold"
 SCAFFOLD="$ROOT/.claude/skills/new-instance/scripts/scaffold.sh"
 sc="$TMP/scaffold"; mkdir -p "$sc/examples"; cp -R "$ROOT/examples/demo" "$sc/examples/"; cp "$ROOT/.gitignore" "$sc/"
-if out="$(bash "$SCAFFOLD" --root "$sc" --agent pi --mount kubeconfig --mount ssh_key data 2>"$sc/err")"; then
+if out="$(bash "$SCAFFOLD" --root "$sc" --agent pi data 2>"$sc/err")"; then
 	ok "scaffold exits 0 for a fresh name"
 else
 	bad "scaffold exits 0 for a fresh name" "$(cat "$sc/err")"
 fi
 [ -z "$out" ] && ok "scaffold prints nothing on stdout (the files are the product)" || bad "scaffold prints nothing on stdout (the files are the product)" "$out"
-python3 -c 'import sys,tomllib; c=tomllib.load(open(sys.argv[1],"rb")); p=c["projects"][0]; assert p["name"]=="data" and p["agent"]["type"]=="pi" and p["agent"]["options"]["env"]["KUBECONFIG"]=="/agent/kubeconfig"' "$sc/examples/data/config.toml" 2>/dev/null \
-	&& ok "scaffolded config.toml parses with name, agent type and KUBECONFIG applied" \
-	|| bad "scaffolded config.toml parses with name, agent type and KUBECONFIG applied" "see $sc/examples/data/config.toml"
+python3 -c 'import sys,tomllib; c=tomllib.load(open(sys.argv[1],"rb")); p=c["projects"][0]; assert p["name"]=="data" and p["agent"]["type"]=="pi" and "KUBECONFIG" not in p["agent"]["options"]["env"]' "$sc/examples/data/config.toml" 2>/dev/null \
+	&& ok "scaffolded config.toml parses with name and agent type applied and no path variable" \
+	|| bad "scaffolded config.toml parses with name and agent type applied and no path variable" "see $sc/examples/data/config.toml"
 grep -q '^PI_KEY=x' "$sc/examples/data/env.example" \
 	&& ok "pi scaffold uncomments PI_KEY with a placeholder" || bad "pi scaffold uncomments PI_KEY with a placeholder" ""
 # real TOML parse so commented-out template blocks do not count, same as the entrypoint does
@@ -624,11 +624,13 @@ grep -vE '^(#|$)' "$sc/examples/data/env.example" | grep -vE '=(cli_|ou_|sk-)?x+
 scf="$sc/examples/data/docker-compose.yaml"
 grep -q 'image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}-pi$' "$scf" \
 	&& ok "pi scaffold switches the anchor image to the -pi tag" || bad "pi scaffold switches the anchor image to the -pi tag" "$(grep image: "$scf")"
-# --mount order is preserved, and every mount is relative to the instance directory
-[ "$(grep -oE '/agent/(kubeconfig|ssh_key):ro$' "$scf" | tr '\n' ' ')" = "/agent/kubeconfig:ro /agent/ssh_key:ro " ] \
-	&& grep -q '^      - ./kubeconfig:/agent/kubeconfig:ro$' "$scf" && grep -q '^      - ./ssh_key:/agent/ssh_key:ro$' "$scf" \
-	&& ok "scaffold adds one ./FILE:/agent/FILE:ro mount per --mount, in the given order" \
-	|| bad "scaffold adds one ./FILE:/agent/FILE:ro mount per --mount, in the given order" "$(grep ':ro$' "$scf")"
+# File credentials travel through the home layer only (docs/CREDENTIALS.md section 2): the scaffolded
+# compose carries ./home:/agent/home:ro and no per-file /agent/<file> mount, and --mount is gone.
+grep -q '^      - ./home:/agent/home:ro$' "$scf" && [ "$(grep -c '/agent/' "$scf")" -eq 2 ] \
+	&& ok "scaffold mounts the home layer and nothing else under /agent besides config.toml" \
+	|| bad "scaffold mounts the home layer and nothing else under /agent besides config.toml" "$(grep '/agent/' "$scf")"
+bash "$SCAFFOLD" --root "$sc" --mount kubeconfig gone >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && [ ! -e "$sc/examples/gone" ] && ok "scaffold rejects the retired --mount flag (exit 1)" || bad "scaffold rejects the retired --mount flag (exit 1)" "rc=$rc"
 check_instance_compose "new-instance" "$scf" data
 [ -d "$sc/runtime/workspaces/data" ] && ok "scaffold creates the workspace directory" || bad "scaffold creates the workspace directory" ""
 bash "$SCAFFOLD" --root "$sc" data >/dev/null 2>&1; rc=$?
@@ -1105,7 +1107,7 @@ grep -q '^env_key	FEISHU_APP_SECRET$' <<<"$inv" && ! grep -q 'fixture-feishu-sec
 	&& ok "collect lists .env key names and no values" || bad "collect lists .env key names and no values" ""
 grep -q '^kube_file	dev.yaml	' <<<"$inv" && grep -q '^kube_file	prod.yaml	' <<<"$inv" \
 	&& ok "collect lists kubeconfig files" || bad "collect lists kubeconfig files" "$inv"
-grep -q '^ssh_key	id_fixture$' <<<"$inv" && grep -q '^ssh_pub	id_fixture.pub$' <<<"$inv" && ! grep -qE '^ssh_key	(config|known_hosts)$' <<<"$inv" \
+grep -q '^ssh_key	id_fixture$' <<<"$inv" && grep -q '^ssh_pub	id_fixture.pub$' <<<"$inv" && grep -q '^ssh_config	config$' <<<"$inv" && ! grep -qE '^ssh_(key|config)	known_hosts' <<<"$inv" \
 	&& ok "collect tells private keys from public keys, config and known_hosts" || bad "collect tells private keys from public keys, config and known_hosts" "$inv"
 ! grep -q 'fixture-ssh-private' <<<"$inv" && ! grep -q 'fixture-kube-dev' <<<"$inv" \
 	&& ok "collect never prints credential file contents" || bad "collect never prints credential file contents" ""
@@ -1152,14 +1154,16 @@ grep -qE 'GATEWAY_ADMIN_TOKEN.*secret' <<<"$plan" && ! grep -q 'sk-fixture-secre
 	&& ok "plan flags a secret literal in config without printing it" || bad "plan flags a secret literal in config without printing it" "$plan"
 grep -qE 'EXTRA_API_SECRET.*secret' <<<"$plan" && ! grep -q 'fixture-single-quoted' <<<"$plan$(cat "$im/plan.err")" \
 	&& ok "plan flags a single-quoted secret literal without printing it" || bad "plan flags a single-quoted secret literal without printing it" "$plan"
-grep -q 'KUBECONFIG.*/agent/kubeconfig-dev.yaml:/agent/kubeconfig-prod.yaml' <<<"$plan" && ok "plan maps KUBECONFIG to /agent paths" || bad "plan maps KUBECONFIG to /agent paths" "$plan"
+grep -q 'KUBECONFIG.*/state/.kube/dev.yaml:/state/.kube/prod.yaml' <<<"$plan" && ok "plan maps KUBECONFIG to the copied home" || bad "plan maps KUBECONFIG to the copied home" "$plan"
 grep -qE 'HTTPS_PROXY.*egress' <<<"$plan" && ok "plan warns that proxy values may not apply to the new host" || bad "plan warns that proxy values may not apply to the new host" "$plan"
 grep -qE 'CLAUDE_CODE_MAX_CONTEXT_TOKENS.*literal carried to env' <<<"$plan" \
 	&& ok "TOKEN inside a longer identifier is not treated as a secret" || bad "TOKEN inside a longer identifier is not treated as a secret" "$plan"
 sed -n '/^== red items/,$p' <<<"$plan" | grep -q 'CLAUDE_CODE_MAX_CONTEXT_TOKENS' \
 	&& bad "CLAUDE_CODE_MAX_CONTEXT_TOKENS is not a red item" "found in red items" || ok "CLAUDE_CODE_MAX_CONTEXT_TOKENS is not a red item"
 grep -qE '^ *WORK_DIR.*discard' <<<"$plan" && ok "plan discards .env keys the config does not reference" || bad "plan discards .env keys the config does not reference" "$plan"
-grep -q 'id_fixture.*ssh_key' <<<"$plan" && grep -q 'GIT_SSH_COMMAND' <<<"$plan" && ok "plan mounts the first ssh key and wires GIT_SSH_COMMAND" || bad "plan mounts the first ssh key and wires GIT_SSH_COMMAND" "$plan"
+grep -q 'id_fixture .*home/.ssh/id_fixture' <<<"$plan" && grep -q 'id_fixture.pub .*home/.ssh/id_fixture.pub' <<<"$plan" && grep -q '\.ssh/config .*home/.ssh/config' <<<"$plan" \
+	&& grep -q '\.kube/dev.yaml .*home/.kube/dev.yaml' <<<"$plan" && ! grep -q 'GIT_SSH_COMMAND' <<<"$plan" && ! grep -q '/agent/ssh_key' <<<"$plan" \
+	&& ok "plan lands every .ssh and .kube file in the home layer and adds no GIT_SSH_COMMAND" || bad "plan lands every .ssh and .kube file in the home layer and adds no GIT_SSH_COMMAND" "$plan"
 grep -qE 'alpha.*reinstalled from the manifest' <<<"$plan" && grep -qE 'beta.*test.sh' <<<"$plan" && ok "plan reinstalls user skills from the manifest and lists docker in self-tests" || bad "plan reinstalls user skills from the manifest and lists docker in self-tests" "$plan"
 grep -qE 'gamma.*SKILL.md' <<<"$plan" && sed -n '/^== red items/,$p' <<<"$plan" | grep -q 'gamma' \
 	&& ok "docker in a skill's runtime path is a red item" || bad "docker in a skill's runtime path is a red item" "$plan"
@@ -1207,23 +1211,33 @@ minv="$im/multiline.inv"
 mplan="$(python3 "$IM_SRC/render.py" --inventory "$minv" --lock "$ROOT/mise.lock" --name t 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && sed -n '/^== red items/,$p' <<<"$mplan" | grep -q 'NOTE' && ! grep -qE 'NOTE.*\$\{NOTE\}' <<<"$mplan" \
 	&& ok "a multi-line TOML string is left to a human, not misparsed as an empty rewrite" || bad "a multi-line TOML string is left to a human, not misparsed as an empty rewrite" "rc=$rc $mplan"
-# a source config that already sets GIT_SSH_COMMAND must be rewritten in place, not duplicated: a
-# second inserted line would make the rewritten TOML fail to parse, and the source's own key path
-# must never be lifted into env as a literal.
+# a source config that sets GIT_SSH_COMMAND with a key path under its home must be rewritten in
+# place to the copied home, not duplicated (a second line would break the TOML) and never lifted
+# into env as a literal with the source's path.
 gsinv="$im/gitssh.inv"
 {
 	printf 'owner\ttester\nuid\t501\nhome\t/home/tester\nwork_dir\t/home/tester/ws\nssh_key\tid_x\n'
-	printf '__AGENTBOX_CONFIG_BEGIN__\n[projects.agent.options]\nwork_dir = "/home/tester/ws"\n\n[projects.agent.options.env]\nGIT_SSH_COMMAND = "ssh -i /home/x/.ssh/k"\n__AGENTBOX_CONFIG_END__\n'
+	printf '__AGENTBOX_CONFIG_BEGIN__\n[projects.agent.options]\nwork_dir = "/home/tester/ws"\n\n[projects.agent.options.env]\nGIT_SSH_COMMAND = "ssh -i /home/tester/.ssh/k"\n__AGENTBOX_CONFIG_END__\n'
 } > "$gsinv"
 gsout="$im/gitssh-out"; mkdir -p "$gsout"; : > "$gsout/env"
 gserr="$(python3 "$IM_SRC/render.py" --inventory "$gsinv" --lock "$ROOT/mise.lock" --name t --out "$gsout" --copy-list "$im/gitssh-copies" --template "$ROOT/examples/demo/docker-compose.yaml" 2>&1 >/dev/null)"; rc=$?
 [ "$rc" -eq 0 ] && ok "render.py exits 0 when the source already sets GIT_SSH_COMMAND" || bad "render.py exits 0 when the source already sets GIT_SSH_COMMAND" "rc=$rc $gserr"
-python3 - "$gsout/config.toml" <<'PY' && ok "GIT_SSH_COMMAND is rewritten in place to the mounted key, not duplicated" || bad "GIT_SSH_COMMAND is rewritten in place to the mounted key, not duplicated" "see config.toml"
+python3 - "$gsout/config.toml" <<'PY' && ok "GIT_SSH_COMMAND is rewritten in place to the copied home, not duplicated" || bad "GIT_SSH_COMMAND is rewritten in place to the copied home, not duplicated" "see config.toml"
 import sys, tomllib
 c = tomllib.load(open(sys.argv[1], "rb"))
 e = c["projects"]["agent"]["options"]["env"]
-assert e["GIT_SSH_COMMAND"] == "ssh -i /agent/ssh_key -o IdentitiesOnly=yes", e["GIT_SSH_COMMAND"]
+assert e["GIT_SSH_COMMAND"] == "ssh -i /state/.ssh/k", e["GIT_SSH_COMMAND"]
 PY
+# a non-default key name that nothing points at is a red item; a single ~/.kube/config drops KUBECONFIG
+oddinv="$im/odd.inv"
+{
+	printf 'owner\ttester\nuid\t501\nhome\t/home/tester\nwork_dir\t/home/tester/ws\nssh_key\tid_x\nkube_file\tconfig\t10\n'
+	printf '__AGENTBOX_CONFIG_BEGIN__\n[projects.agent.options]\nwork_dir = "/home/tester/ws"\n\n[projects.agent.options.env]\nKUBECONFIG = "~/.kube/config"\n__AGENTBOX_CONFIG_END__\n'
+} > "$oddinv"
+oplan="$(python3 "$IM_SRC/render.py" --inventory "$oddinv" --lock "$ROOT/mise.lock" --name t 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && sed -n '/^== red items/,$p' <<<"$oplan" | grep -q 'id_x' \
+	&& ok "a non-default ssh key name with no .ssh/config is a red item" || bad "a non-default ssh key name with no .ssh/config is a red item" "rc=$rc $oplan"
+grep -qE 'KUBECONFIG .*dropped' <<<"$oplan" && ok "a single ~/.kube/config drops KUBECONFIG (default path)" || bad "a single ~/.kube/config drops KUBECONFIG (default path)" "$oplan"
 ! grep -q '^GIT_SSH_COMMAND=' "$gsout/env" \
 	&& ok "env does not gain a duplicate GIT_SSH_COMMAND literal with the source's key path" || bad "env does not gain a duplicate GIT_SSH_COMMAND literal with the source's key path" "$(cat "$gsout/env")"
 # argparse usage errors and missing files exit clean, no Python traceback
@@ -1240,25 +1254,27 @@ touch "$im/marker"; sleep 1
 tgt="$im/repo/hosts/h1/instances/srcops"
 HOME="$im/fakehome" AGENTBOX_DEPLOY_REPO="$im/repo" bash "$IMPORT" --local --home "$shome" import --host h1 --name srcops "$src" > "$im/import.out" 2>"$im/import.err"; rc=$?
 [ "$rc" -eq 0 ] && ok "local import exits 0" || bad "local import exits 0" "rc=$rc $(cat "$im/import.err")"
-[ -f "$tgt/docker-compose.yaml" ] && [ -f "$tgt/config.toml" ] && [ -f "$tgt/env" ] && [ -f "$tgt/kubeconfig-dev.yaml" ] && [ -f "$tgt/kubeconfig-prod.yaml" ] && [ -f "$tgt/ssh_key" ] \
+[ -f "$tgt/docker-compose.yaml" ] && [ -f "$tgt/config.toml" ] && [ -f "$tgt/env" ] && [ -f "$tgt/home/.kube/dev.yaml" ] && [ -f "$tgt/home/.kube/prod.yaml" ] \
+	&& [ -f "$tgt/home/.ssh/id_fixture" ] && [ -f "$tgt/home/.ssh/id_fixture.pub" ] && [ -f "$tgt/home/.ssh/config" ] && [ ! -e "$tgt/home/.ssh/known_hosts" ] \
+	&& [ ! -e "$tgt/ssh_key" ] && [ -z "$(find "$tgt" -maxdepth 1 -name 'kubeconfig-*')" ] \
 	&& [ -f "$tgt/skills-lock.json" ] && [ ! -e "$tgt/claude" ] \
-	&& ok "import writes compose, config, env, credentials and the skill manifest" || bad "import writes compose, config, env, credentials and the skill manifest" "$(find "$tgt" 2>/dev/null)"
-[ "$(fmode "$tgt/env")" = 600 ] && [ "$(fmode "$tgt/ssh_key")" = 600 ] \
-	&& [ "$(fmode "$tgt/kubeconfig-dev.yaml")" = 600 ] \
-	&& ok "env and credential files land as 0600" || bad "env and credential files land as 0600" ""
+	&& ok "import writes compose, config, env, the home layer and the skill manifest" || bad "import writes compose, config, env, the home layer and the skill manifest" "$(find "$tgt" 2>/dev/null)"
+[ "$(fmode "$tgt/env")" = 600 ] && [ "$(fmode "$tgt/home/.ssh/id_fixture")" = 600 ] \
+	&& [ "$(fmode "$tgt/home/.kube/dev.yaml")" = 600 ] \
+	&& ok "env and home layer files land as 0600" || bad "env and home layer files land as 0600" ""
 grep -q '^FEISHU_APP_SECRET=fixture-feishu-secret$' "$tgt/env" && grep -q '^ANTHROPIC_MODEL=vendor/model-x$' "$tgt/env" \
 	&& grep -q '^GATEWAY_ADMIN_TOKEN=sk-fixture-secret-in-config$' "$tgt/env" && grep -q '^HTTPS_PROXY=http://proxy.example.test:7890$' "$tgt/env" \
 	&& ok "env keeps the source values and gains the lifted literals" || bad "env keeps the source values and gains the lifted literals" "$(sed 's/=.*/=<v>/' "$tgt/env")"
 ! grep -q '^WORK_DIR=' "$tgt/env" && ok "env drops WORK_DIR" || bad "env drops WORK_DIR" ""
-grep -q 'fixture-ssh-private' "$tgt/ssh_key" && grep -q 'fixture-kube-prod' "$tgt/kubeconfig-prod.yaml" \
+grep -q 'fixture-ssh-private' "$tgt/home/.ssh/id_fixture" && grep -q 'fixture-kube-prod' "$tgt/home/.kube/prod.yaml" \
 	&& ok "credential files are copied verbatim" || bad "credential files are copied verbatim" ""
 python3 - "$tgt/config.toml" <<'PY' && ok "rewritten config parses and carries the new shape" || bad "rewritten config parses and carries the new shape" "see config.toml"
 import sys, tomllib
 c = tomllib.load(open(sys.argv[1], "rb")); p = c["projects"][0]; o = p["agent"]["options"]; e = o["env"]
 assert o["work_dir"] == "${WORK_DIR}", o["work_dir"]
 assert e["ANTHROPIC_MODEL"] == "${ANTHROPIC_MODEL}" and e["GATEWAY_ADMIN_TOKEN"] == "${GATEWAY_ADMIN_TOKEN}"
-assert e["KUBECONFIG"] == "/agent/kubeconfig-dev.yaml:/agent/kubeconfig-prod.yaml", e["KUBECONFIG"]
-assert e["GIT_SSH_COMMAND"] == "ssh -i /agent/ssh_key -o IdentitiesOnly=yes"
+assert e["KUBECONFIG"] == "/state/.kube/dev.yaml:/state/.kube/prod.yaml", e["KUBECONFIG"]
+assert "GIT_SSH_COMMAND" not in e, e["GIT_SSH_COMMAND"]
 assert e["ANTHROPIC_AUTH_TOKEN"] == "${ANTHROPIC_AUTH_TOKEN}"
 assert p["platforms"][0]["options"]["allow_from"] == "ou_fixture_user"
 assert c["log"]["level"] == "info" and o["mode"] == "bypassPermissions"
@@ -1272,10 +1288,10 @@ stray="$(find "$im" -newer "$im/marker" -type f -not -path "$tgt/*" -not -path "
 [ -z "$stray" ] && [ ! -e "$im/fakehome" ] && ok "import writes nothing outside the target instance directory" || bad "import writes nothing outside the target instance directory" "$stray"
 icf="$tgt/docker-compose.yaml"
 grep -q 'image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}$' "$icf" \
-	&& grep -q '^      - ./kubeconfig-dev.yaml:/agent/kubeconfig-dev.yaml:ro$' "$icf" && grep -q '^      - ./kubeconfig-prod.yaml:/agent/kubeconfig-prod.yaml:ro$' "$icf" \
-	&& grep -q '^      - ./ssh_key:/agent/ssh_key:ro$' "$icf" && grep -q '^      - ./skills-lock.json:/agent/skills-lock.json:ro$' "$icf" \
-	&& ok "imported compose mounts every credential and the skill manifest relative to the instance directory" \
-	|| bad "imported compose mounts every credential and the skill manifest relative to the instance directory" "$(cat "$icf" 2>/dev/null)"
+	&& grep -q '^      - ./home:/agent/home:ro$' "$icf" && grep -q '^      - ./skills-lock.json:/agent/skills-lock.json:ro$' "$icf" \
+	&& [ "$(grep -c '/agent/' "$icf")" -eq 3 ] \
+	&& ok "imported compose mounts the home layer and the skill manifest, no per-file credential mount" \
+	|| bad "imported compose mounts the home layer and the skill manifest, no per-file credential mount" "$(cat "$icf" 2>/dev/null)"
 ! grep -q 'add under' "$im/import.out" && ok "import prints the plan only, no compose snippet to paste" || bad "import prints the plan only, no compose snippet to paste" ""
 check_instance_compose "import-instance" "$icf" srcops
 bash "$IMPORT" --local --home "$shome" --repo "$im/repo" import --host h1 --name srcops "$src" >/dev/null 2>&1; rc=$?
