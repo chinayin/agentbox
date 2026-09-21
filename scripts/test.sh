@@ -360,6 +360,11 @@ for config in (base, claude, pi):
 def lock_key(name):
     return name.removeprefix("core:")
 platforms_wanted = set(base["settings"]["lockfile_platforms"])
+# mise records url/checksum only for download backends (aqua, github, gitlab, http). pipx is a
+# language package installer: the lock pins its exact version and PyPI resolves the wheel at build
+# time, so those entries legitimately carry no platform block (mise-lock docs, "strict mode").
+# Keep this set to the backends actually declared; a new download backend must still lock urls.
+url_exempt_backends = ("pipx:",)
 for config, lock_name in ((base, "mise.lock"), (claude, "mise.claude.lock"), (pi, "mise.pi.lock")):
     lock = tomllib.loads((root / lock_name).read_text())
     assert lock["lockfile_version"] == 1
@@ -374,6 +379,8 @@ for config, lock_name in ((base, "mise.lock"), (claude, "mise.claude.lock"), (pi
                 for key, value in entry.items()
                 if key.startswith("platforms.")
             })
+        if tool_name.startswith(url_exempt_backends):
+            continue
         assert platforms_wanted <= platforms.keys(), tool_name
         for platform in platforms_wanted:
             assert platforms[platform].get("url"), (tool_name, platform)

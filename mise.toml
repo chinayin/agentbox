@@ -31,6 +31,11 @@ locked = true
 # Cloud CLIs (credentials come from mounts only)
 "aqua:aws/aws-cli" = "latest"
 "github:aliyun/aliyun-cli" = "latest"
+# Volcengine ships a Go binary named ve; the npm package would also drop skills into ~/.claude/skills.
+"github:volcengine/volcengine-cli" = "latest"
+# Tencent Cloud ships tccli only as a Python package (no release binaries since 2018): pipx via uv.
+# The lock pins its version but carries no url or checksum; PyPI resolves it at build time.
+"pipx:tccli" = "latest"
 "aqua:cloudflare/cloudflared" = "latest"
 
 # Code hosting CLIs

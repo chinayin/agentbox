@@ -302,6 +302,21 @@ checksum = "sha256:c004219c405e5be665e0b573378cf07f0182f2da7466a4c5a580a3c7162e7
 url = "https://github.com/databus23/helm-diff/releases/download/v3.15.13/helm-diff-linux-amd64.tgz"
 url_api = "https://api.github.com/repos/databus23/helm-diff/releases/assets/556544769"
 
+[[tools."github:volcengine/volcengine-cli"]]
+version = "1.1.10"
+backend = "github:volcengine/volcengine-cli"
+specifiers = ["latest"]
+
+[tools."github:volcengine/volcengine-cli"."platforms.linux-arm64"]
+checksum = "sha256:c35791865500f978fea6127073194ab62e6da91386831be3fedd92e2bdbcef4f"
+url = "https://github.com/volcengine/volcengine-cli/releases/download/v1.1.10/volcengine-cli_1.1.10_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/volcengine/volcengine-cli/releases/assets/565078979"
+
+[tools."github:volcengine/volcengine-cli"."platforms.linux-x64"]
+checksum = "sha256:054dd3ee69926866438750bfc28ca48233a78702e391255fc81cf8bc324dca6a"
+url = "https://github.com/volcengine/volcengine-cli/releases/download/v1.1.10/volcengine-cli_1.1.10_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/volcengine/volcengine-cli/releases/assets/565079054"
+
 [[tools."gitlab:gitlab-org/cli"]]
 version = "1.117.0"
 backend = "gitlab:gitlab-org/cli"
@@ -342,6 +357,11 @@ url = "https://nodejs.org/dist/v26.8.2/node-v26.8.2-linux-arm64.tar.gz"
 [tools.node."platforms.linux-x64"]
 checksum = "sha256:badb3fe6a61b85e1352ca6564dc56b8b7bd5ecd5c474c52acc21dd0cdd586f35"
 url = "https://nodejs.org/dist/v26.8.2/node-v26.8.2-linux-x64.tar.gz"
+
+[[tools."pipx:tccli"]]
+version = "3.1.170.1"
+backend = "pipx:tccli"
+specifiers = ["latest"]
 
 [[tools.python]]
 version = "3.14.7"

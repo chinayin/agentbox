@@ -24,6 +24,8 @@
 | helm | 仓库列表 `/state/.config/helm/repositories.yaml`；registry 登录 `/state/.config/helm/registry/config.json`；插件 `/opt/helm/plugins`（镜像内） | `HELM_CONFIG_HOME`（已设）、`HELM_REGISTRY_CONFIG` | 私有 chart 仓库凭据用 registry 登录文件挂 `/agent/helm-registry.json:ro` 并设 `HELM_REGISTRY_CONFIG` | S1 |
 | aws | `/state/.aws/{config,credentials}` | `AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`、`AWS_DEFAULT_REGION`、`AWS_PROFILE` | 环境变量 | S0/S1 |
 | aliyun | `/state/.aliyun/config.json` | `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`、`ALIBABA_CLOUD_REGION_ID` | 环境变量 | S0/S1 |
+| ve（火山引擎） | `/state/.volcengine/config.json`（路径不可改） | `VOLCENGINE_ACCESS_KEY`、`VOLCENGINE_SECRET_KEY`、`VOLCENGINE_REGION`、`VOLCENGINE_PROFILE`、`VOLCENGINE_DISABLE_DEFAULT_CREDENTIALS` | 环境变量；多账号时挂只读 profile 文件（[CLOUD_ACCOUNTS](CLOUD_ACCOUNTS.md)） | S0/S1 |
+| tccli（腾讯云） | `/state/.tccli/<profile>.configure`、`<profile>.credential` | `TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY`、`TENCENTCLOUD_REGION`、`TENCENTCLOUD_TOKEN`、`TCCLI_PROFILE`（优先级：命令行 > 文件 > 环境变量） | 环境变量；多账号时挂只读 profile 文件 | S0/S1 |
 | cloudflared | `/state/.cloudflared/`（cert、tunnel 凭据） | `TUNNEL_TOKEN` | 环境变量（tunnel token） | S1 |
 | npm | `/state/.npmrc` | `npm_config_registry`、`npm_config_disturl`（cn profile 已设）、`NPM_CONFIG_USERCONFIG` | 私有源 token：`.npmrc` 挂 `/agent/npmrc:ro`，`NPM_CONFIG_USERCONFIG=/agent/npmrc` | S1 |
 | go | 无家目录配置 | `GOPROXY`、`GOSUMDB`（profile 已设）、`GOPRIVATE`、`GONOSUMDB` | 私有模块走 `GOPRIVATE`，认证靠 git 的 SSH 身份 | S2 |

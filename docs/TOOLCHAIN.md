@@ -8,13 +8,13 @@
 |---|---|---|
 | 运行时 | node、go、python | `core:` |
 | Kubernetes 交付链 | kubectl、helm、helmfile、kustomize、helm-diff | `aqua:`，helm-diff 为 `github:` |
-| 云厂商 CLI | aws-cli、aliyun-cli、cloudflared | `aqua:`，aliyun-cli 为 `github:` |
+| 云厂商 CLI | aws-cli、aliyun-cli、volcengine-cli（`ve`）、tccli、cloudflared | `aqua:`，aliyun-cli 与 volcengine-cli 为 `github:`，tccli 为 `pipx:` |
 | 代码托管 CLI | gh、glab | `aqua:`，glab 为 `gitlab:` |
 | 通用工具 | ripgrep、fd、jq、uv、bats、shellcheck、yamlfmt、direnv、pnpm、betterleaks | `aqua:` |
 | 桥接器 | cc-connect | `github:` |
 | agent（每个一份覆盖层） | claude-code（`mise.claude.toml`）、pi（`mise.pi.toml`） | `aqua:` |
 
-清单以 `mise.toml` 与各 `mise.<agent>.toml` 为准，本表只说明分组。公共工具链里不出现任何 agent CLI，`test.sh` 盯着这一点。backend 取舍：`core:` 与 `aqua:` 优先，aqua registry 带资产定义与上游校验和；不在 registry 的才用 `github:` / `gitlab:`，mise 按 OS/架构自动挑资产，挑错了再用 `asset_pattern` 点名；包内二进制带版本号的加 `rename_exe`（cc-connect）。短名（`glab`、`claude-code`）只是 registry 别名，配置里一律写完整 backend。
+清单以 `mise.toml` 与各 `mise.<agent>.toml` 为准，本表只说明分组。公共工具链里不出现任何 agent CLI，`test.sh` 盯着这一点。backend 取舍：`core:` 与 `aqua:` 优先，aqua registry 带资产定义与上游校验和；不在 registry 的才用 `github:` / `gitlab:`，mise 按 OS/架构自动挑资产，挑错了再用 `asset_pattern` 点名；包内二进制带版本号的加 `rename_exe`（cc-connect）。只以 Python 包发行、没有二进制的工具才用 `pipx:`（目前只有 tccli，腾讯云 CLI 的 GitHub Release 停在 2018 年），mise 用工具链里的 uv 和 python 装进独立 venv；代价见 §3。短名（`glab`、`claude-code`）只是 registry 别名，配置里一律写完整 backend。
 
 ## 2. 版本策略
 
@@ -45,6 +45,8 @@ lock 由 mise 官方的 `mise lock` 生成，仓库只加了一层很薄的封�
 
 lock 的生成与校验完全是 mise 官方机制，仓库不加自己的步骤。`mise lock` 只在上游提供校验和时记录：aqua 的 `http` 与 `github_archive` 类型资产（aws-cli、bats-core）上游没有校验和，lock 里只有版本化 URL，下载一致性靠 TLS 与固定文件名。这是已知取舍，不要手工往 lock 里补 checksum。
 
+`pipx:` 条目更进一步：mise 把它归为「语言包安装器」，lock 只记精确版本，没有 URL 也没有 checksum，wheel 在构建时由 PyPI 解析，传递依赖不被锁定。`test.sh` 对 `pipx:` 前缀放过双平台 URL 断言，其余 backend 照旧。接受它是因为 tccli 没有别的官方发行形态；哪天上游出二进制就换回 `github:`。体积也要心里有数：2026-09-21 实测 tccli 的 venv 占 330 MB（腾讯云 SDK 把全部产品都打进一个包），是镜像里最大的单个工具。
+
 需要 mise ≥ `mise.toml` 的 `min_version`，mise 自己会检查。lock 以 CI（Linux）产出为准；mise 总会把当前平台也写进 lock，在 macOS 上跑会多出 `macos-arm64` 条目且之后一直保留，提交前删掉这些块，或加 `--platform linux-x64,linux-arm64` 只刷新 linux。brew 的 mise 通常版本不够：
 
 ```bash
@@ -58,7 +60,7 @@ lock 永远记上游 URL；构建机出网需要代理时用 docker 的 `HTTPS_P
 
 1. 在 [mise-versions.jdx.dev](https://mise-versions.jdx.dev/) 查 backend 全名，或 `mise registry <短名>`。
 2. 按 §1 的分组写进 `mise.toml`（agent CLI 进自己的 `mise.<agent>.toml`），选择器按 §2。不要同时用 apt 装同名包。
-3. `MISE=... make lock-refresh && make test`。审 lock diff：只多出这一个工具，两个平台都有 `url`（上游提供时还有 `checksum`）。改过声明方式时旧块不会自动删，手工删掉。
+3. `MISE=... make lock-refresh && make test`。审 lock diff：只多出这一个工具，两个平台都有 `url`（上游提供时还有 `checksum`；`pipx:` 例外，只有版本）。改过声明方式时旧块不会自动删，手工删掉。在 worktree 里跑时注意 mise 会向上找到主 checkout 的 `mise.toml` 而报 not trusted，把六个 mise 文件复制到临时目录里跑再拷回 lock 即可。
 4. `make check`，再用 remote-build 技能跑 `smoke`（`.claude/skills/remote-build/scripts/remote-build.sh smoke`）真实构建验证。smoke 按 lock 逐项核对安装，不需要为新工具改任何测试。
 
 ## 5. 构建与发布

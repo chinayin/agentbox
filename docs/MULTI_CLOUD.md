@@ -168,7 +168,8 @@ Claude Code 的 subagent 可以限制工具与 MCP，但**继承父进程全部�
 |---|---|---|---|---|
 | 阿里云 | `aliyun` 已在 `mise.toml` | `aliyun/alibabacloud-aiops-skills`（按产品分组，含 trouboper 等 playbook） | 托管 OpenAPI MCP，容器内用 `uvx alibabacloud.mcp-proxy` 走静态 AK | `aliyun utils mcp-proxy` 走 OAuth 交互登录，headless 容器用不了；`alibaba-cloud-ops-mcp-server` 自 2026-03 未更新 |
 | AWS | `aws` 已在 `mise.toml` | `aws/agent-toolkit-for-aws/skills`（observability、billing、iam、security、operations） | `awslabs/mcp` 的 `aws-api-mcp-server`，加 cloudwatch、cloudtrail、billing | `READ_OPERATIONS_ONLY` 起步，写操作再开 `REQUIRE_MUTATION_CONSENT` |
-| 火山引擎 | **`ve` 尚未入工具链**，加 `github:volcengine/volcengine-cli`，流程见 [TOOLCHAIN §4](TOOLCHAIN.md) | `volcengine/volcengine-skills` | `ve mcp` 原生，CLI 自身就是 MCP server；`volcengine/mcp-server` 按产品拆了 85 个 | `ve mcp` 没有 API 白名单，边界全靠 IAM；认 `VOLCENGINE_ACCESS_KEY`、`VOLCENGINE_SECRET_KEY`、`VOLCENGINE_REGION` |
+| 腾讯云 | `tccli` 已在 `mise.toml`（`pipx:`，纯 Python 包，无二进制发行） | 未调研 | `tccli` 无原生 MCP | 认 `TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY`、`TENCENTCLOUD_REGION`；profile 选择时环境变量优先级最低，命令必带 `--profile` |
+| 火山引擎 | `ve` 已在 `mise.toml`（`github:volcengine/volcengine-cli`）。不要用 npm 包装：它的 postinstall 会往 `~/.claude/skills` 自动写火山 skills，绕开 [SKILLS](SKILLS.md) 的清单机制 | `volcengine/volcengine-skills` | `ve mcp` 原生，CLI 自身就是 MCP server；`volcengine/mcp-server` 按产品拆了 85 个 | `ve mcp` 没有 API 白名单，边界全靠 IAM；认 `VOLCENGINE_ACCESS_KEY`、`VOLCENGINE_SECRET_KEY`、`VOLCENGINE_REGION` |
 
 凭据规则三家一致，都落在 [TOOLS](TOOLS.md) 现有的两条通道里：每个专才一个独立 RAM/IAM 身份、只读起步、STS 短期凭据优先、写操作过人工审批、审计靠 CloudTrail/ActionTrail。一家云有多个账号时（阿里云两个、AWS 三个这种），账号不再拆 bot，而是做成带别名的 profile，别名名册、AssumeRole 角色与防误动账号的强制层见 [CLOUD_ACCOUNTS](CLOUD_ACCOUNTS.md)。主 bot 的托管层 `managed-settings.json` 拒绝一切云 CLI，它本来没有凭据，这是双保险。
 

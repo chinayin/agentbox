@@ -44,7 +44,7 @@ RUN set -eu; \
     plugin_yaml="$(find "$(mise where github:databus23/helm-diff)" -maxdepth 2 -name plugin.yaml)"; \
     [ -n "${plugin_yaml}" ] || { echo "error: plugin.yaml not found in helm-diff install" >&2; exit 1; }; \
     ln -s "$(dirname "${plugin_yaml}")" /opt/helm/plugins/diff; \
-    rm -rf /tmp/mise-cache /root/.local/share/mise /root/.local/state/mise /root/.config/mise
+    rm -rf /tmp/mise-cache /root/.local/share/mise /root/.local/state/mise /root/.config/mise /root/.cache/uv
 
 # ---- stage 2: runtime base: user, mounts, entrypoint; no agent CLI (not published) -----------
 FROM toolchain AS agentbox
