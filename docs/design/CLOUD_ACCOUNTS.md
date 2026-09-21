@@ -31,7 +31,7 @@ aws-uufly-prod       aws-uufly-dev        aws-data-prod
 volc-media-prod
 ```
 
-名册是唯一真相，一份 YAML，进部署仓库，`:ro` 挂到每个专才与主 bot 的 `/agent/accounts.yaml`：
+名册是唯一真相，一份 YAML，进部署仓库，放在每个专才与主 bot 实例目录的 `home/accounts.yaml`，随 home 层复制到容器内 `~/accounts.yaml`（[CREDENTIALS](../CREDENTIALS.md) §2）：
 
 ```yaml
 # accounts.yaml: the single source for aliases. Everything else (profile files,
@@ -62,7 +62,7 @@ volc-media-prod
 | 产物 | 给谁 | 内容 |
 |---|---|---|
 | `home/.aws/config` | AWS 专才 | 每个别名一个 `[profile <alias>]`，只有 `role_arn`、`source_profile`、`role_session_name`、`region`，没有 `[default]` |
-| `home/.aliyun/config.json`、`home/.volcengine/config.json` | 阿里云、火山专才 | 每个别名一个 profile，模式为角色扮演。都是实例目录 `home/` 里的文件，entrypoint 启动时复制进 `/state`（[CREDENTIALS](../CREDENTIALS.md) §1），不再 `:ro` 直挂 `/state/.aliyun` 这类路径 |
+| `home/.aliyun/config.json`、`home/.volcengine/config.json` | 阿里云、火山专才 | 每个别名一个 profile，模式为角色扮演。都是实例目录 `home/` 里的文件，entrypoint 启动时复制进 `/state`（[CREDENTIALS](../CREDENTIALS.md) §2），不再 `:ro` 直挂 `/state/.aliyun` 这类路径 |
 | 名册摘要 | 主 bot | 别名、显示名、环境、owner，不含任何 ARN |
 | 钩子白名单 | 托管层 | 每个专才允许出现的别名列表 |
 
@@ -87,7 +87,8 @@ volc-media-prod
 
 三个落地细节：
 
-- **阿里云没有配置路径的环境变量**：渲染产物放 `home/.aliyun/config.json`，entrypoint 启动时复制进 `/state/.aliyun/`（[CREDENTIALS](../CREDENTIALS.md) §1 的家目录声明层）。阿里云 CLI 会把续期后的 STS 令牌写回 `config.json`（源码判定，`config/profile.go`），复制件可写所以续期不受影响，下次启动又回到声明值；未实测。
+- **阿里云 3.5.0 起 `current` 必须指向文件里存在的 profile**，否则连 `aliyun version` 都拒绝（devops-agent 实测，3.4.10 不检查）。「无默认账号」写成 `current` 指向一个空 AK 的哨兵 profile `none`：不带 `--profile` 报凭据未配置，带则正常。`verify-profiles.sh` 在部署前检查这一点。
+- **阿里云没有配置路径的环境变量**：渲染产物放 `home/.aliyun/config.json`，entrypoint 启动时复制进 `/state/.aliyun/`（[CREDENTIALS](../CREDENTIALS.md) §2 的家目录声明层）。阿里云 CLI 会把续期后的 STS 令牌写回 `config.json`（源码判定，`config/profile.go`），复制件可写所以续期不受影响，下次启动又回到声明值；未实测。
 - **火山不能改路径**，同样放 `home/.volcengine/config.json`；`ve configure set` 会把 `current` 切到刚配的 profile，渲染时最后一步要把 `current` 置回无效值。
 - **AWS 的 STS 缓存**在 `~/.aws/cli/cache`，落在 `/state`，可写，无事。
 - 做不到跨账号角色（比如账号不在同一组织且对方不肯建角色）时退化为每个别名一份静态 AK，仍然写进同一份 profile 文件、仍然按别名调用，只是长期密钥变多、审计里看不到 session name。IAM Identity Center / SSO 登录需要人在浏览器操作，不适合无人值守容器（文档）。

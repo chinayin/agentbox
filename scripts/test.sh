@@ -1357,11 +1357,12 @@ grep -q '^  workflow_call:' "$ROOT/.github/workflows/ci.yml" \
 
 group "verify-profiles"
 
-# Deploy-time check of an instance's cloud profiles against its accounts.yaml (docs/design/CLOUD_ACCOUNTS.md).
+# Deploy-time check of an instance's cloud profiles (home/, laid out like ~) against its home/accounts.yaml
+# (docs/design/CLOUD_ACCOUNTS.md).
 # Fixture: a fake deploy repo plus stub CLIs, so the test needs no network and no real keys.
 VP="$ROOT/.claude/skills/deploy/scripts/verify-profiles.sh"
-vp="$TMP/vp"; mkdir -p "$vp/bin" "$vp/hosts/h/instances/i/profiles/aws" "$vp/hosts/h/instances/i/profiles/aliyun" "$vp/hosts/h/instances/i/profiles/tccli"
-cat > "$vp/hosts/h/instances/i/profiles/aws/config" <<'INI'
+vp="$TMP/vp"; mkdir -p "$vp/bin" "$vp/hosts/h/instances/i/home/.aws" "$vp/hosts/h/instances/i/home/.aliyun" "$vp/hosts/h/instances/i/home/.tccli"
+cat > "$vp/hosts/h/instances/i/home/.aws/config" <<'INI'
 [profile good]
 aws_access_key_id = AKIAFIXTURE
 aws_secret_access_key = fixture
@@ -1372,24 +1373,24 @@ aws_secret_access_key = fixture
 aws_access_key_id = AKIAFIXTURE3
 aws_secret_access_key = fixture
 INI
-cat > "$vp/hosts/h/instances/i/profiles/aliyun/config.json" <<'JSON'
-{"current": "none", "profiles": [{"name": "ali-good", "mode": "AK", "access_key_id": "LTAIFIXTURE", "access_key_secret": "x", "region_id": "cn-hangzhou"}], "meta_path": ""}
+cat > "$vp/hosts/h/instances/i/home/.aliyun/config.json" <<'JSON'
+{"current": "none", "profiles": [{"name": "ali-good", "mode": "AK", "access_key_id": "LTAIFIXTURE", "access_key_secret": "x", "region_id": "cn-hangzhou"}, {"name": "none", "mode": "AK", "access_key_id": "", "access_key_secret": ""}], "meta_path": ""}
 JSON
-echo '{"secretId": "x", "secretKey": "y"}' > "$vp/hosts/h/instances/i/profiles/tccli/qc.credential"
+echo '{"secretId": "x", "secretKey": "y"}' > "$vp/hosts/h/instances/i/home/.tccli/qc.credential"
 # Stub CLIs answer from the profile name; aws also proves it was pointed at the INSTANCE file.
 cat > "$vp/bin/aws" <<'SH'
 #!/usr/bin/env bash
-case "${AWS_CONFIG_FILE:-}" in */instances/i/profiles/aws/config) ;; *) echo nocfg; exit 0 ;; esac
+case "${AWS_CONFIG_FILE:-}" in */instances/i/home/.aws/config) ;; *) echo nocfg; exit 0 ;; esac
 for a in "$@"; do [ "$prev" = "--profile" ] && p="$a"; prev="$a"; done
 case "$p" in good) echo 111111111111 ;; wrongkey) echo 999999999999 ;; *) exit 1 ;; esac
 SH
 cat > "$vp/bin/aliyun" <<'SH'
 #!/usr/bin/env bash
 for a in "$@"; do [ "$prev" = "--config-path" ] && c="$a"; prev="$a"; done
-case "$c" in */instances/i/profiles/aliyun/config.json) echo '{"AccountId":"2222"}' ;; *) echo '{"AccountId":"operator-home"}' ;; esac
+case "$c" in */instances/i/home/.aliyun/config.json) echo '{"AccountId":"2222"}' ;; *) echo '{"AccountId":"operator-home"}' ;; esac
 SH
 chmod +x "$vp/bin/aws" "$vp/bin/aliyun"
-cat > "$vp/hosts/h/instances/i/profiles/accounts.yaml" <<'YAML'
+cat > "$vp/hosts/h/instances/i/home/accounts.yaml" <<'YAML'
 - profile: good
   cloud: aws
   account_id: "111111111111"
@@ -1421,9 +1422,16 @@ grep -q '^aliyun ali-missing 3333 - FAIL$' "$vp/out" && grep -q 'ali-missing: no
 grep -q '^qcloud qc 4444 - SKIP$' "$vp/out" && ok "a missing CLI gives SKIP, never PASS" || bad "a missing CLI gives SKIP, never PASS" "$(cat "$vp/out")"
 ! grep -q 'commented-out' "$vp/out" && ok "commented-out registry entries are ignored" || bad "commented-out registry entries are ignored" "$(cat "$vp/out")"
 grep -q 'aws profile unlisted exists in the file but not in the registry' "$vp/err" && ok "a file profile missing from the registry is warned about" || bad "a file profile missing from the registry is warned about" "$(cat "$vp/err")"
+! grep -q 'aliyun profile none exists' "$vp/err" && ! grep -q 'aliyun current profile' "$vp/err" \
+	&& ok "an empty-key aliyun sentinel as current is neither dead weight nor an error" || bad "an empty-key aliyun sentinel as current is neither dead weight nor an error" "$(cat "$vp/err")"
+# aliyun 3.5.0 refuses every command when current names no profile; catch it before deploy.
+sed -i.bak 's/"current": "none"/"current": "nobody"/' "$vp/hosts/h/instances/i/home/.aliyun/config.json" && rm -f "$vp/hosts/h/instances/i/home/.aliyun/config.json.bak"
+PATH="$vp_path" bash "$VP" --repo "$vp" h i > /dev/null 2> "$vp/err3"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'aliyun current profile nobody does not exist' "$vp/err3" \
+	&& ok "an aliyun current that names no profile is a FAIL" || bad "an aliyun current that names no profile is a FAIL" "rc=$rc $(cat "$vp/err3")"
 ! grep -q 'nocfg\|operator-home' "$vp/out" && ok "stub CLIs were pointed at the instance files" || bad "stub CLIs were pointed at the instance files" "$(cat "$vp/out")"
 PATH="$vp_path" bash "$VP" --repo "$vp" h nope > /dev/null 2> "$vp/err2"; rc=$?
-[ "$rc" -eq 2 ] && grep -q '^Error: profiles directory not found' "$vp/err2" && ok "a missing profiles directory is a precondition failure (exit 2)" || bad "a missing profiles directory is a precondition failure (exit 2)" "rc=$rc $(cat "$vp/err2")"
+[ "$rc" -eq 2 ] && grep -q '^Error: home directory not found' "$vp/err2" && ok "a missing home directory is a precondition failure (exit 2)" || bad "a missing home directory is a precondition failure (exit 2)" "rc=$rc $(cat "$vp/err2")"
 bash "$VP" h > /dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "verify-profiles without <instance> is a usage error" || bad "verify-profiles without <instance> is a usage error" "rc=$rc"
 

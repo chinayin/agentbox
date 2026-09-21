@@ -29,7 +29,7 @@
 | **文件型**（工具按家目录默认路径读） | `instances/<name>/home/`，照 `~` 的结构摆 | rsync 0600 → `:ro` 挂 `/agent/home` → entrypoint 每次启动复制进 `/state`（即 `~`） | 声明的文件赢；没声明的（`known_hosts`、会话、缓存）不动；进容器一律文件 `0600`、目录 `0700`。compose 永远只有 `./home:/agent/home:ro` 一行，不需要 `KUBECONFIG`、`GIT_SSH_COMMAND` 这类指路变量 |
 | **agent 要改写的文件**（如仓库 gitignored 的 `secrets/`） | `instances/<name>/workspace-init/` | rsync `--ignore-existing` 直接进服务器工作区 | 不进服务器的 `instances/` 镜像，服务器上只有工作区一份；仓库那份是备份不是同步源 |
 
-优先环境变量型。文件型只用于工具不认环境变量的场景：kubeconfig、SSH 私钥与 `.ssh/config`、路径不可改的云 CLI 配置目录。`~` 下哪个是文件哪个是目录由工具决定，`home/` 只是照抄：`.ssh/` 是目录，里面 `config` 加 N 把私钥；`.kube/config` 是一个文件。文件型凭据不再以 `/agent/<文件>:ro` 单挂，`/agent/` 下只有 `config.toml`、`skills-lock.json`、`home`。
+优先环境变量型。文件型只用于工具不认环境变量的场景：kubeconfig、SSH 私钥与 `.ssh/config`、路径不可改的云 CLI 配置目录。`~` 下哪个是文件哪个是目录由工具决定，`home/` 只是照抄：`.ssh/` 是目录，里面 `config` 加 N 把私钥；`.kube/config` 是一个文件。文件型凭据不再以 `/agent/<文件>:ro` 单挂，`/agent/` 下只有 `config.toml`、`skills-lock.json`、`home`。agent 只读不改、由运维维护的非凭据声明文件（如云账号名册 `accounts.yaml`）也放 `home/`，落到 `~/accounts.yaml`：同一条复制链路，改了重启即生效，不用再加挂载。
 
 为什么是复制而不是直接挂宿主目录：只读挂则工具写不了 `known_hosts` 和回写的令牌，可写挂则配置没有真相。`home/` 是声明层，`/state` 是运行层。工具自己回写到同名文件的改动（`aws configure`、`gh auth`）重启即被覆盖。
 

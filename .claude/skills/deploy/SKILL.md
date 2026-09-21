@@ -35,10 +35,11 @@ wall clock their cron schedules run on, and every instance there inherits both.
 .claude/skills/deploy/scripts/verify-profiles.sh <host> <instance>
 ```
 
-- `verify-profiles.sh` is for an instance that carries cloud profile files under
-  `instances/<name>/profiles/` with an `accounts.yaml` registry (`docs/design/CLOUD_ACCOUNTS.md`). It runs
-  each cloud CLI locally against the instance's own files, never the operator's `~/.aws` or
-  `~/.aliyun`, and asserts that GetCallerIdentity returns the registered `account_id`. Run it before
+- `verify-profiles.sh` is for any instance whose `home/` carries cloud profile files
+  (`home/.aws/config`, `home/.aliyun/config.json`, `home/.tccli/`, `home/.volcengine/config.json`)
+  plus an `accounts.yaml` registry next to them (`docs/design/CLOUD_ACCOUNTS.md`). It runs each
+  cloud CLI locally against the instance's own files, never the operator's `~/.aws` or `~/.aliyun`,
+  and asserts that GetCallerIdentity returns the registered `account_id`. Run it before
   `deploy` whenever a profile file or the registry changed; a FAIL means the bot would act on a
   different account than the one people name in chat. A CLI missing on this machine gives SKIP,
   not PASS. Exit 1 on any FAIL, 2 when the registry or files are absent.

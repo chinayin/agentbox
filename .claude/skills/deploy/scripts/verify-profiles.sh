@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Verify an instance's cloud profile files against its account registry before deploying.
-# For every entry in instances/<name>/profiles/accounts.yaml it runs the cloud CLI locally with
-# the INSTANCE's profile files (never the operator's own ~/.aws or ~/.aliyun) and asserts that
+# For every entry in instances/<name>/home/accounts.yaml it runs the cloud CLI locally with the
+# INSTANCE's home layer (home/.aws/config, home/.aliyun/config.json, home/.tccli/, home/.volcengine/,
+# never the operator's own ~/.aws or ~/.aliyun) and asserts that
 # GetCallerIdentity returns the registered account_id. Moves the "am I on the right account"
 # check from the agent's runtime prompt to deploy time (docs/design/CLOUD_ACCOUNTS.md).
 # stdout: one line per profile "<cloud> <profile> <expected> <actual> PASS|FAIL|SKIP".
@@ -22,8 +23,8 @@ usage() {
 	cat <<'USAGE'
 Usage: verify-profiles.sh [options] <host> <instance>
 
-Check every profile listed in hosts/<host>/instances/<instance>/profiles/accounts.yaml: the profile
-must exist in that cloud's config file under profiles/, and GetCallerIdentity run with that file
+Check every profile listed in hosts/<host>/instances/<instance>/home/accounts.yaml: the profile
+must exist in that cloud's config file under home/ (laid out like ~), and GetCallerIdentity run with that file
 must return the registered account_id. Result lines go to stdout, messages to stderr.
 
 Options:
@@ -52,9 +53,9 @@ done
 [ -n "${HOST}" ] && [ -n "${INSTANCE}" ] || { usage >&2; die "<host> and <instance> are required"; }
 [ -n "${REPO}" ] || die "deploy repo not set: pass --repo or export AGENTBOX_DEPLOY_REPO"
 
-DIR="${REPO}/hosts/${HOST}/instances/${INSTANCE}/profiles"
+DIR="${REPO}/hosts/${HOST}/instances/${INSTANCE}/home"
 REG="${DIR}/accounts.yaml"
-[ -d "${DIR}" ] || { echo "Error: profiles directory not found: ${DIR}" >&2; exit 2; }
+[ -d "${DIR}" ] || { echo "Error: home directory not found: ${DIR}" >&2; exit 2; }
 [ -f "${REG}" ] || { echo "Error: registry not found: ${REG}" >&2; exit 2; }
 command -v python3 >/dev/null || { echo "Error: python3 is required to read the registry" >&2; exit 2; }
 
@@ -85,20 +86,21 @@ PY
 )" || { echo "Error: could not parse ${REG}" >&2; exit 2; }
 [ -n "${entries}" ] || { echo "Error: registry has no entries: ${REG}" >&2; exit 2; }
 
-# tccli and ve only read their config from HOME, so give them a throwaway HOME whose dotdir points
-# at the instance's files. The operator's own profiles are never consulted.
+# tccli and ve only read their config from HOME. The instance's home/ is laid out like ~, but the
+# CLIs may write next to their config, so point a throwaway HOME's dotdirs at the instance's files
+# instead of using home/ itself. The operator's own profiles are never consulted.
 FAKE_HOME="$(mktemp -d)"
 trap 'rm -rf "${FAKE_HOME}"' EXIT
-[ -d "${DIR}/tccli" ] && ln -s "${DIR}/tccli" "${FAKE_HOME}/.tccli"
-[ -d "${DIR}/volc" ] && ln -s "${DIR}/volc" "${FAKE_HOME}/.volcengine"
+[ -d "${DIR}/.tccli" ] && ln -s "${DIR}/.tccli" "${FAKE_HOME}/.tccli"
+[ -d "${DIR}/.volcengine" ] && ln -s "${DIR}/.volcengine" "${FAKE_HOME}/.volcengine"
 
 # profile_in_file <cloud> <profile>: 0 if the profile exists in that cloud's config file
 profile_in_file() {
 	case "$1" in
-		aws)    grep -qE "^\[profile[[:space:]]+$2\][[:space:]]*$" "${DIR}/aws/config" 2>/dev/null ;;
-		aliyun) python3 -c 'import json,sys; sys.exit(0 if any(p.get("name")==sys.argv[2] for p in json.load(open(sys.argv[1]))["profiles"]) else 1)' "${DIR}/aliyun/config.json" "$2" 2>/dev/null ;;
-		qcloud) [ -f "${DIR}/tccli/$2.credential" ] ;;
-		volc)   python3 -c 'import json,sys; sys.exit(0 if sys.argv[2] in json.load(open(sys.argv[1]))["profiles"] else 1)' "${DIR}/volc/config.json" "$2" 2>/dev/null ;;
+		aws)    grep -qE "^\[profile[[:space:]]+$2\][[:space:]]*$" "${DIR}/.aws/config" 2>/dev/null ;;
+		aliyun) python3 -c 'import json,sys; sys.exit(0 if any(p.get("name")==sys.argv[2] for p in json.load(open(sys.argv[1]))["profiles"]) else 1)' "${DIR}/.aliyun/config.json" "$2" 2>/dev/null ;;
+		qcloud) [ -f "${DIR}/.tccli/$2.credential" ] ;;
+		volc)   python3 -c 'import json,sys; sys.exit(0 if sys.argv[2] in json.load(open(sys.argv[1]))["profiles"] else 1)' "${DIR}/.volcengine/config.json" "$2" 2>/dev/null ;;
 		*)      return 1 ;;
 	esac
 }
@@ -107,12 +109,12 @@ profile_in_file() {
 caller_account() {
 	case "$1" in
 		aws)
-			vlog "aws sts get-caller-identity --profile $2 (AWS_CONFIG_FILE=${DIR}/aws/config)"
-			AWS_CONFIG_FILE="${DIR}/aws/config" AWS_SHARED_CREDENTIALS_FILE="${DIR}/aws/config" AWS_EC2_METADATA_DISABLED=true \
+			vlog "aws sts get-caller-identity --profile $2 (AWS_CONFIG_FILE=${DIR}/.aws/config)"
+			AWS_CONFIG_FILE="${DIR}/.aws/config" AWS_SHARED_CREDENTIALS_FILE="${DIR}/.aws/config" AWS_EC2_METADATA_DISABLED=true \
 				aws sts get-caller-identity --profile "$2" --query Account --output text 2>/dev/null ;;
 		aliyun)
-			vlog "aliyun sts GetCallerIdentity --profile $2 --config-path ${DIR}/aliyun/config.json"
-			aliyun sts GetCallerIdentity --profile "$2" --config-path "${DIR}/aliyun/config.json" 2>/dev/null \
+			vlog "aliyun sts GetCallerIdentity --profile $2 --config-path ${DIR}/.aliyun/config.json"
+			aliyun sts GetCallerIdentity --profile "$2" --config-path "${DIR}/.aliyun/config.json" 2>/dev/null \
 				| python3 -c 'import json,sys; print(json.load(sys.stdin).get("AccountId",""))' 2>/dev/null ;;
 		qcloud)
 			vlog "tccli sts GetCallerIdentity --profile $2 (HOME=${FAKE_HOME})"
@@ -162,15 +164,24 @@ done <<< "${entries}"
 
 # Profiles present in a file but absent from the registry are not errors (the bot cannot name
 # them anyway), but the operator should know they are dead weight.
-if [ -f "${DIR}/aws/config" ]; then
+if [ -f "${DIR}/.aws/config" ]; then
 	while read -r p; do
 		grep -qE "^- +profile: +${p}( |$)" "${REG}" || warn "aws profile ${p} exists in the file but not in the registry"
-	done < <(sed -nE 's/^\[profile[[:space:]]+([^]]+)\][[:space:]]*$/\1/p' "${DIR}/aws/config")
+	done < <(sed -nE 's/^\[profile[[:space:]]+([^]]+)\][[:space:]]*$/\1/p' "${DIR}/.aws/config")
 fi
-if [ -f "${DIR}/aliyun/config.json" ]; then
+# Profiles with an empty access_key_id are sentinels, not dead weight: see the `current` check below.
+if [ -f "${DIR}/.aliyun/config.json" ]; then
 	while read -r p; do
 		grep -qE "^- +profile: +${p}( |$)" "${REG}" || warn "aliyun profile ${p} exists in the file but not in the registry"
-	done < <(python3 -c 'import json,sys; [print(p.get("name","")) for p in json.load(open(sys.argv[1]))["profiles"]]' "${DIR}/aliyun/config.json")
+	done < <(python3 -c 'import json,sys; [print(p.get("name","")) for p in json.load(open(sys.argv[1]))["profiles"] if p.get("access_key_id")]' "${DIR}/.aliyun/config.json")
+	# aliyun 3.5.0 loads `current` before parsing --profile and refuses every command when it names
+	# no profile (seen on devops-agent 2026-09-21). "No default account" is therefore spelled as
+	# current pointing at a profile with empty keys, never as an unknown name.
+	cur="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); c=d.get("current",""); print("ok" if any(p.get("name")==c for p in d["profiles"]) else c or "<empty>")' "${DIR}/.aliyun/config.json" 2>/dev/null || echo "<unreadable>")"
+	if [ "${cur}" != ok ]; then
+		warn "aliyun current profile ${cur} does not exist in the file; aliyun 3.5.0 refuses every command, point current at a profile with empty keys"
+		fail=$((fail + 1))
+	fi
 fi
 
 [ "${skip}" -eq 0 ] || warn "${skip} profile(s) skipped because the CLI is missing locally"
