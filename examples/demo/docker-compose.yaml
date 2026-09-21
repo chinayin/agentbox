@@ -26,7 +26,7 @@ services:
       - cache:/cache
       # Optional mounts, see the mount contract table in README:
       # - ./home:/agent/home:ro
-      # - ./skill-lock.json:/agent/skill-lock.json:ro
+      # - ./skills-lock.json:/agent/skills-lock.json:ro
       # - ./claude:/etc/claude-code:ro
 
 volumes:

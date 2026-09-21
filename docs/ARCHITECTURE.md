@@ -61,11 +61,16 @@ Go 系工具认 CIDR，curl 不认。内网目标既写 CIDR 又单列精确 IP�
 
 agent 会自己拼代理行，靠两层挡：`config.toml` 的 `[projects.agent.options.env]` 固化 `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`，系统提示里写明"代理已配置，勿自创"。不要放 `/etc/environment`，agent 不是登录会话读不到，且会波及宿主其他服务。
 
-## 6. entrypoint 只做两件事
+## 6. entrypoint：把挂载投影成运行环境，然后 exec 桥接器
 
-检查实例挂载，然后 exec 桥接器。不重启、不守护（那是编排器的事），不写任何 `:ro` 路径，前置检查失败 `exit 2` 且一次性列全缺什么。
+顺序固定四步，全部只读 `:ro` 路径、只写 `/state`，之后 `exec cc-connect`。不重启、不守护（那是编排器的事）。
 
-检查只有三项，都是 cc-connect 管不到或报不清的：配置文件挂了没、HOME 可写吗、配置里引用的 `${占位符}` 都有值吗。缺环境变量原本的表现是桥接器循环重启刷 `app_id and app_secret are required`，启动前列清楚便宜得多。配置结构本身的对错不在这里复刻 cc-connect 的 schema，让它自己报；工具装没装由 smoke 按 lock 逐项验，运行期不再查。镜像里只有这一个脚本，`/entrypoint.sh`。
+1. **profile 默认值**：`AGENTBOX_PROFILE=cn` 时逐行导出 `/etc/agentbox/profiles/cn.env`，只填未设置的变量（[CN_MIRRORS](CN_MIRRORS.md)）。
+2. **前置检查**，失败 `exit 2` 且一次性列全。只有三项，都是 cc-connect 管不到或报不清的：配置文件挂了没、HOME 可写吗、配置里引用的 `${占位符}` 都有值吗。缺环境变量原本的表现是桥接器循环重启刷 `app_id and app_secret are required`，启动前列清楚便宜得多。配置结构本身的对错不在这里复刻 cc-connect 的 schema，让它自己报；工具装没装由 smoke 按 lock 逐项验，运行期不再查。
+3. **home 层投影**：`/agent/home` 存在时把它复制进 `/state`，文件 `0600`、目录 `0700`，声明的文件赢、其余不动（§2）。
+4. **按清单装技能**：`/agent/skills-lock.json` 里列的、`/state` 里还没有的，用 `npx skills add` 装进去。这一步任何失败都只 `Warning:`，并留 `/state/.agents/.agentbox-skills-missing` 标记，技能装不上 agent 也要能收消息（[SKILLS](SKILLS.md) §3a）。
+
+第一个参数不以 `-` 开头时是命令模式：跳过以上全部直接 `exec`，给调试用。镜像里只有这一个脚本，`/entrypoint.sh`。
 
 ## 7. 明确不做
 

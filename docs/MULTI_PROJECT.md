@@ -103,8 +103,10 @@ docker network create agentbox
 deploy:
   resources:
     limits:
-      pids: ${AGENT_PIDS_LIMIT}
+      pids: 512
 ```
+
+实例模板（`examples/demo/docker-compose.yaml`）写死 512，`deploy plan` 按字面断言这一行；只有本地开发用的根目录 compose 才通过 `AGENT_PIDS_LIMIT` 取值。
 
 agent 频繁 fork，失控的 fork 循环拖垮的是宿主而不只是容器，所以 pids 不能省。它必须写在 `deploy.resources.limits` 下：Compose v5 不接受 `pids_limit` 与它并存**且取值不同**（取值相同时并存是允许的）。
 

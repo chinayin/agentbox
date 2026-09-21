@@ -39,7 +39,7 @@ services:
       # - ${TOOLKIT_DIR:-./runtime/toolkit}:/opt/toolkit:ro
       # - ./examples/demo/skills-lock.json:/agent/skills-lock.json:ro
       # - ./examples/demo/claude:/etc/claude-code:ro
-      # - ./examples/demo/kubeconfig:/agent/kubeconfig:ro
+      # - ./examples/demo/home:/agent/home:ro
       # - ${WORKSPACES_ROOT:-./runtime/workspaces}/other:/refs/other:ro
 
   # Real instances (aliyun included) are not run from this file: they live in the private deploy

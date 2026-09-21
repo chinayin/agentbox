@@ -19,7 +19,7 @@ docker compose up -d
 
 | 容器内路径 | 模式 | 内容 | 必需 |
 |---|---|---|---|
-| `/agent/config.toml` | ro | 实例声明，只含 `${占位符}`，可进 git。`/agent/` 下可再挂文件型凭据 | 是 |
+| `/agent/config.toml` | ro | 实例声明，只含 `${占位符}`，可进 git | 是 |
 | `/agent/skills-lock.json` | ro | 技能清单（`npx skills add` 生成的 lock，原样用），列出的技能首次启动时装进 `/state`，见 [SKILLS](docs/SKILLS.md) | 否 |
 | `/agent/home` | ro | 家目录声明层：目录结构照 `~` 摆（`.ssh/config`、`.ssh/<key>`、`.kube/config`……），每次启动复制进 `/state`，声明的文件赢、其余不动，见 [TOOLS](docs/TOOLS.md) §1 | 否 |
 | `/workspace` | rw | 工作区，宿主目录 bind mount | 是 |

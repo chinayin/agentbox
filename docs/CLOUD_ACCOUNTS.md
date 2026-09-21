@@ -59,8 +59,8 @@ volc-media-prod
 
 | 产物 | 给谁 | 内容 |
 |---|---|---|
-| `aws-config` | AWS 专才 | 每个别名一个 `[profile <alias>]`，只有 `role_arn`、`source_profile`、`role_session_name`、`region`，没有 `[default]` |
-| `aliyun-config.json`、`volc-config.json` | 阿里云、火山专才 | 每个别名一个 profile，模式为角色扮演 |
+| `home/.aws/config` | AWS 专才 | 每个别名一个 `[profile <alias>]`，只有 `role_arn`、`source_profile`、`role_session_name`、`region`，没有 `[default]` |
+| `home/.aliyun/config.json`、`home/.volcengine/config.json` | 阿里云、火山专才 | 每个别名一个 profile，模式为角色扮演。都是实例目录 `home/` 里的文件，entrypoint 启动时复制进 `/state`（[TOOLS](TOOLS.md) §1），不再 `:ro` 直挂 `/state/.aliyun` 这类路径 |
 | 名册摘要 | 主 bot | 别名、显示名、环境、owner，不含任何 ARN |
 | 钩子白名单 | 托管层 | 每个专才允许出现的别名列表 |
 
