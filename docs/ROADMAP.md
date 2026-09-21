@@ -6,7 +6,7 @@
 
 | # | 事项 | 现状 | 验收 |
 |---|---|---|---|
-| 1 | `linux/arm64` 镜像在 arm64 上跑通 | 发布关闭（原因见 DECISIONS 2026-09-09）。`v0.3.0` 含 arm64 层但从未运行过 | Apple Silicon 上 `docker run ghcr.io/<repo>:0.3.0 --version` 成功；重开发布需先有真实 arm64 部署目标 |
+| 1 | `linux/arm64` 镜像在 arm64 上跑通 | 发布关闭（原因见 DECISIONS 2026-09-09）。GHCR 上现存镜像只有 0.7.1，amd64-only；含 arm64 层的旧镜像已随 2026-09-22 的清理删除 | 有真实 arm64 部署目标后重开发布，Apple Silicon 上 `docker run ghcr.io/<repo>:<tag> --version` 成功 |
 | 2 | `relay send --data-dir` 跨容器 | 源码判定不可行（DECISIONS 2026-09-13），未实测 | 两容器实验确认 `target engine not found` 后，把 `INSTANCES.md` §3 的「未实测」去掉 |
 | 2a | 多云 relay 拓扑（一容器多 project）真机验证 | multicloud 已按「一 bot + 四 subagent」形态上线（DECISIONS 2026-09-21），不走 relay；`docs/design/MULTI_CLOUD.md` §3 的 relay 语义仍全部基于源码判定 | 只在有人需要单独 @ 某家云的 bot 时再做：同容器两个 project，主 bot 对跨两家云的问题至少 relay 一次并汇总回人 |
 | 2b | 飞书 `include_bot` 权限与 cc-connect 放行 bot @ 消息 | `docs/design/MULTI_CLOUD.md` §4，租户能否申请该范围未确认，cc-connect 接收路径未真机跑过 | 两个测试应用互 @ 一次双方会话都收到；`mention_map` 出站 @ 能触发对方事件 |
