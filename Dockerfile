@@ -65,6 +65,9 @@ COPY etc/ /etc/
 RUN printf '%s\n' "${AGENTBOX_VERSION}" > /etc/agentbox/version
 
 # HOME is the /state volume; caches go to /cache; mise is offline and ignores mounted configs.
+# /workspace/bin sits at the end of PATH: the hosted repository's own build output (make build ->
+# bin/) is callable by name from its skills. Image tools stay first, so a committed binary cannot
+# shadow kubectl or go.
 ENV HOME=/state \
     WORK_DIR=/workspace \
     XDG_CACHE_HOME=/cache/xdg \
@@ -79,7 +82,7 @@ ENV HOME=/state \
     MISE_OFFLINE=true \
     MISE_IGNORED_CONFIG_PATHS=/workspace:/cache:/refs:/knowledge:/opt/toolkit \
     MISE_GLOBAL_CONFIG_FILE=/etc/mise/config.toml \
-    PATH=/opt/toolkit/bin:/usr/local/share/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    PATH=/opt/toolkit/bin:/usr/local/share/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/workspace/bin \
     AGENTBOX_CONFIG=/agent/config.toml
 
 USER ${AGENT_USER}

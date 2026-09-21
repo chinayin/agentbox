@@ -505,6 +505,9 @@ done
 hp="$(grep -oE 'HELM_PLUGINS=[^ \\]+' "$DF" | head -1 | cut -d= -f2)"
 case "${hp:-}" in /opt/*) ok "HELM_PLUGINS lives inside the image (${hp})" ;; *) bad "HELM_PLUGINS lives inside the image" "currently ${hp:-unset}" ;; esac
 grep -E '^[^#]*go env -w' "$DF" | grep -q . && bad "GOPROXY is not written with go env -w" "the state volume would override it at runtime" || ok "GOPROXY is not written with go env -w"
+# A hosted repository builds into its own bin/ (make build) and its skills call the binary by name;
+# /workspace/bin is on PATH for that, after the image tools so a committed binary cannot shadow them.
+grep -qE '^ *PATH=[^ ]*/bin:/workspace/bin( |\\|$)' "$DF" && ok "PATH ends with /workspace/bin after the image tools" || bad "PATH ends with /workspace/bin after the image tools" "$(grep -E '^ *PATH=' "$DF")"
 grep -E 'install -d -o \$\{AGENT_UID\}' "$DF" | grep -q '/agent' && ok "/agent is owned by the agent user (cc-connect lock file)" || bad "/agent is owned by the agent user (cc-connect lock file)" "missing"
 grep -q '^USER ' "$DF" && ok "the Dockerfile declares a non-root USER" || bad "the Dockerfile declares a non-root USER" "missing"
 case "$(grep -m1 '^FROM ' "$DF")" in "FROM debian:"*) ok "the base image is debian slim" ;; *) bad "the base image is debian slim" "$(grep -m1 '^FROM ' "$DF")" ;; esac

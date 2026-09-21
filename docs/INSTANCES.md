@@ -69,6 +69,7 @@ cc-connect 自带 `relay send --to <project>`、`send`、`cron`，`relay.visibil
 |---|---|
 | 通用工具链，稳定且所有实例都要 | 镜像层 |
 | 团队脚本库 | `/opt/toolkit:ro`，`bin/` 已在 PATH |
+| 被托管仓库自建的二进制 | 仓库 `make build` 落 `/workspace/bin`，已在 PATH 末尾，技能按名字直接调用 |
 | Claude 技能、组织级 CLAUDE.md、托管 settings | `/etc/claude-code:ro`，见 [SKILLS](SKILLS.md) |
 | 构建缓存 | `/cache`，每信任域一个 named volume |
 
