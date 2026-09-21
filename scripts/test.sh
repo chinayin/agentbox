@@ -581,6 +581,7 @@ check_instance_compose() {
 		&& grep -q '^  state:$' "$f" && grep -q '^  cache:$' "$f" && grep -q '^    external: true$' "$f" \
 		&& grep -q 'cap_drop: \[ALL\]' "$f" && grep -q 'no-new-privileges:true' "$f" && grep -q 'pids: 512' "$f" \
 		&& grep -q '^  environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}", TZ: "${TZ:-UTC}"}$' "$f" \
+		&& grep -q '^  healthcheck: {test: \["CMD", "curl", "-sf", "--unix-socket", "/state/.cc-connect/run/api.sock", "http://localhost/sessions"\]' "$f" \
 		&& ! grep -q '^      #' "$f" && ! grep -q 'demo' "$f" \
 		&& ok "${label} docker-compose.yaml has the shared instance structure" || bad "${label} docker-compose.yaml has the shared instance structure" "$(cat "$f" 2>/dev/null)"
 }
@@ -683,6 +684,7 @@ x-agentbox: &agentbox
   networks: [agentbox]
   env_file: [./env]
   environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}", TZ: "${TZ:-UTC}"}
+  healthcheck: {test: ["CMD", "curl", "-sf", "--unix-socket", "/state/.cc-connect/run/api.sock", "http://localhost/sessions"], interval: 30s}
 services:
   svc:
     <<: *agentbox
@@ -791,12 +793,12 @@ printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VE
 # The instance compose file is policy: a hand edit that drops the shared block, adds a forbidden
 # key, or leaves the version variable out must fail plan locally and name what is wrong. A
 # host-level compose file (the pre-2026-09-11 shape) is refused outright rather than ignored.
-sed -i.bak '/cap_drop/d' "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
+sed -i.bak -e '/cap_drop/d' -e '/healthcheck/d' "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
 printf '    privileged: true\n' >> "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
-[ "$rc" -eq 1 ] && grep -q 'missing cap_drop' <<<"$out" && grep -q 'forbidden privileged' <<<"$out" \
-	&& ok "plan refuses an instance compose that drops the shared block or adds privileged, naming both" \
-	|| bad "plan refuses an instance compose that drops the shared block or adds privileged, naming both" "rc=$rc $out"
+[ "$rc" -eq 1 ] && grep -q 'missing cap_drop' <<<"$out" && grep -q 'missing healthcheck' <<<"$out" && grep -q 'forbidden privileged' <<<"$out" \
+	&& ok "plan refuses an instance compose that drops the shared block (cap_drop, healthcheck) or adds privileged, naming each" \
+	|| bad "plan refuses an instance compose that drops the shared block (cap_drop, healthcheck) or adds privileged, naming each" "rc=$rc $out"
 mv "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml.bak" "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
 rm "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
@@ -1323,6 +1325,7 @@ grep -q 'cap_drop: \[ALL\]' "$dc" && grep -q 'no-new-privileges:true' "$dc" && g
 	&& grep -q 'external: true' "$dc" && grep -q 'image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}$' "$dc" \
 	&& grep -q '^  env_file: \[./env\]$' "$dc" && grep -q '^      - ./config.toml:/agent/config.toml:ro$' "$dc" \
 	&& grep -q '^  environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}", TZ: "${TZ:-UTC}"}$' "$dc" \
+	&& grep -qE '^  healthcheck: .*api\.sock' "$dc" \
 	&& ok "the demo compose template carries the shared block deploy.sh enforces" || bad "the demo compose template carries the shared block deploy.sh enforces" ""
 ls "$ROOT"/examples/*/env "$ROOT/.env" >/dev/null 2>&1 && bad "no real env file in the repo" "an env file without .example was found" || ok "no real env file in the repo"
 

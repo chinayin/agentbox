@@ -9,6 +9,10 @@ x-agentbox: &agentbox
   restart: unless-stopped
   init: true
   stop_grace_period: 30s
+  # Liveness only: cc-connect's api.sock answers once its main loop is up. Nothing in cc-connect
+  # exposes the chat platform's link state (docs/DECISIONS.md 2026-09-21), so a healthy container can
+  # still be disconnected from Feishu; `deploy status` shows the state, nothing restarts on it.
+  healthcheck: {test: ["CMD", "curl", "-sf", "--unix-socket", "/state/.cc-connect/run/api.sock", "http://localhost/sessions"], interval: 30s, timeout: 5s, start_period: 120s, retries: 3}
   security_opt: [no-new-privileges:true]
   cap_drop: [ALL]
   deploy: {resources: {limits: {pids: 512}}}

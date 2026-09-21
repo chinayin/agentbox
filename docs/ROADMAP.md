@@ -19,6 +19,6 @@
 
 | # | 事项 | 现状 | 验收 |
 |---|---|---|---|
-| 6 | compose 加固：`read_only: true` + tmpfs + healthcheck | pids、cap_drop、no-new-privileges、init 已在真实实例上 `docker inspect` 验收（DECISIONS 2026-09-21）。`read_only` 与 healthcheck 未做；`make smoke` 走裸 `docker run` 不经过 compose。cc-connect 凭据无效时不退出只刷 websocket error，healthcheck 不能只看进程 | 实例 `healthy` 且日志无 `read-only file system` |
+| 6 | compose 加固：`read_only: true` + tmpfs；聊天平台在线状态的健康检查 | pids、cap_drop、no-new-privileges、init 已真机验收；liveness healthcheck（探 `api.sock`）已进共享块。`read_only` 与 tmpfs 未做；平台在线状态 cc-connect 没有任何信号（DECISIONS 2026-09-21），要上游给 feishu 平台加 connected 标志并在 `api.sock` 开免鉴权 `/health` | 实例 `healthy` 且日志无 `read-only file system`；上游有 `/health` 后探针换过去，凭据无效的实例能变成 `unhealthy` |
 | 7 | pi 会话端到端 | `agent.type = "pi"` 已被 cc-connect 接受并启动引擎，未用真实凭据驱动过会话；entrypoint 按清单把技能装进 `/state/.pi/agent/skills`，pi 是否从这个目录加载未验 | 真实飞书应用 + `-pi` 镜像，发一条消息拿到回复；同一实例挂 `skills-lock.json`，pi 会话里能用上其中的技能 |
 | 8 | state 卷备份/恢复脚本 | 无脚本；卷内含 git 私钥 | `scripts/state-backup.sh`，文档标注备份件密级 |

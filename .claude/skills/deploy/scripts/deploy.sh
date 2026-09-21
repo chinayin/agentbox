@@ -257,7 +257,7 @@ PY
 # `docker compose config -q` on the rendered file before `up`.
 check_compose() {
 	local name="$1" f="$2" p bad=()
-	for p in 'cap_drop: \[ALL\]' 'no-new-privileges:true' 'pids: [0-9]+' 'external: true' '\$\{AGENTBOX_VERSION\}' '\$\{AGENTBOX_PROFILE' '\$\{TZ'; do
+	for p in 'cap_drop: \[ALL\]' 'no-new-privileges:true' 'pids: [0-9]+' 'external: true' '\$\{AGENTBOX_VERSION\}' '\$\{AGENTBOX_PROFILE' '\$\{TZ' 'healthcheck:.*api\.sock'; do
 		grep -qE "${p}" "${f}" || bad+=("missing ${p}")
 	done
 	for p in privileged 'docker\.sock' network_mode cap_add; do
