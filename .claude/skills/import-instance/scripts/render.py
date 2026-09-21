@@ -171,7 +171,7 @@ def rewrite(config_lines, recs):
         m = KV_LINE.match(line)
         if not m or table not in (OPTIONS_TABLE, ENV_TABLE):
             if table == OPTIONS_TABLE and re.match(r'^\s*mode\s*=\s*"bypassPermissions"', line):
-                ctx["red"].append("mode = bypassPermissions: only with an explicit allow_from list (docs/SECRETS.md section 3)")
+                ctx["red"].append("mode = bypassPermissions: only with an explicit allow_from list (docs/CREDENTIALS.md section 4)")
             out.append(line)
             i += 1
             continue
@@ -183,7 +183,7 @@ def rewrite(config_lines, recs):
                 ctx["rewrites"].append((key, val, "${WORK_DIR}", "compose supplies WORK_DIR"))
             else:
                 if key == "mode" and val == "bypassPermissions":
-                    ctx["red"].append("mode = bypassPermissions: only with an explicit allow_from list (docs/SECRETS.md section 3)")
+                    ctx["red"].append("mode = bypassPermissions: only with an explicit allow_from list (docs/CREDENTIALS.md section 4)")
                 out.append(line)
             i += 1
             continue
@@ -289,7 +289,7 @@ def build_plan(recs, ctx, lock, host, name):
     for s in fields(recs, "ws_skill"):
         L.append(f"  {'<work_dir>/' + s[0]:<44} {'-':<44} stays in the workspace")
     L.append(f"  {'~/.claude.json, sessions':<44} {'-':<44} not migrated: state volume starts empty")
-    L.append(f"  {'~/.gnupg':<44} {'-':<44} not migrated: signing keys, if needed, go through the docs/TOOLS.md credential channel")
+    L.append(f"  {'~/.gnupg':<44} {'-':<44} not migrated: signing keys, if needed, go through the docs/CREDENTIALS.md credential channel")
     wd = field(recs, "work_dir")
     remote = field(recs, "git_remote")
     if remote:

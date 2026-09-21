@@ -91,7 +91,7 @@ for m in "${MOUNTS[@]+"${MOUNTS[@]}"}"; do
 		kubeconfig)
 			sed -i.bak "/^ANTHROPIC_AUTH_TOKEN = /a\\
 KUBECONFIG = \"/agent/kubeconfig\"" "${TARGET}/config.toml" && rm -f "${TARGET}/config.toml.bak" ;;
-		*) info "mount ${m}: no known env variable; wire it by hand per docs/TOOLS.md §2" ;;
+		*) info "mount ${m}: no known env variable; wire it by hand per docs/CREDENTIALS.md §3" ;;
 	esac
 done
 grep -q "^name = \"${NAME}\"$" "${TARGET}/config.toml" || die "template changed: project name line not found"

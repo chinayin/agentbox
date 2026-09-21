@@ -1,5 +1,7 @@
 # 境内使用
 
+> 契约。镜像站可达性实测记录在 [DECISIONS](DECISIONS.md)，改任何地址前在实际网络复测并记日期。
+
 镜像在哪构建和在哪运行是两个独立的问题，只有后者需要区分境内外。
 
 ## 1. 构建：永远直连上游
@@ -28,12 +30,3 @@ make image BUILD_HTTPS_PROXY=http://proxy:port BUILD_HTTP_PROXY=http://proxy:por
 这些只改"从哪下载"，不改工具版本；镜像工具链本身在运行期是离线锁死的（`MISE_OFFLINE`）。
 
 刻意没加的：Electron、Playwright、Puppeteer 的二进制镜像。镜像里没有浏览器运行时依赖，这些包在 agentbox 里本来就跑不起来；真要用时在实例 `config.toml` 的 env 块里自己加。
-
-## 3. 实测记录
-
-| 日期 | 环境 | 结论 |
-|---|---|---|
-| 2026-09-05 | 阿里云香港 x86_64 | 直连上游完整构建 + smoke 通过 |
-| 2026-09-06 | 开发机 | 运行期 cn.env 各地址可达性探测均 200：mirrors.aliyun.com/pypi、registry.npmmirror.com、npmmirror.com/mirrors/node（含 headers 包）、hf-mirror.com、goproxy.cn；阿里云 goproxy 响应约 8 秒，故放后备位 |
-
-镜像站可用性有时效，改任何地址前在实际网络复测并记日期。

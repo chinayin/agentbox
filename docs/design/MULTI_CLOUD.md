@@ -1,8 +1,10 @@
 # 多云运维 agent：主 bot 调度专才 bot
 
+> 状态：设计稿，未实现。本文描述的拓扑没有在真实环境跑过，标「源码判定」的结论只来自读源码。不要把这里的内容当作现状引用；实现一段就把契约部分挪进正文文档。
+
 目标：在一个飞书群里放一个「云管家」主 bot，人只问它；它判断问题涉及哪家云，去问对应的专才 bot（阿里云、AWS、火山引擎），汇总后回人。专才各自持有自己那家云的凭据，主 bot 一份云凭据都没有。
 
-这份文档回答三件事：这个形态在架构上怎么成立、用 agentbox 的哪两种拓扑能落地、每种拓扑到哪一步是已验证的。**本文所有「源码判定」均指阅读 cc-connect `main` 分支（2026-09-10，commit 757b4df）得出，不等于真实环境跑通；未跑通的项目列在 [ROADMAP](ROADMAP.md)。**
+这份文档回答三件事：这个形态在架构上怎么成立、用 agentbox 的哪两种拓扑能落地、每种拓扑到哪一步是已验证的。**本文所有「源码判定」均指阅读 cc-connect `main` 分支（2026-09-10，commit 757b4df）得出，不等于真实环境跑通；未跑通的项目列在 [ROADMAP](../ROADMAP.md)。**
 
 ## 1. 形态
 
@@ -97,10 +99,10 @@ allow_from = "${ALLOW_FROM_AWS}"
 thread_isolation = true
 
 # aliyun and volcengine projects follow the same shape; see examples/aliyun/config.toml
-# for the Alibaba Cloud variables and docs/TOOLS.md for the rest.
+# for the Alibaba Cloud variables and docs/CREDENTIALS.md for the rest.
 ```
 
-表名不带 project 名（`[projects.agent]`，不是 `[projects.aws.agent]`），这个坑见 [MULTI_PROJECT §2](MULTI_PROJECT.md)。
+表名不带 project 名（`[projects.agent]`，不是 `[projects.aws.agent]`），这个坑见 [INSTANCES §2](../INSTANCES.md)。
 
 **relay 的语义（源码判定，`core/relay.go`、`core/engine.go`）：**
 
@@ -109,7 +111,7 @@ thread_isolation = true
 - 专才为每个来源保留一个独立的 relay 会话（可 resume），所以主 bot 连续追问时专才记得上文。
 - `visibility` 只控制群里额外回显多少（请求与回复各一条），不影响主 bot 拿到完整回复。
 
-**隔离的真实边界。** 同容器意味着 `env_file` 里所有变量都在容器环境里，每个 project 的 Claude Code 子进程继承全部；`/state` 是同一个 HOME，`aws`、`aliyun` 写回家目录的 token 彼此可读。给每个 project 单独写 `[projects.agent.options.env]` 只是让「默认 CLI 行为」各用各的 AK，不是安全边界。接受这一点的前提与 [MULTI_PROJECT §6](MULTI_PROJECT.md) 关于不设内存上限的前提相同：同一台机器上的实例都归可信的运维团队管。管不住就上拓扑 B。
+**隔离的真实边界。** 同容器意味着 `env_file` 里所有变量都在容器环境里，每个 project 的 Claude Code 子进程继承全部；`/state` 是同一个 HOME，`aws`、`aliyun` 写回家目录的 token 彼此可读。给每个 project 单独写 `[projects.agent.options.env]` 只是让「默认 CLI 行为」各用各的 AK，不是安全边界。接受这一点的前提与 [INSTANCES §6](../INSTANCES.md) 关于不设内存上限的前提相同：同一台机器上的实例都归可信的运维团队管。管不住就上拓扑 B。
 
 ## 4. 拓扑 B：一 bot 一实例，飞书群即总线
 
@@ -132,7 +134,7 @@ thread_isolation = true
 - `peer_bots = { "<app_id>" = "AWS" }` 让引用链里的对端 bot 显示成友好名。
 - 超时：专才没回时主 bot 不会被唤醒。用 `cc-connect timer add --delay 10m --prompt "..."` 给自己留一条检查提醒，到点没收齐就先给人部分结论。
 
-**退路。** 拿不到 `include_bot` 权限时按优先级：(1) 专才实例加第二个 service 开一扇 MCP 门（同信任域第二个 service 的写法见 [MULTI_PROJECT §1](MULTI_PROJECT.md)），主 bot 用 Claude Code 原生 MCP 客户端直连，自己把要点贴回话题；(2) 主 bot 以用户身份发消息（`im:message.send_as_user`，需一个真实用户授权），专才按普通用户消息接收；(3) 轮询消息列表接口。A2A 协议留给要接阿里 Nacos、AWS AgentCore、火山 veADK 这类外部生态时，Claude Code 本身没有 A2A 客户端，先上它只会多一层桥。
+**退路。** 拿不到 `include_bot` 权限时按优先级：(1) 专才实例加第二个 service 开一扇 MCP 门（同信任域第二个 service 的写法见 [INSTANCES §1](../INSTANCES.md)），主 bot 用 Claude Code 原生 MCP 客户端直连，自己把要点贴回话题；(2) 主 bot 以用户身份发消息（`im:message.send_as_user`，需一个真实用户授权），专才按普通用户消息接收；(3) 轮询消息列表接口。A2A 协议留给要接阿里 Nacos、AWS AgentCore、火山 veADK 这类外部生态时，Claude Code 本身没有 A2A 客户端，先上它只会多一层桥。
 
 ## 5. 为什么不是一个 bot 带三个 subagent
 
@@ -152,7 +154,7 @@ Claude Code 的 subagent 可以限制工具与 MCP，但**继承父进程全部�
 
 ## 7. 主 bot 需要的名册与技能
 
-主 bot 装一个 cloud-router 技能（挂 `/agent/skills-lock.json` 清单或放进主 bot 工作区，落法见 [SKILLS](SKILLS.md)），内容三样：
+主 bot 装一个 cloud-router 技能（挂 `/agent/skills-lock.json` 清单或放进主 bot 工作区，落法见 [SKILLS](../SKILLS.md)），内容三样：
 
 | 组件 | 内容 |
 |---|---|
@@ -169,9 +171,9 @@ Claude Code 的 subagent 可以限制工具与 MCP，但**继承父进程全部�
 | 阿里云 | `aliyun` 已在 `mise.toml` | `aliyun/alibabacloud-aiops-skills`（按产品分组，含 trouboper 等 playbook） | 托管 OpenAPI MCP，容器内用 `uvx alibabacloud.mcp-proxy` 走静态 AK | `aliyun utils mcp-proxy` 走 OAuth 交互登录，headless 容器用不了；`alibaba-cloud-ops-mcp-server` 自 2026-03 未更新 |
 | AWS | `aws` 已在 `mise.toml` | `aws/agent-toolkit-for-aws/skills`（observability、billing、iam、security、operations） | `awslabs/mcp` 的 `aws-api-mcp-server`，加 cloudwatch、cloudtrail、billing | `READ_OPERATIONS_ONLY` 起步，写操作再开 `REQUIRE_MUTATION_CONSENT` |
 | 腾讯云 | `tccli` 已在 `mise.toml`（`pipx:`，纯 Python 包，无二进制发行） | 未调研 | `tccli` 无原生 MCP | 认 `TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY`、`TENCENTCLOUD_REGION`；profile 选择时环境变量优先级最低，命令必带 `--profile` |
-| 火山引擎 | `ve` 已在 `mise.toml`（`github:volcengine/volcengine-cli`）。不要用 npm 包装：它的 postinstall 会往 `~/.claude/skills` 自动写火山 skills，绕开 [SKILLS](SKILLS.md) 的清单机制 | `volcengine/volcengine-skills` | `ve mcp` 原生，CLI 自身就是 MCP server；`volcengine/mcp-server` 按产品拆了 85 个 | `ve mcp` 没有 API 白名单，边界全靠 IAM；认 `VOLCENGINE_ACCESS_KEY`、`VOLCENGINE_SECRET_KEY`、`VOLCENGINE_REGION` |
+| 火山引擎 | `ve` 已在 `mise.toml`（`github:volcengine/volcengine-cli`）。不要用 npm 包装：它的 postinstall 会往 `~/.claude/skills` 自动写火山 skills，绕开 [SKILLS](../SKILLS.md) 的清单机制 | `volcengine/volcengine-skills` | `ve mcp` 原生，CLI 自身就是 MCP server；`volcengine/mcp-server` 按产品拆了 85 个 | `ve mcp` 没有 API 白名单，边界全靠 IAM；认 `VOLCENGINE_ACCESS_KEY`、`VOLCENGINE_SECRET_KEY`、`VOLCENGINE_REGION` |
 
-凭据规则三家一致，都落在 [TOOLS](TOOLS.md) 现有的两条通道里：每个专才一个独立 RAM/IAM 身份、只读起步、STS 短期凭据优先、写操作过人工审批、审计靠 CloudTrail/ActionTrail。一家云有多个账号时（阿里云两个、AWS 三个这种），账号不再拆 bot，而是做成带别名的 profile，别名名册、AssumeRole 角色与防误动账号的强制层见 [CLOUD_ACCOUNTS](CLOUD_ACCOUNTS.md)。主 bot 的托管层 `managed-settings.json` 拒绝一切云 CLI，它本来没有凭据，这是双保险。
+凭据规则三家一致，都落在 [CREDENTIALS](../CREDENTIALS.md) 现有的两条通道里：每个专才一个独立 RAM/IAM 身份、只读起步、STS 短期凭据优先、写操作过人工审批、审计靠 CloudTrail/ActionTrail。一家云有多个账号时（阿里云两个、AWS 三个这种），账号不再拆 bot，而是做成带别名的 profile，别名名册、AssumeRole 角色与防误动账号的强制层见 [CLOUD_ACCOUNTS](CLOUD_ACCOUNTS.md)。主 bot 的托管层 `managed-settings.json` 拒绝一切云 CLI，它本来没有凭据，这是双保险。
 
 ## 9. 从哪一步开始
 

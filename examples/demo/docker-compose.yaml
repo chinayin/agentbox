@@ -3,7 +3,7 @@
 # compose project (hence the volume prefix) is named after the directory. The shared block below is
 # policy, not preference: `deploy plan` refuses a file that drops any of it. A second container in
 # the same trust domain is one more service with `<<: *agentbox` and its own config, workspace and
-# volumes (docs/MULTI_PROJECT.md).
+# volumes (docs/INSTANCES.md).
 x-agentbox: &agentbox
   image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}
   restart: unless-stopped

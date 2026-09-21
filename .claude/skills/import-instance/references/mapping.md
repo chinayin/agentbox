@@ -25,7 +25,7 @@
 |---|---|---|
 | `KUBECONFIG` 引用的每个文件 | 复制到 `./instances/<name>/kubeconfig-<basename>`（0600），挂 `/agent/kubeconfig-<basename>:ro` | 见 4.1 |
 | `$HOME/.ssh/` 下的私钥（无 `.pub` 的同名文件） | 复制到 `./instances/<name>/ssh_key`（0600）；第一把挂 `/agent/ssh_key:ro`，多于一把时规划表列出并只挂第一把 | env 表加 `GIT_SSH_COMMAND = "ssh -i /agent/ssh_key -o IdentitiesOnly=yes"`。`known_hosts` 落 `/state/.ssh/`，`HOME` 可写，首连自动写入，不需要进容器初始化 |
-| `$HOME/.gnupg` | 不迁 | 规划表单独列一条：签名密钥若需要，另行按 `docs/TOOLS.md` 的凭据通道提供 |
+| `$HOME/.gnupg` | 不迁 | 规划表单独列一条：签名密钥若需要，另行按 `docs/CREDENTIALS.md` 的凭据通道提供 |
 
 复制用 rsync 一次拉取，落地即 `chmod 600`；属主对齐 UID 1000 是 `deploy` 在目标主机上做的事，本机不改属主。规划表列出源路径与目标路径。
 

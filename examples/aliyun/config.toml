@@ -24,13 +24,13 @@ type = "claudecode"
 [projects.agent.options]
 work_dir = "${WORK_DIR}"
 # acceptEdits: agent may edit files, commands still need confirmation.
-# bypassPermissions only with an explicit allow_from list. See docs/SECRETS.md §3.
+# bypassPermissions only with an explicit allow_from list. See docs/CREDENTIALS.md §4.
 mode = "acceptEdits"
 
 [projects.agent.options.env]
 ANTHROPIC_BASE_URL = "${ANTHROPIC_BASE_URL}"
 ANTHROPIC_AUTH_TOKEN = "${ANTHROPIC_AUTH_TOKEN}"
-# Alibaba Cloud CLI reads these directly; no credential file is mounted (docs/TOOLS.md §2).
+# Alibaba Cloud CLI reads these directly; no credential file is mounted (docs/CREDENTIALS.md §3).
 ALIBABA_CLOUD_ACCESS_KEY_ID = "${ALIBABA_CLOUD_ACCESS_KEY_ID}"
 ALIBABA_CLOUD_ACCESS_KEY_SECRET = "${ALIBABA_CLOUD_ACCESS_KEY_SECRET}"
 ALIBABA_CLOUD_REGION_ID = "${ALIBABA_CLOUD_REGION_ID}"

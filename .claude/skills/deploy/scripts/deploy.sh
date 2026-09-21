@@ -382,7 +382,7 @@ sync_host() {
 		done < <(all_instances)
 		# Every file credential (env, kubeconfig-*, ssh_key) is 0600; config.toml stays readable
 		# because the container reads it through the bind mount, and claude/ is a read-only code
-		# tree the agent must be able to list. docs/TOOLS.md section 3 explains the split.
+		# tree the agent must be able to list. docs/CREDENTIALS.md section 2 explains the split.
 		rssh "find '${DEPLOY_DIR}'/instances -mindepth 2 -type f ! -name config.toml ! -path '*/claude/*' -exec chmod 600 {} +"
 		# Every instance directory, not just the ones this run restarts: rsync -a runs as root and
 		# lands every file with the local uid, so a deploy naming one instance would otherwise leave

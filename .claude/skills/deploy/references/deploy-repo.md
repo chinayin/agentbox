@@ -162,7 +162,7 @@ checks each file for `cap_drop: [ALL]`, `no-new-privileges`, a pids limit, the e
 and `${AGENTBOX_VERSION}`, and refuses `privileged`, `cap_add`, `network_mode` and a docker socket
 mount. Edit only the service's own `volumes`; a second container in the same trust domain is a
 second service with `<<: *agentbox` and its own `container_name`, config file and volumes
-(`docs/MULTI_PROJECT.md` §1).
+(`docs/INSTANCES.md` §1).
 
 `deploy.sh` creates the `agentbox` network on the host if it is missing (an idempotent
 `docker network inspect || docker network create` before the first `docker compose pull`), so the

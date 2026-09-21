@@ -1,8 +1,10 @@
 # 多账号：一家云多个账号时 bot、别名与凭据怎么组织
 
+> 状态：设计稿，未实现。本文描述的拓扑没有在真实环境跑过，标「源码判定」的结论只来自读源码。不要把这里的内容当作现状引用；实现一段就把契约部分挪进正文文档。
+
 [MULTI_CLOUD](MULTI_CLOUD.md) 解决的是「几家云、几个 bot、怎么协作」。这份文档解决下一层：阿里云有 2 个账号、AWS 有 3 个账号，都要纳管，每个账号一个别名，架构上怎么摆才最优。结论先行：**bot 是对话与身份单位，账号是凭据与授权单位，两根轴不绑死。一家云一个专才 bot，账号做成带别名的 profile，用名册、无默认 profile、托管钩子、身份回显、AssumeRole 五件事保证「问哪个账号就动哪个账号」。** 新增一个账号不新增任何 bot。
 
-与 [MULTI_CLOUD](MULTI_CLOUD.md) 相同的约定：标「源码判定」的来自读 cc-connect `main`（commit 757b4df）与各 CLI 仓库源码，标「文档」的来自官方文档，都不等于真机跑通；未跑通的项目在 [ROADMAP](ROADMAP.md)。
+与 [MULTI_CLOUD](MULTI_CLOUD.md) 相同的约定：标「源码判定」的来自读 cc-connect `main`（commit 757b4df）与各 CLI 仓库源码，标「文档」的来自官方文档，都不等于真机跑通；未跑通的项目在 [ROADMAP](../ROADMAP.md)。
 
 ## 1. 三种摆法
 
@@ -60,7 +62,7 @@ volc-media-prod
 | 产物 | 给谁 | 内容 |
 |---|---|---|
 | `home/.aws/config` | AWS 专才 | 每个别名一个 `[profile <alias>]`，只有 `role_arn`、`source_profile`、`role_session_name`、`region`，没有 `[default]` |
-| `home/.aliyun/config.json`、`home/.volcengine/config.json` | 阿里云、火山专才 | 每个别名一个 profile，模式为角色扮演。都是实例目录 `home/` 里的文件，entrypoint 启动时复制进 `/state`（[TOOLS](TOOLS.md) §1），不再 `:ro` 直挂 `/state/.aliyun` 这类路径 |
+| `home/.aliyun/config.json`、`home/.volcengine/config.json` | 阿里云、火山专才 | 每个别名一个 profile，模式为角色扮演。都是实例目录 `home/` 里的文件，entrypoint 启动时复制进 `/state`（[CREDENTIALS](../CREDENTIALS.md) §1），不再 `:ro` 直挂 `/state/.aliyun` 这类路径 |
 | 名册摘要 | 主 bot | 别名、显示名、环境、owner，不含任何 ARN |
 | 钩子白名单 | 托管层 | 每个专才允许出现的别名列表 |
 
@@ -85,7 +87,7 @@ volc-media-prod
 
 三个落地细节：
 
-- **阿里云没有配置路径的环境变量**：渲染产物放 `home/.aliyun/config.json`，entrypoint 启动时复制进 `/state/.aliyun/`（[TOOLS](TOOLS.md) §1 的家目录声明层）。阿里云 CLI 会把续期后的 STS 令牌写回 `config.json`（源码判定，`config/profile.go`），复制件可写所以续期不受影响，下次启动又回到声明值；未实测。
+- **阿里云没有配置路径的环境变量**：渲染产物放 `home/.aliyun/config.json`，entrypoint 启动时复制进 `/state/.aliyun/`（[CREDENTIALS](../CREDENTIALS.md) §1 的家目录声明层）。阿里云 CLI 会把续期后的 STS 令牌写回 `config.json`（源码判定，`config/profile.go`），复制件可写所以续期不受影响，下次启动又回到声明值；未实测。
 - **火山不能改路径**，同样放 `home/.volcengine/config.json`；`ve configure set` 会把 `current` 切到刚配的 profile，渲染时最后一步要把 `current` 置回无效值。
 - **AWS 的 STS 缓存**在 `~/.aws/cli/cache`，落在 `/state`，可写，无事。
 - 做不到跨账号角色（比如账号不在同一组织且对方不肯建角色）时退化为每个别名一份静态 AK，仍然写进同一份 profile 文件、仍然按别名调用，只是长期密钥变多、审计里看不到 session name。IAM Identity Center / SSO 登录需要人在浏览器操作，不适合无人值守容器（文档）。
@@ -129,4 +131,4 @@ volc-media-prod
 | 托管 PreToolUse 钩子在 cc-connect 拉起的 headless 会话里是否生效、`sandbox.credentials.envVars` 在 Linux 容器里是否生效 | 未实测 |
 | cc-connect 对 `-admin` 别名命令的权限确认是否送到飞书 | 本仓库已依赖，多账号场景未实测 |
 
-这些都登记在 [ROADMAP](ROADMAP.md)。
+这些都登记在 [ROADMAP](../ROADMAP.md)。

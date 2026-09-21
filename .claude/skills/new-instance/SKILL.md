@@ -7,7 +7,7 @@ description: Add a new agentbox instance to this repository. Use this whenever t
 
 An agentbox instance is one directory and one compose project: its own `docker-compose.yaml`,
 one `config.toml`, one env file, one workspace, one state volume, one cache volume. The repo's
-rule is **one instance per trust domain, not per project** (`docs/MULTI_PROJECT.md` §1). So the
+rule is **one instance per trust domain, not per project** (`docs/INSTANCES.md` §1). So the
 first thing to settle is whether the user needs a new instance at all.
 
 **边界：** 已经有一台裸机在跑这个实例的，不要用本技能重造；用 `import-instance`（`.claude/skills/import-instance/SKILL.md`）从现状导入。本技能只服务「还没有」的实例。
@@ -34,7 +34,7 @@ model gateway key) as an existing instance?*
 - **Same secrets, but a second container** (another agent CLI, its own workspace or limits, or
   isolation from a crash) → no scaffold either: add a second service to the existing instance's
   `docker-compose.yaml` with `<<: *agentbox`, its own `container_name`, config file and volumes,
-  sharing `./env`. `docs/MULTI_PROJECT.md` §1 has the table.
+  sharing `./env`. `docs/INSTANCES.md` §1 has the table.
 - **Different secrets, repo, or team** → new instance. Continue with Step 2.
 
 When in doubt, prefer the new instance: cross-domain calls are meant to have friction.
@@ -51,7 +51,7 @@ When in doubt, prefer the new instance: cross-domain calls are meant to have fri
 - `--agent pi` sets `agent.type = "pi"`, uncomments `PI_KEY` in the env template and switches the
   image in `docker-compose.yaml` to the `-pi` tag. Default is `claudecode`.
 - `--mount FILE` adds `./FILE:/agent/FILE:ro` to the instance's `docker-compose.yaml` (see
-  `docs/TOOLS.md` §2 for which tool reads which path). `kubeconfig` also gets
+  `docs/CREDENTIALS.md` §3 for which tool reads which path). `kubeconfig` also gets
   `KUBECONFIG=/agent/kubeconfig` written into the config's env block. Anything other than
   `kubeconfig` / `ssh_key` must be added to `.gitignore` under `examples/*/` before the real file
   is created.
@@ -81,7 +81,7 @@ deploy repo.
 ## Guardrails
 
 - Never write, request, echo or guess a real secret value. Templates hold `xxxx` shapes only;
-  `scripts/test.sh` fails on anything else and `docs/SECRETS.md` explains why.
+  `scripts/test.sh` fails on anything else and `docs/CREDENTIALS.md` §5 explains why.
 - Leave the README mount contract table, `entrypoint.sh` and the demo example alone. The demo is
   the template every scaffold copies from, `examples/demo/docker-compose.yaml` included: its
   shared block must stay in step with `deploy.sh`'s `check_compose`, and `scripts/test.sh` checks

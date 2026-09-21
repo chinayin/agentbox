@@ -3,7 +3,7 @@
 # For every entry in instances/<name>/profiles/accounts.yaml it runs the cloud CLI locally with
 # the INSTANCE's profile files (never the operator's own ~/.aws or ~/.aliyun) and asserts that
 # GetCallerIdentity returns the registered account_id. Moves the "am I on the right account"
-# check from the agent's runtime prompt to deploy time (docs/CLOUD_ACCOUNTS.md).
+# check from the agent's runtime prompt to deploy time (docs/design/CLOUD_ACCOUNTS.md).
 # stdout: one line per profile "<cloud> <profile> <expected> <actual> PASS|FAIL|SKIP".
 # Exit codes: 0 all pass / 1 usage error or at least one FAIL / 2 precondition (files or CLI missing)
 

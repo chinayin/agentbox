@@ -1,12 +1,14 @@
 # 技能安装与迁移
 
+> 契约。取舍原因（为什么不用 `experimental_install`、为什么没有 fleet 默认清单）见 [DECISIONS](DECISIONS.md)。
+
 技能本体不需要"迁移"，`npx skills` 按清单重装即可。真正要搬的是配置与凭据，通常只是几个环境变量。
 
 ## 1. 三种落法
 
 | 落法 | 位置 | 适用 |
 |---|---|---|
-| 清单驱动（默认） | 挂 `/agent/skills-lock.json`，entrypoint 首启按清单 `npx skills add -g` 装进 `/state/.claude/skills` | 用户级技能的常规落法。实例只带一份清单，技能本体不进配置仓库。**没有 fleet 级默认清单**：镜像里没有（镜像不含身份，见 [ARCHITECTURE §1](ARCHITECTURE.md)），部署仓库里也没有继承——一个实例要么自己写上，要么就没有 |
+| 清单驱动（默认） | 挂 `/agent/skills-lock.json`，entrypoint 首启按清单 `npx skills add -g` 装进 `/state/.claude/skills` | 用户级技能的常规落法。实例只带一份清单，技能本体不进配置仓库。**没有 fleet 级默认清单**：一个实例要么自己写上，要么就没有 |
 | 托管层 | 宿主目录 `:ro` 挂到 `/etc/claude-code` | 组织级策略：`managed-settings.json`、`CLAUDE.md`、`managed-mcp.json`。技能也认（`.claude/skills/<name>/`），但那条路 `npx skills` 不认，只用于必须由宿主锁死、不允许 agent 自行更新的技能 |
 | 进工作区 | 仓库自带 `.claude/skills/` | 只属于这个项目的技能，随代码版本化 |
 
@@ -21,7 +23,7 @@
 
 挂给容器的就是这种文件，**原样用，不转换**：entrypoint 只读 `skills.<name>.source`（回退 `sourceUrl`），两份都有这个字段。要加一个技能，在任意空目录 `npx skills add <owner/repo> -s <name> -a claude-code -y`，把生成的 `skills-lock.json` 提交进部署仓库即可，不用手写 JSON。
 
-**为什么不用官方的 `npx skills experimental_install`**（它正是「按这份 lock 还原」那个命令）：2026-09-11 实测，它把技能写进 `<项目>/.agents/skills/<name>` 却不建 `.claude/skills/` 那一份，Claude Code 看不见；配套的 `experimental_sync` 只扫 node_modules，对 GitHub 源的技能报 `No SKILL.md files found in node_modules`。所以装用 `skills add`。等上游把 `experimental_install` 补全，entrypoint 里那个循环可以直接换成它一条命令。
+装用 `skills add` 而不是官方的 `experimental_install`：后者不建 `.claude/skills/`，Claude Code 看不见（DECISIONS 2026-09-11）。
 
 **两个镜像共用这条路,装的位置不同。** entrypoint 按镜像里有哪个 agent CLI 决定,`npx skills` 自己知道每个 agent 读哪里(2026-09-11 实测):
 
@@ -32,13 +34,13 @@
 
 两个都没有就只告警不安装。注意 pi 的 global 落点是 `.pi/agent/skills`,project 作用域才是 `.pi/skills`,别记混。pi 是否真的从这个目录加载技能尚未端到端验证,见 [ROADMAP](ROADMAP.md) 第 7 行。
 
-**为什么默认是清单而不是把技能挂进去。** `npx skills` 只认两个作用域：project（cwd 的 `.claude/skills`）与 global（`~/.agents/.skill-lock.json` + `~/.claude/skills`）。`/etc/claude-code` 不在其中——挂在那儿的技能，`skills list` 看不见、`skills update` 更新不了，只能靠外部脚本模拟一个 HOME 去伺候它。而 `HOME=/state`，global 作用域天然就落在 state 卷里：装一次持久有效，重启不联网（entrypoint 按目录名跳过已装的），更新就是容器内一句 `npx skills update -g`。2026-09-11 实测：容器内 `npx skills add <src> -g -s <name> -a claude-code -y` 正常装进 `/state/.claude/skills/<name>`（实体目录，非软链），lock 落 `/state/.agents/.skill-lock.json`。
+**默认是清单而不是把技能挂进去。** `npx skills` 只认 project（cwd 的 `.claude/skills`）与 global（`~/.agents/.skill-lock.json` + `~/.claude/skills`）两个作用域，`/etc/claude-code` 不在其中：挂在那儿的技能 `skills list` 看不见、`skills update` 更新不了。`HOME=/state`，global 作用域天然落在 state 卷：装一次持久有效，重启不联网（entrypoint 按目录名跳过已装的），更新就是容器内一句 `npx skills update -g`。
 
 清单缺失、npx 不可用、单条安装失败都只 `Warning:` 不中断启动——技能没装上，agent 仍然应该能收消息。清单本身解析不了同样只告警。
 
 `/opt/toolkit` 只是脚本库（`bin/` 进 PATH），Claude Code 不会从那里发现 `SKILL.md`。
 
-**为什么是 `/etc/claude-code` 而不是把宿主目录挂进 `/state/.claude/skills`。** 那是 Claude Code 在 Linux 上的官方托管目录：只读、优先级最高、不需要任何链接或同步逻辑。反过来在 state 卷内部嵌套挂载有一个坑：docker 会以 root 创建嵌套挂载点，`/state/.claude` 变成 root 属主，agent 用户随即写不进会话状态。托管层目录里 `<name>` 可以是软链，Claude Code 会跟随并去重。
+**托管层用 `/etc/claude-code`，不把宿主目录挂进 `/state/.claude/skills`。** 前者是 Claude Code 在 Linux 上的官方托管目录：只读、优先级最高、不需要链接或同步逻辑。后者会踩嵌套挂进 state 卷的坑（[ARCHITECTURE](ARCHITECTURE.md) §5）。托管层目录里 `<name>` 可以是软链，Claude Code 会跟随并去重。
 
 ## 1a. 托管层还能放什么
 
@@ -83,11 +85,11 @@ npx --yes skills add <owner/repo> -g -s <skill-name> -a claude-code -y
 
 entrypoint 在 cc-connect **之前**跑，所以 `config.toml` 的 `[projects.agent.options.env]` 里那套代理变量对它无效——那是 cc-connect 注入给 agent 子进程的。装技能要走代理，`HTTPS_PROXY` / `https_proxy` 必须写进 `env_file`（容器级环境变量）。实测两段都认：npm 取 `skills` 包（`registry.npmjs.org`）和 `skills` 内部 `git clone` 技能仓库，给个不通的代理两段都会失败。
 
-`AGENTBOX_PROFILE=cn` 会把 npm registry 指到 npmmirror（`apply_defaults` 在安装之前跑），**npm 那一段免代理**；技能内容是从 GitHub clone 的，没有镜像，那一段仍需代理。`NO_PROXY` 照 [ARCHITECTURE §5](ARCHITECTURE.md) 同时写 CIDR 与单 IP。
+`AGENTBOX_PROFILE=cn` 会把 npm registry 指到 npmmirror（`apply_defaults` 在安装之前跑），**npm 那一段免代理**；技能内容是从 GitHub clone 的，没有镜像，那一段仍需代理。`NO_PROXY` 照 [ARCHITECTURE](ARCHITECTURE.md) §5 同时写 CIDR 与单 IP。
 
 ## 4. 凭据
 
-技能凭据与桥接器凭据同一条路：`env_file` 真值 → `config.toml` 的 `[projects.agent.options.env]` 写 `${占位符}` → 桥接器注入 agent 子进程。各工具认的变量名与文件位置见 [TOOLS](TOOLS.md)。不能放 shell rc 文件（见 [SECRETS §2](SECRETS.md)）。改完重建容器，日志里不能有 `placeholder references unset variable`。
+技能凭据与桥接器凭据同一条路（[CREDENTIALS](CREDENTIALS.md) §2），各工具认的变量名与文件位置见那里的 §3。改完重建容器，日志里不能有 `placeholder references unset variable`。
 
 ## 5. 三套目录共存
 
@@ -97,7 +99,7 @@ entrypoint 在 cc-connect **之前**跑，所以 `config.toml` 的 `[projects.ag
 
 1. 开发机上跑通。
 2. 从 `.skill-lock.json` 查 `source` 与 `skillPath`。
-3. `grep` 它的 `*.sh` 与 `SKILL.md`，列出依赖的 CLI 与凭据。缺 CLI 的：通用且可锁定的加进 `mise.toml`（见 [TOOLCHAIN §4](TOOLCHAIN.md)），一次性的脚本挂 `/opt/toolkit`。
+3. `grep` 它的 `*.sh` 与 `SKILL.md`，列出依赖的 CLI 与凭据。缺 CLI 的：通用且可锁定的加进 `mise.toml`（[TOOLCHAIN](TOOLCHAIN.md) §4），一次性的脚本挂 `/opt/toolkit`。
 4. 按 §1 选落法安装，一条一条。
 5. 凭据按 §4 配好，重建容器。
 6. 跑技能自带 `test.sh`。

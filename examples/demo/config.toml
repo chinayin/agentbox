@@ -24,7 +24,7 @@ type = "claudecode"
 [projects.agent.options]
 work_dir = "${WORK_DIR}"
 # acceptEdits: agent may edit files, commands still need confirmation.
-# bypassPermissions only with an explicit allow_from list. See docs/SECRETS.md §3.
+# bypassPermissions only with an explicit allow_from list. See docs/CREDENTIALS.md §4.
 mode = "acceptEdits"
 
 [projects.agent.options.env]

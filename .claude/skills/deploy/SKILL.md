@@ -33,7 +33,7 @@ fleet moves together from one line while a host that must stay behind keeps its 
 ```
 
 - `verify-profiles.sh` is for an instance that carries cloud profile files under
-  `instances/<name>/profiles/` with an `accounts.yaml` registry (`docs/CLOUD_ACCOUNTS.md`). It runs
+  `instances/<name>/profiles/` with an `accounts.yaml` registry (`docs/design/CLOUD_ACCOUNTS.md`). It runs
   each cloud CLI locally against the instance's own files, never the operator's `~/.aws` or
   `~/.aliyun`, and asserts that GetCallerIdentity returns the registered `account_id`. Run it before
   `deploy` whenever a profile file or the registry changed; a FAIL means the bot would act on a

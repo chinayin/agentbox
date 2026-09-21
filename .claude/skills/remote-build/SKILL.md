@@ -15,7 +15,7 @@ and tees the log back into `runtime/remote-build/`. Secrets (`.env`, `examples/*
 The host lives in `.claude/skills/remote-build/.env` (gitignored, template in `.env.example`).
 Flags and environment variables override it. If `.env` is missing, do not guess or ask the user
 for an address in chat: point them at `.env.example` and stop. Host addresses and key paths are
-topology information (`docs/SECRETS.md` S2) and stay out of the repo and the transcript.
+topology information (`docs/CREDENTIALS.md` §1, S2) and stay out of the repo and the transcript.
 
 Behind a rule-based proxy such as Clash, a bare IP goes DIRECT and times out; `.env.example`
 shows the `<ip>.sslip.io` + host-key-alias form that forces the SOCKS path.

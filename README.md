@@ -21,7 +21,7 @@ docker compose up -d
 |---|---|---|---|
 | `/agent/config.toml` | ro | 实例声明，只含 `${占位符}`，可进 git | 是 |
 | `/agent/skills-lock.json` | ro | 技能清单（`npx skills add` 生成的 lock，原样用），列出的技能首次启动时装进 `/state`，见 [SKILLS](docs/SKILLS.md) | 否 |
-| `/agent/home` | ro | 家目录声明层：目录结构照 `~` 摆（`.ssh/config`、`.ssh/<key>`、`.kube/config`……），每次启动复制进 `/state`，声明的文件赢、其余不动，见 [TOOLS](docs/TOOLS.md) §1 | 否 |
+| `/agent/home` | ro | 家目录声明层：目录结构照 `~` 摆，每次启动复制进 `/state`，声明的文件赢、其余不动，见 [CREDENTIALS](docs/CREDENTIALS.md) §2 | 否 |
 | `/workspace` | rw | 工作区，宿主目录 bind mount | 是 |
 | `/state` | rw | 会话与身份状态，`HOME` 指向此 | 是 |
 | `/cache` | rw | 构建缓存，每信任域独占 | 建议 |
@@ -30,7 +30,7 @@ docker compose up -d
 | `/refs/<name>` | ro | 只读引用别的工作区 | 否 |
 | `/knowledge` | ro | 共享知识库 | 否 |
 
-环境变量型密钥走 `env_file`；kubeconfig、SSH 私钥、云 CLI 配置这类文件型凭据放实例目录的 `home/`，照家目录的结构摆，整目录挂到 `/agent/home`，映射见 [TOOLS](docs/TOOLS.md)。entrypoint 启动前校验配置文件存在、state 可写、全部占位符有值，缺什么一次性列全后退出 2；配置结构本身的对错由 cc-connect 报。本地开发用根目录的这份 compose，发布到服务器走 `deploy` 技能与独立的部署仓库，镜像按版本从 GHCR 拉取。
+环境变量型密钥走 `env_file`；kubeconfig、SSH 私钥、云 CLI 配置这类文件型凭据放实例目录的 `home/`，照家目录的结构摆，整目录挂到 `/agent/home`。entrypoint 启动前校验配置文件存在、state 可写、全部占位符有值，缺什么一次性列全后退出 2。本地开发用根目录的这份 compose，发布到服务器走 `deploy` 技能与独立的部署仓库，镜像按版本从 GHCR 拉取。
 
 ## 镜像
 
@@ -39,13 +39,11 @@ docker compose up -d
 | `agentbox:<版本>` | 公共工具链 + Claude Code |
 | `agentbox:<版本>-pi` | 公共工具链 + pi，不含 Claude Code |
 
-公共工具链：运行时（Node / Go / Python）、Kubernetes 交付链、云厂商与代码托管 CLI、通用工具、cc-connect。两个镜像共享这一层，只在最后一层各装一个 agent CLI；再加 agent 就是多一个 tag。
-
-工具清单以 `mise.toml`（公共工具链）与 `mise.claude.toml` / `mise.pi.toml`（各 agent）为准，精确版本、下载 URL 与上游提供的 SHA256 锁在 lock 文件里，构建只读 lock。用哪个 agent CLI 由 `config.toml` 的 `agent.type` 决定。版本策略、加工具、发布流程见 [TOOLCHAIN](docs/TOOLCHAIN.md)。
+公共工具链：运行时（Node / Go / Python）、Kubernetes 交付链、云厂商与代码托管 CLI、通用工具、cc-connect。工具清单以 `mise.toml` 与 `mise.claude.toml` / `mise.pi.toml` 为准，精确版本与校验和锁在 lock 文件里，构建只读 lock。用哪个 agent CLI 由 `config.toml` 的 `agent.type` 决定。见 [TOOLCHAIN](docs/TOOLCHAIN.md)。
 
 ## 多实例
 
-**实例 = 一个目录 = 一个 compose 项目 = 一个信任域。** 共享密钥的 project 放同一容器，加一个 `[[projects]]` 块；密钥要隔离才开新实例。每个实例目录自带 `docker-compose.yaml`（模板 `examples/demo/docker-compose.yaml`），`deploy` 在服务器上从该目录内运行 compose，所以搬迁一个实例就是搬一个目录；同一信任域要第二个容器时，在这份文件里再加一个 `<<: *agentbox` 的 service。所有实例共用一张外部 `agentbox` 网络，按容器名互通。详见 [MULTI_PROJECT](docs/MULTI_PROJECT.md)。新实例的骨架由 Claude Code 技能 `.claude/skills/new-instance/SKILL.md` 生成，它先问是否共享密钥再决定走哪条路。
+**实例 = 一个目录 = 一个 compose 项目 = 一个信任域。** 共享密钥的 project 放同一容器，加一个 `[[projects]]` 块；密钥要隔离才开新实例。每个实例目录自带 `docker-compose.yaml`（模板 `examples/demo/docker-compose.yaml`），所有实例共用一张外部 `agentbox` 网络。详见 [INSTANCES](docs/INSTANCES.md)。
 
 ## 开发
 
@@ -56,25 +54,25 @@ make smoke     # 对已构建镜像做运行期验收
 make lock      # 升级工具链到上游最新（通常由 CI 的 lock.yml 跑）
 ```
 
-本地产物统一落 `runtime/`，已被 git 与 docker 忽略。本机网络不适合拉资产时用 remote-build 技能（`.claude/skills/remote-build/SKILL.md`）在远端构建，构建机地址放技能目录下已忽略的 `.env`。
-
-四个 Claude Code 技能分工：`new-instance` 从模板造实例、`import-instance` 从裸机实例反向导入、`remote-build` 在远端构建镜像、`deploy` 把部署仓库推到主机。都在 `.claude/skills/`。
+本地产物统一落 `runtime/`，已被 git 与 docker 忽略。四个 Claude Code 技能都在 `.claude/skills/`：`new-instance` 从模板造实例、`import-instance` 从裸机实例反向导入、`remote-build` 在远端构建镜像、`deploy` 把部署仓库推到主机。
 
 ## 文档
 
-| 文档 | 内容 |
-|---|---|
-| [ARCHITECTURE](docs/ARCHITECTURE.md) | 原则、挂载契约、数据生命周期、构建期/运行期陷阱、明确不做的事 |
-| [TOOLCHAIN](docs/TOOLCHAIN.md) | 工具链组成、版本策略、lock 生成、加工具、CI 与发布 |
-| [CN_MIRRORS](docs/CN_MIRRORS.md) | 境内构建的三层下载模型 |
-| [MULTI_PROJECT](docs/MULTI_PROJECT.md) | 信任域切分、跨实例调用、共享依赖 |
-| [MULTI_CLOUD](docs/MULTI_CLOUD.md) | 多云运维：主 bot 调度各云专才 bot 的两种拓扑、协议规则、每家云的接入件 |
-| [CLOUD_ACCOUNTS](docs/CLOUD_ACCOUNTS.md) | 一家云多个账号：bot 与账号两根轴的拆法、别名名册、AssumeRole 凭据、防误动账号的三道强制层 |
-| [SECRETS](docs/SECRETS.md) | 密级模型、占位符机制、红线 |
-| [TOOLS](docs/TOOLS.md) | 每个工具的凭据位置、环境变量、推荐提供通道 |
-| [SKILLS](docs/SKILLS.md) | 技能与 Claude 全局配置的落法、托管目录、安装 SOP |
-| [GIT_IDENTITY](docs/GIT_IDENTITY.md) | 机器人 git 身份：身份方案、权限、可追溯性、密钥轮换 |
-| [ROADMAP](docs/ROADMAP.md) | 未完成事项 |
+`docs/` 分三类，文件开头一行标明。**契约**写现状，必须与代码一致；**记录**只增不改；**设计稿**未实现，不作现状引用。
+
+| 文档 | 类型 | 内容 |
+|---|---|---|
+| [ARCHITECTURE](docs/ARCHITECTURE.md) | 契约 | 原则、挂载契约、数据生命周期、构建期/运行期陷阱、entrypoint、明确不做的事 |
+| [TOOLCHAIN](docs/TOOLCHAIN.md) | 契约 | 工具链组成、版本策略、lock 生成、加工具、CI 与发布 |
+| [CREDENTIALS](docs/CREDENTIALS.md) | 契约 | 密级、三条凭据通道、每个工具的凭据位置与变量、红线、泄露应急 |
+| [INSTANCES](docs/INSTANCES.md) | 契约 | 信任域切分、实例目录、跨实例调用、网络与资源 |
+| [SKILLS](docs/SKILLS.md) | 契约 | 技能清单、托管层、安装 SOP |
+| [GIT_IDENTITY](docs/GIT_IDENTITY.md) | 契约 | 机器人 git 身份、权限、可追溯性、密钥轮换 |
+| [CN_MIRRORS](docs/CN_MIRRORS.md) | 契约 | 境内运行的镜像源 profile |
+| [ROADMAP](docs/ROADMAP.md) | 记录 | 未完成事项，每项带验收 |
+| [DECISIONS](docs/DECISIONS.md) | 记录 | 已否决方案与实测数字，带日期 |
+| [design/MULTI_CLOUD](docs/design/MULTI_CLOUD.md) | 设计稿 | 多云运维：主 bot 调度各云专才 bot |
+| [design/CLOUD_ACCOUNTS](docs/design/CLOUD_ACCOUNTS.md) | 设计稿 | 一家云多个账号的别名、名册与强制层 |
 
 ## 参与与许可
 

@@ -321,7 +321,7 @@ fi
 # purpose: it names files that are planned or already removed. runtime/ paths are not checked:
 # that directory is gitignored and absent in a fresh clone, so the docs name it as a destination only.
 doc_files=("$ROOT/README.md" "$ROOT/CLAUDE.md")
-for f in "$ROOT"/docs/*.md; do
+for f in "$ROOT"/docs/*.md "$ROOT"/docs/design/*.md; do
 	case "$f" in */ROADMAP.md) continue ;; esac
 	doc_files+=("$f")
 done
@@ -337,6 +337,37 @@ else
 	[ -z "$gone" ] && ok "every repo path named in the docs exists" \
 		|| bad "every repo path named in the docs exists" "${gone}"
 fi
+
+# docs/ is split by lifetime (CLAUDE.md): contract files state the present, record files are
+# append-only, design drafts are unimplemented. Each file declares which it is on a line starting
+# with "> " within its first three lines, so a reader (human or agent) never mistakes a draft for
+# the current architecture. The design banner must literally say the design is unimplemented.
+untagged=""
+for f in "$ROOT"/docs/*.md "$ROOT"/docs/design/*.md; do
+	tag="$(head -3 "$f" | grep -m1 '^> ' || true)"
+	case "$f" in
+	*/design/*) grep -q '未实现' <<<"$tag" || untagged="${untagged}${f#"$ROOT"/} " ;;
+	*) grep -qE '^> (契约|记录)' <<<"$tag" || untagged="${untagged}${f#"$ROOT"/} " ;;
+	esac
+done
+[ -z "$untagged" ] && ok "every docs file declares contract, record or unimplemented design in its banner" \
+	|| bad "every docs file declares contract, record or unimplemented design in its banner" "$untagged"
+
+# File credentials go through /agent/home (docs/CREDENTIALS.md section 2); the old one-file-per-mount
+# form (/agent/kubeconfig:ro, /agent/ssh_key:ro, ...) must not reappear in the contract docs or the
+# templates. ROADMAP and design drafts are excluded: they describe the old form as a pending change.
+allowed_agent='^/agent/(config\.toml|skills-lock\.json|home|\.config\.toml\.lock)$'
+contract_docs=()
+for f in "${doc_files[@]}"; do
+	case "$f" in */design/*) continue ;; esac
+	contract_docs+=("$f")
+done
+# A leading non-path byte anchors the match so /state/.pi/agent/skills is not read as an /agent mount;
+# the trailing dot strip handles a path ending a sentence.
+stray="$(grep -ohE '(^|[^A-Za-z0-9./])/agent/[A-Za-z0-9._-]+' "${contract_docs[@]}" "$ROOT"/examples/*/* "$ROOT/docker-compose.yaml" 2>/dev/null \
+	| sed -E 's#^[^/]##; s/\.$//' | sort -u | grep -vE "$allowed_agent" || true)"
+[ -z "$stray" ] && ok "docs and templates mount nothing under /agent/ except config, skills-lock and home" \
+	|| bad "docs and templates mount nothing under /agent/ except config, skills-lock and home" "$(tr '\n' ' ' <<<"$stray")"
 
 # deploy.sh gates on placeholders locally, entrypoint.sh gates on them inside the container. If the
 # two disagree, a deploy passes and the container then exits 2. Same config in, same names out.
@@ -1129,7 +1160,7 @@ out="$(python3 "$IM_SRC/render.py" --inventory "$im/nosuch.inv" --lock "$ROOT/mi
 [ "$rc" -eq 2 ] && grep -q 'Error:' <<<"$out" && ! grep -q 'Traceback' <<<"$out" \
 	&& ok "render.py exits 2 on a missing inventory file, no traceback" || bad "render.py exits 2 on a missing inventory file, no traceback" "rc=$rc $out"
 # ~/.gnupg keeps its own line and its own reason, distinct from the state-volume note
-grep -qE '\.gnupg.*docs/TOOLS\.md' <<<"$plan" && ok "plan explains the .gnupg credential channel separately" || bad "plan explains the .gnupg credential channel separately" "$plan"
+grep -qE '\.gnupg.*docs/CREDENTIALS\.md' <<<"$plan" && ok "plan explains the .gnupg credential channel separately" || bad "plan explains the .gnupg credential channel separately" "$plan"
 
 # import on the fixture: files land only under the target, secrets only in files, plan on stdout
 touch "$im/marker"; sleep 1
@@ -1273,7 +1304,7 @@ grep -q '^  workflow_call:' "$ROOT/.github/workflows/ci.yml" \
 
 group "verify-profiles"
 
-# Deploy-time check of an instance's cloud profiles against its accounts.yaml (docs/CLOUD_ACCOUNTS.md).
+# Deploy-time check of an instance's cloud profiles against its accounts.yaml (docs/design/CLOUD_ACCOUNTS.md).
 # Fixture: a fake deploy repo plus stub CLIs, so the test needs no network and no real keys.
 VP="$ROOT/.claude/skills/deploy/scripts/verify-profiles.sh"
 vp="$TMP/vp"; mkdir -p "$vp/bin" "$vp/hosts/h/instances/i/profiles/aws" "$vp/hosts/h/instances/i/profiles/aliyun" "$vp/hosts/h/instances/i/profiles/tccli"

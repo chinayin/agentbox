@@ -1,5 +1,5 @@
 # One service = one trust domain (not one project). Same secrets -> same container, add a
-# [[projects]] block in config.toml. Separate secrets -> separate service. See docs/MULTI_PROJECT.md.
+# [[projects]] block in config.toml. Separate secrets -> separate service. See docs/INSTANCES.md.
 #
 #   docker network create agentbox
 #   cp .env.example .env
@@ -17,7 +17,7 @@ x-agentbox: &agentbox
     - no-new-privileges:true
   cap_drop:
     - ALL
-  # Only pids is capped; memory/cpu are unbounded on purpose. Rationale: docs/MULTI_PROJECT.md §6.
+  # Only pids is capped; memory/cpu are unbounded on purpose. Rationale: docs/INSTANCES.md §6.
   deploy:
     resources:
       limits:
