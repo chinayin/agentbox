@@ -57,10 +57,13 @@ wall clock their cron schedules run on, and every instance there inherits both.
   (`home/.ssh/config`, `home/.ssh/<key>`, `home/.kube/config`): it is mirrored with the instance,
   mounted at `/agent/home`, and the entrypoint copies it into `/state` on every start. Adding a file
   credential is adding a file there; compose and `config.toml` do not change.
-- An instance directory may carry `workspace-init/`: `deploy` syncs it into the instance's
-  workspace without overwriting files already there, and keeps it out of the server's `instances/`
-  mirror. `plan` lists the instances it will seed. If the workspace is a git checkout, the clone must exist before the
-  first deploy that carries a seed (`references/deploy-repo.md`).
+- An instance directory may carry two workspace directories, both synced straight into the
+  instance's workspace and kept out of the server's `instances/` mirror. `workspace/` holds
+  operator-owned files (`CLAUDE.md`, `.claude/agents/`) and is overwritten on every deploy, so a
+  prompt change lands with the deploy. `workspace-init/` seeds files the agent owns afterwards
+  (a repo's `secrets/`) and never overwrites. `plan` lists the instances it will seed or
+  overwrite. If the workspace is a git checkout, the clone must exist before the first deploy that
+  carries either directory (`references/deploy-repo.md`).
 - `remove` retires an instance whose directory has been deleted from the deploy repo and
   committed: it runs `docker compose down` from the server's copy, then deletes that directory.
   Volumes and the workspace are kept, and a seeded workspace still holds plaintext secrets: say so. Run it before the next `deploy`, which refuses to mirror away a directory the

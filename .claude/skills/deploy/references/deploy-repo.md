@@ -20,6 +20,7 @@ agentbox-deploy/
         aliyun/{docker-compose.yaml,config.toml,env,home/.kube/config}
         demo/{docker-compose.yaml,config.toml,env}
         uufly/{docker-compose.yaml,config.toml,env,workspace-init/}
+        multicloud/{docker-compose.yaml,config.toml,env,home/,workspace/}
     prod-cn/
       host.env
       instances/...
@@ -103,21 +104,31 @@ anyway. For an `.ssh/config`, write `IdentityFile ~/.ssh/<key>` and `IdentitiesO
 prefer `StrictHostKeyChecking accept-new` over a declared `known_hosts`, which would be reset to
 the declared content at every start.
 
-## `instances/<name>/workspace-init/`（可选）
+## `instances/<name>/workspace/` and `workspace-init/`（可选）
 
-A one-time seed for the instance's workspace, for files the agent must own and may rewrite: a
-repository's gitignored `secrets/`, a tool's local config. Those cannot be `:ro` bind mounts and
-are not environment variables, so they travel as files. `deploy` syncs the directory straight into
-`DEPLOY_DIR/workspaces/<name>/` with `rsync --ignore-existing`: a file the workspace already has is
-never overwritten, so the agent's later edits survive every redeploy while a fresh workspace still
-gets everything. It is excluded from the `instances/` mirror, so the workspace is the only copy of
-those secrets on the host; this directory in the repo is the backup, not a sync channel. Sync a
-changed file back here by hand when you want the backup refreshed.
+Two directories feed the instance's workspace at `DEPLOY_DIR/workspaces/<name>/`, split by who
+owns the files afterwards. Both are excluded from the `instances/` mirror, so the workspace is the
+only copy on the host.
+
+`workspace/` holds operator-owned files the agent reads but must not rewrite: `CLAUDE.md`,
+`.claude/agents/*.md`, `.claude/settings.json`. `deploy` syncs it with plain `rsync -a`: a changed
+file replaces the copy on the server on every deploy, so a prompt edit is live after the next
+deploy with no manual step. It runs without `--delete`, so the agent's own files next to them are
+never touched, and a file removed from the repo stays in the workspace until deleted by hand. On a
+path both directories carry, `workspace/` wins.
+
+`workspace-init/` is a one-time seed for files the agent must own and may rewrite: a repository's
+gitignored `secrets/`, a tool's local config. Those cannot be `:ro` bind mounts and are not
+environment variables, so they travel as files. `deploy` syncs it with `rsync --ignore-existing`:
+a file the workspace already has is never overwritten, so the agent's later edits survive every
+redeploy while a fresh workspace still gets everything. This directory in the repo is the backup,
+not a sync channel; sync a changed file back here by hand when you want the backup refreshed. A
+prompt that operations will keep editing does not belong here: it would land once and never again.
 
 Files keep the mode they have in the repo (keep secrets `0600` here), and the whole workspace is
 chowned to UID 1000 after the sync, the owner every file in a workspace has anyway. If the
-workspace is a git checkout, clone it before the first `deploy` that carries a seed: `git clone`
-refuses a non-empty directory, and the seed makes it non-empty.
+workspace is a git checkout, clone it before the first `deploy` that carries either directory:
+`git clone` refuses a non-empty directory.
 
 Optional, at the repo root, and read for exactly one variable:
 
@@ -210,7 +221,7 @@ The server holds only deploy artifacts, no source:
   instances/<name>/env                 0600, owned by UID 1000
   instances/<name>/home/**             0600, owned by UID 1000 (file credentials, laid out like ~; mounted at /agent/home)
   instances/<name>/claude/             read-only managed layer for /etc/claude-code (skills, lock)
-  workspaces/<name>/                   created and chowned to UID 1000 by deploy; seeded from the repo's workspace-init/
+  workspaces/<name>/                   created and chowned to UID 1000 by deploy; seeded once from the repo's workspace-init/, overwritten from its workspace/
 ```
 
 `state` and `cache` are docker named volumes (`<name>_state`, `<name>_cache`), not part of this

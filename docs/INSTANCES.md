@@ -23,7 +23,8 @@
 | `env` | 环境变量型凭据，0600 |
 | `home/`（可选） | 文件型凭据，照 `~` 的结构摆（[CREDENTIALS](CREDENTIALS.md) §2） |
 | `skills-lock.json`（可选） | 技能清单（[SKILLS](SKILLS.md)） |
-| `workspace-init/`（可选） | 工作区一次性种子：agent 要能改写、因而不能 `:ro` 挂的文件（[CREDENTIALS](CREDENTIALS.md) §2） |
+| `workspace/`（可选） | 工作区里由运维声明、agent 只读不改的文件：工作区的 `CLAUDE.md`、subagent 定义、项目级 settings。`deploy` 每次直接覆盖进工作区（不带 `--delete`，agent 自己的文件不动），从仓库删掉的文件要手工清；不进服务器的 `instances/` 镜像 |
+| `workspace-init/`（可选） | 工作区一次性种子：agent 要能改写、因而不能 `:ro` 挂的文件（[CREDENTIALS](CREDENTIALS.md) §2）。已存在的文件永不覆盖，所以运维要改的提示词不得放这里 |
 
 `deploy` 在服务器上进入该目录运行 compose，每个实例独立 `pull`/`up`。搬迁一个实例只需带走这个目录、它的工作区与两个卷。
 

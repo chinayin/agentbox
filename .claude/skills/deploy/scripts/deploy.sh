@@ -4,9 +4,10 @@
 # Every instance is its own compose project: hosts/<host>/instances/<name>/ holds docker-compose.yaml,
 # config.toml, env and file credentials, and `docker compose` runs from inside that directory on the
 # server, so an instance moves between hosts as one directory and one instance's broken file cannot
-# block another's deploy. An optional workspace-init/ in that directory seeds the instance's
-# workspace: it goes straight into the workspace without overwriting, and never into the server's
-# instances/ mirror, so the workspace is the only copy on the host.
+# block another's deploy. Two optional directories feed the instance's workspace directly and never
+# the server's instances/ mirror: workspace/ (operator-owned files such as CLAUDE.md and
+# .claude/agents/, overwritten on every deploy) and workspace-init/ (a one-time seed of files the
+# agent owns afterwards, never overwritten).
 # The repo path comes from, in order of precedence: --repo, AGENTBOX_DEPLOY_REPO, the skill's .env
 # file (../.env next to this script, gitignored; template in ../.env.example).
 # Per-host connection details live in the deploy repo at hosts/<host>/host.env and never in here.
@@ -75,9 +76,12 @@ that host; it is derived into the remote .env next to the version. TZ in host.en
 such as Asia/Shanghai, default UTC) is derived the same way and sets the container clock, which is
 what cc-connect's cron and timer schedules run against.
 
-An instance directory may carry workspace-init/: deploy syncs it into the instance's workspace
-without overwriting files already there, and leaves it out of the instances/ mirror, so a file the
-agent later rewrites is never reset by a redeploy and the workspace is the only copy on the host.
+An instance directory may carry two workspace directories, both synced straight into the instance's
+workspace and left out of the instances/ mirror. workspace/ holds operator-owned files (CLAUDE.md,
+.claude/agents/) and is overwritten on every deploy, so a prompt change lands with the deploy; a
+file removed from it stays in the workspace until deleted by hand. workspace-init/ is a one-time
+seed of files the agent owns afterwards (a repo's gitignored secrets/): never overwritten, so the
+agent's later edits survive every redeploy and the workspace is the only copy on the host.
 
 Deploy logs are written to runtime/deploy/<timestamp>-<action>-<host>.log under the repo root.
 
@@ -315,11 +319,14 @@ print_plan() {
 	echo "  version:   ${AGENTBOX_VERSION} (from ${VERSION_SOURCE})" >&2
 	echo "  profile:   ${AGENTBOX_PROFILE} (from ${PROFILE_SOURCE})" >&2
 	echo "  timezone:  ${TZ_VALUE} (from ${TZ_SOURCE})" >&2
-	echo "  will sync: instances/ (docker-compose.yaml + config.toml + env + file credentials, env as 0600; workspace-init/ excluded)" >&2
+	echo "  will sync: instances/ (docker-compose.yaml + config.toml + env + file credentials, env as 0600; workspace/ and workspace-init/ excluded)" >&2
 	echo "  instances/ on the server is mirrored; a directory the repo no longer has must be retired with remove first" >&2
 	while IFS= read -r n; do
-		[ -n "${n}" ] && [ -d "${HOST_DIR}/instances/${n}/workspace-init" ] || continue
-		echo "  will seed: workspaces/${n} from instances/${n}/workspace-init (existing files kept)" >&2
+		[ -n "${n}" ] || continue
+		[ -d "${HOST_DIR}/instances/${n}/workspace-init" ] \
+			&& echo "  will seed: workspaces/${n} from instances/${n}/workspace-init (existing files kept)" >&2
+		[ -d "${HOST_DIR}/instances/${n}/workspace" ] \
+			&& echo "  will overwrite: workspaces/${n} from instances/${n}/workspace (operator-owned files replaced, nothing else touched)" >&2
 	done < <(list_instances)
 	echo "  will restart these compose projects (one per instance), interrupting any session in progress:" >&2
 	while IFS= read -r n; do
@@ -379,10 +386,10 @@ sync_host() {
 	# shellcheck disable=SC2064  # expand tmp now, on purpose
 	trap "rm -rf '${tmp}'" RETURN
 	make_rsync_ssh "${tmp}/ssh"
-	# workspace-init/ is the one thing in an instance directory that is not for the instances/ mirror:
-	# it belongs in the workspace (init_workspaces takes it there directly). --delete-excluded also
-	# clears one that an earlier deploy may have left in the mirror.
-	local -a args=(-a --delete --delete-excluded --exclude=/instances/*/workspace-init)
+	# workspace/ and workspace-init/ are the two things in an instance directory that are not for the
+	# instances/ mirror: they belong in the workspace (init_workspaces takes them there directly).
+	# --delete-excluded also clears one that an earlier deploy may have left in the mirror.
+	local -a args=(-a --delete --delete-excluded --exclude=/instances/*/workspace-init --exclude=/instances/*/workspace)
 	[ "${VERBOSE}" -eq 1 ] && args+=(-v)
 	if [ "${DRY_RUN}" -eq 1 ]; then
 		echo "plan: refuse if the server holds an instance directory the repo no longer has (retire it with remove first)" >&2
@@ -496,32 +503,55 @@ remote_up() {
 	echo "${log}"
 }
 
-# instances/<name>/workspace-init/ seeds the workspace with files the agent must own and may rewrite
-# (a repo's gitignored secrets/, a local tool config), which rules out a :ro bind mount. It is synced
-# straight into the workspace: --ignore-existing never overwrites, so the agent's later edits survive
-# every redeploy while a fresh workspace still gets everything, and nothing lands in instances/ on the
-# server, so the workspace holds the only copy of those secrets. The whole workspace is then chowned
-# to the agent uid: the local rsync cannot map owners, and every file there belongs to the agent
-# anyway. Only the instances this run restarts are seeded; prepare_workspaces has made their
-# directories.
+# Two directories feed the workspace, split by who owns the files afterwards; neither lands in
+# instances/ on the server, so the workspace is the only copy on the host.
+# - workspace-init/ seeds files the agent must own and may rewrite (a repo's gitignored secrets/, a
+#   local tool config), which rules out a :ro bind mount. --ignore-existing never overwrites, so the
+#   agent's later edits survive every redeploy while a fresh workspace still gets everything.
+# - workspace/ carries operator-owned files (CLAUDE.md, .claude/agents/). It is synced without
+#   --ignore-existing so a change in the repo replaces the copy on the server on every deploy, and
+#   without --delete so the agent's own files next to them are never touched; a file dropped from
+#   the repo stays until removed by hand. It runs after the seed, so on a path both carry the
+#   operator's copy wins.
+# The whole workspace is then chowned to the agent uid: the local rsync cannot map owners, and every
+# file there belongs to the agent anyway. Only the instances this run restarts are handled;
+# prepare_workspaces has made their directories.
 init_workspaces() {
-	local n src ws tmp
+	local n src ws tmp had
 	tmp="$(mktemp -d)"
 	# shellcheck disable=SC2064  # expand tmp now, on purpose
 	trap "rm -rf '${tmp}'" RETURN
 	make_rsync_ssh "${tmp}/ssh"
 	while IFS= read -r n; do
-		[ -n "${n}" ] && [ -d "${HOST_DIR}/instances/${n}/workspace-init" ] || continue
-		src="${HOST_DIR}/instances/${n}/workspace-init/"
+		[ -n "${n}" ] || continue
 		ws="${DEPLOY_DIR}/workspaces/${n}"
-		if [ "${DRY_RUN}" -eq 1 ]; then
-			echo "plan: rsync -a --ignore-existing ${src} ${DEPLOY_HOST}:${ws}/ (existing files kept)" >&2
-			echo "plan: chown -R 1000:1000 ${ws}" >&2
-			continue
+		had=0
+		if [ -d "${HOST_DIR}/instances/${n}/workspace-init" ]; then
+			had=1
+			src="${HOST_DIR}/instances/${n}/workspace-init/"
+			if [ "${DRY_RUN}" -eq 1 ]; then
+				echo "plan: rsync -a --ignore-existing ${src} ${DEPLOY_HOST}:${ws}/ (existing files kept)" >&2
+			else
+				step "seeding ${ws} from workspace-init"
+				rsync -a --ignore-existing -e "${tmp}/ssh" "${src}" "${DEPLOY_HOST}:${ws}/"
+			fi
 		fi
-		step "seeding ${ws} from workspace-init"
-		rsync -a --ignore-existing -e "${tmp}/ssh" "${src}" "${DEPLOY_HOST}:${ws}/"
-		rssh "chown -R 1000:1000 '${ws}'"
+		if [ -d "${HOST_DIR}/instances/${n}/workspace" ]; then
+			had=1
+			src="${HOST_DIR}/instances/${n}/workspace/"
+			if [ "${DRY_RUN}" -eq 1 ]; then
+				echo "plan: rsync -a ${src} ${DEPLOY_HOST}:${ws}/ (operator-owned files overwritten)" >&2
+			else
+				step "overwriting operator-owned files in ${ws} from workspace"
+				rsync -a -e "${tmp}/ssh" "${src}" "${DEPLOY_HOST}:${ws}/"
+			fi
+		fi
+		[ "${had}" -eq 1 ] || continue
+		if [ "${DRY_RUN}" -eq 1 ]; then
+			echo "plan: chown -R 1000:1000 ${ws}" >&2
+		else
+			rssh "chown -R 1000:1000 '${ws}'"
+		fi
 	done < <(list_instances)
 }
 

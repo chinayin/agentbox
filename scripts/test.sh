@@ -946,6 +946,27 @@ grep -q 'will seed: workspaces/a1 from instances/a1/workspace-init' <<<"$out" \
 	&& ok "workspace-init contents never appear in dry-run -v output" || bad "workspace-init contents never appear in dry-run -v output" "$out"
 rm -r "$dp/repo/hosts/h1/instances/a1/workspace-init"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm noseed ) 2>/dev/null
+# workspace/ carries operator-owned files (CLAUDE.md, .claude/agents/). Once --ignore-existing kept a
+# rewritten prompt from ever reaching a running instance, so this directory is synced without it, and
+# without --delete so the agent's own files next to them survive; it also stays out of the mirror.
+! grep -q 'will overwrite' <<<"$out" \
+	&& ok "an instance without workspace/ gets no overwrite step" || bad "an instance without workspace/ gets no overwrite step" "$out"
+mkdir -p "$dp/repo/hosts/h1/instances/a1/workspace/.claude/agents"
+printf '# prompt-v2\n' > "$dp/repo/hosts/h1/instances/a1/workspace/CLAUDE.md"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm wsdecl ) 2>/dev/null
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run -v deploy h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "rsync -a $dp/repo/hosts/h1/instances/a1/workspace/ user@h1.example.test:/data/agentbox/workspaces/a1/" <<<"$out" \
+	&& ok "workspace/ is synced into the workspace overwriting existing files" || bad "workspace/ is synced into the workspace overwriting existing files" "rc=$rc $out"
+! grep -q 'ignore-existing' <<<"$out" && ! grep -q -- '--delete .*workspace/ ' <<<"$out" \
+	&& ok "workspace/ sync uses neither --ignore-existing nor --delete" || bad "workspace/ sync uses neither --ignore-existing nor --delete" "$out"
+grep -qF -- '--exclude=/instances/*/workspace ' <<<"$out" \
+	&& ok "workspace/ stays out of the instances/ mirror" || bad "workspace/ stays out of the instances/ mirror" "$out"
+grep -q 'chown -R 1000:1000 /data/agentbox/workspaces/a1' <<<"$out" \
+	&& ok "a workspace fed only by workspace/ is still chowned to the agent uid" || bad "a workspace fed only by workspace/ is still chowned to the agent uid" "$out"
+grep -q 'will overwrite: workspaces/a1 from instances/a1/workspace' <<<"$out" \
+	&& ok "plan announces the overwrite step" || bad "plan announces the overwrite step" "$out"
+rm -r "$dp/repo/hosts/h1/instances/a1/workspace"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm nowsdecl ) 2>/dev/null
 
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run status h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'compose ps' <<<"$out" \
