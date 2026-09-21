@@ -40,7 +40,7 @@ repo. Templates live in agentbox and go in git; real values live in the deploy r
 ## `host.env`
 
 Connection fields (top half) are read locally by `deploy.sh` and never leave this machine. Only
-`AGENTBOX_VERSION` and `AGENTBOX_PROFILE` (bottom half) are derived into the `.env` that
+`AGENTBOX_VERSION`, `AGENTBOX_PROFILE` and `TZ` (bottom half) are derived into the `.env` that
 `docker compose` reads on the server, one copy per instance directory.
 
 ```env
@@ -53,6 +53,7 @@ DEPLOY_DIR=/data/agentbox
 # Derived into the remote .env; nothing else in this file is.
 AGENTBOX_VERSION=x.x.x
 AGENTBOX_PROFILE=cn
+TZ=Asia/Shanghai
 ```
 
 - `DEPLOY_HOST` / `DEPLOY_KEY` / `DEPLOY_HOST_KEY_ALIAS` / `DEPLOY_SOCKS` follow the same shape as
@@ -66,9 +67,15 @@ AGENTBOX_PROFILE=cn
 - `AGENTBOX_PROFILE` is the runtime mirror profile for every instance on this host: `cn` for a host
   in mainland China, `global` (the default when the line is absent) elsewhere. It is a fact about
   where the host sits, so it lives here and not in any instance's `env`; the shared compose block
-  passes it into the container as `environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}"}`
-  and `plan` refuses a compose file without that line. Any other value fails `plan` locally. What
-  the profile changes is listed in agentbox `docs/CN_MIRRORS.md`.
+  passes it into the container together with `TZ` as
+  `environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}", TZ: "${TZ:-UTC}"}`, and `plan`
+  refuses a compose file without that line. Any other value fails `plan` locally. What the profile
+  changes is listed in agentbox `docs/CN_MIRRORS.md`.
+- `TZ` is the wall clock the containers on this host run on, an IANA zone name such as
+  `Asia/Shanghai`; absent means `UTC`. cc-connect's cron and timer schedules and every timestamp the
+  agent prints follow it, so a job written as `0 9 * * *` means 09:00 in this zone. `plan` checks the
+  name against this machine's zoneinfo, because an unknown name would silently fall back to UTC in
+  the container.
 
 ## `instances/<name>/skills-lock.json`（可选）
 

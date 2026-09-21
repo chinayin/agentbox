@@ -577,7 +577,7 @@ check_instance_compose() {
 		&& grep -q '^      - state:/state$' "$f" && grep -q '^      - cache:/cache$' "$f" \
 		&& grep -q '^  state:$' "$f" && grep -q '^  cache:$' "$f" && grep -q '^    external: true$' "$f" \
 		&& grep -q 'cap_drop: \[ALL\]' "$f" && grep -q 'no-new-privileges:true' "$f" && grep -q 'pids: 512' "$f" \
-		&& grep -q '^  environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}"}$' "$f" \
+		&& grep -q '^  environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}", TZ: "${TZ:-UTC}"}$' "$f" \
 		&& ! grep -q '^      #' "$f" && ! grep -q 'demo' "$f" \
 		&& ok "${label} docker-compose.yaml has the shared instance structure" || bad "${label} docker-compose.yaml has the shared instance structure" "$(cat "$f" 2>/dev/null)"
 }
@@ -667,7 +667,7 @@ group "deploy skill"
 dp="$TMP/dp"; mkdir -p "$dp/skill/scripts"; cp "$DP_SRC" "$dp/skill/scripts/"
 mkdir -p "$dp/repo/hosts/h1/instances/a1" "$dp/other/hosts/h2/instances/a2"
 # Every instance is its own compose project; the fixture files carry the shared block the deploy
-# skill enforces (cap_drop, no-new-privileges, pids, external network, version and profile variables).
+# skill enforces (cap_drop, no-new-privileges, pids, external network, version, profile and TZ variables).
 compose_fixture() {
 	cat > "$1" <<'YML'
 x-agentbox: &agentbox
@@ -677,7 +677,7 @@ x-agentbox: &agentbox
   deploy: {resources: {limits: {pids: 512}}}
   networks: [agentbox]
   env_file: [./env]
-  environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}"}
+  environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}", TZ: "${TZ:-UTC}"}
 services:
   svc:
     <<: *agentbox
@@ -843,7 +843,7 @@ out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run 
 printf "${h1env}AGENTBOX_VERSION=0.1.0\nAGENTBOX_PROFILE=cn\n" > "$dp/repo/hosts/h1/host.env"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm profile ) 2>/dev/null
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
-[ "$rc" -eq 0 ] && grep -q 'profile:   cn (from hosts/h1/host.env)' <<<"$out" && grep -q 'AGENTBOX_PROFILE=cn for every instance' <<<"$out" \
+[ "$rc" -eq 0 ] && grep -q 'profile:   cn (from hosts/h1/host.env)' <<<"$out" && grep -q 'AGENTBOX_PROFILE=cn TZ=[A-Za-z/_]* for every instance' <<<"$out" \
 	&& ok "host.env AGENTBOX_PROFILE is derived into every instance's remote .env" || bad "host.env AGENTBOX_PROFILE is derived into every instance's remote .env" "rc=$rc $out"
 printf "${h1env}AGENTBOX_VERSION=0.1.0\nAGENTBOX_PROFILE=CN\n" > "$dp/repo/hosts/h1/host.env"
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
@@ -856,6 +856,30 @@ out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --
 	&& ok "plan refuses an instance compose that does not pass the profile through" || bad "plan refuses an instance compose that does not pass the profile through" "rc=$rc $out"
 mv "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml.bak" "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm version ) 2>/dev/null
+# Time zone, same channel as the profile (2026-09-21: "0 9 * * *" fired at 17:00 Beijing time on a
+# UTC container). Default UTC, host.env overrides, a name glibc would silently ignore fails plan.
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'timezone:  UTC (from default)' <<<"$out" && grep -q 'TZ=UTC for every instance' <<<"$out" \
+	&& ok "TZ defaults to UTC and is written into every instance's remote .env" || bad "TZ defaults to UTC and is written into every instance's remote .env" "rc=$rc $out"
+printf "${h1env}AGENTBOX_VERSION=0.1.0\nTZ=Asia/Shanghai\n" > "$dp/repo/hosts/h1/host.env"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run deploy h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'timezone:  Asia/Shanghai (from hosts/h1/host.env)' <<<"$out" && grep -q 'TZ=Asia/Shanghai for every instance' <<<"$out" \
+	&& ok "host.env TZ is derived into the remote .env" || bad "host.env TZ is derived into the remote .env" "rc=$rc $out"
+printf "${h1env}AGENTBOX_VERSION=0.1.0\nTZ=Asia/Beijing\n" > "$dp/repo/hosts/h1/host.env"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'TZ Asia/Beijing is not in /usr/share/zoneinfo' <<<"$out" \
+	&& ok "an unknown zone name fails plan locally (exit 1)" || bad "an unknown zone name fails plan locally (exit 1)" "rc=$rc $out"
+printf "${h1env}AGENTBOX_VERSION=0.1.0\nTZ=Asia/Shanghai; rm -rf /\n" > "$dp/repo/hosts/h1/host.env"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'TZ must be an IANA zone name' <<<"$out" \
+	&& ok "a TZ value with shell metacharacters fails plan locally (exit 1)" || bad "a TZ value with shell metacharacters fails plan locally (exit 1)" "rc=$rc $out"
+sed -i.bak 's/, TZ: "${TZ:-UTC}"//' "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
+printf "${h1env}AGENTBOX_VERSION=0.1.0\n" > "$dp/repo/hosts/h1/host.env"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'missing .*TZ' <<<"$out" \
+	&& ok "plan refuses an instance compose that does not pass TZ through" || bad "plan refuses an instance compose that does not pass TZ through" "rc=$rc $out"
+mv "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml.bak" "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm tz ) 2>/dev/null
 
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "deploy --dry-run exits 0" || bad "deploy --dry-run exits 0" "rc=$rc $out"
@@ -1258,7 +1282,7 @@ dc="$ROOT/examples/demo/docker-compose.yaml"
 grep -q 'cap_drop: \[ALL\]' "$dc" && grep -q 'no-new-privileges:true' "$dc" && grep -qE 'pids: [0-9]+' "$dc" \
 	&& grep -q 'external: true' "$dc" && grep -q 'image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}$' "$dc" \
 	&& grep -q '^  env_file: \[./env\]$' "$dc" && grep -q '^      - ./config.toml:/agent/config.toml:ro$' "$dc" \
-	&& grep -q '^  environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}"}$' "$dc" \
+	&& grep -q '^  environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}", TZ: "${TZ:-UTC}"}$' "$dc" \
 	&& ok "the demo compose template carries the shared block deploy.sh enforces" || bad "the demo compose template carries the shared block deploy.sh enforces" ""
 ls "$ROOT"/examples/*/env "$ROOT/.env" >/dev/null 2>&1 && bad "no real env file in the repo" "an env file without .example was found" || ok "no real env file in the repo"
 

@@ -71,7 +71,9 @@ copy .env.example). Flags and environment win. Per-host connection details live 
 at hosts/<host>/host.env. The image version comes from --image-version, else that host.env, else
 AGENTBOX_VERSION in the repo-level defaults.env; the plan prints which one it used. AGENTBOX_PROFILE
 in host.env (cn or global, default global) selects the runtime mirror profile for every instance on
-that host; it is derived into the remote .env next to the version.
+that host; it is derived into the remote .env next to the version. TZ in host.env (an IANA zone
+such as Asia/Shanghai, default UTC) is derived the same way and sets the container clock, which is
+what cc-connect's cron and timer schedules run against.
 
 An instance directory may carry workspace-init/: deploy syncs it into the instance's workspace
 without overwriting files already there, and leaves it out of the instances/ mirror, so a file the
@@ -125,13 +127,16 @@ AGENTBOX_VERSION=""
 VERSION_SOURCE=""
 AGENTBOX_PROFILE=""
 PROFILE_SOURCE=""
+TZ_VALUE=""
+TZ_SOURCE=""
 declare -a SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
 
-# hosts/<host>/host.env: connection fields stay local, AGENTBOX_VERSION and AGENTBOX_PROFILE are
-# derived to the remote. The version is the one field a fleet usually moves together, so it also has
+# hosts/<host>/host.env: connection fields stay local, AGENTBOX_VERSION, AGENTBOX_PROFILE and TZ
+# are derived to the remote. The version is the one field a fleet usually moves together, so it also has
 # a repo-level default in defaults.env; a host that must stay behind pins its own in host.env.
-# Connection fields and the profile are per-host by nature and are never read from defaults.env:
-# where the host sits decides which package sources its containers reach (docs/CN_MIRRORS.md).
+# Connection fields, the profile and the time zone are per-host by nature and are never read from
+# defaults.env: where the host sits decides which package sources its containers reach
+# (docs/CN_MIRRORS.md) and which wall clock a "9:00 every day" cron job means.
 load_host_env() {
 	local f="${HOST_DIR}/host.env" d="${REPO}/defaults.env" line name val
 	[ -d "${HOST_DIR}" ] || die "host ${HOST} not found in ${REPO}/hosts"
@@ -150,6 +155,7 @@ load_host_env() {
 		name="${line%%=*}"; val="${line#*=}"
 		case "${name}" in
 			DEPLOY_HOST|DEPLOY_KEY|DEPLOY_HOST_KEY_ALIAS|DEPLOY_SOCKS|DEPLOY_DIR|AGENTBOX_VERSION|AGENTBOX_PROFILE) ;;
+			TZ) TZ_VALUE="${val}"; TZ_SOURCE="hosts/${HOST}/host.env"; continue ;;
 			*) continue ;;
 		esac
 		# shellcheck disable=SC2088  # matching a literal leading ~/ from the file is the point here
@@ -166,6 +172,18 @@ load_host_env() {
 	case "${AGENTBOX_PROFILE}" in
 		cn|global) ;;
 		*) die "${f}: AGENTBOX_PROFILE must be cn or global, got '${AGENTBOX_PROFILE}'" ;;
+	esac
+	# 2026-09-21: a cron job written as "0 9 * * *" fired at 17:00 local time because the container
+	# ran on UTC. The zone is an IANA name; an unknown one makes glibc fall back to UTC silently, so
+	# check it against this machine's zoneinfo when there is one.
+	if [ -z "${TZ_VALUE}" ]; then
+		TZ_VALUE=UTC; TZ_SOURCE=default
+	fi
+	case "${TZ_VALUE}" in
+		UTC) ;;
+		*[!A-Za-z0-9/_+-]*|/*|*/) die "${f}: TZ must be an IANA zone name such as Asia/Shanghai, got '${TZ_VALUE}'" ;;
+		*) [ ! -d /usr/share/zoneinfo ] || [ -f "/usr/share/zoneinfo/${TZ_VALUE}" ] \
+			|| die "${f}: TZ ${TZ_VALUE} is not in /usr/share/zoneinfo on this machine" ;;
 	esac
 	if [ -n "${VERSION_FLAG}" ]; then
 		AGENTBOX_VERSION="${VERSION_FLAG}"; VERSION_SOURCE="--image-version"
@@ -235,7 +253,7 @@ PY
 # `docker compose config -q` on the rendered file before `up`.
 check_compose() {
 	local name="$1" f="$2" p bad=()
-	for p in 'cap_drop: \[ALL\]' 'no-new-privileges:true' 'pids: [0-9]+' 'external: true' '\$\{AGENTBOX_VERSION\}' '\$\{AGENTBOX_PROFILE'; do
+	for p in 'cap_drop: \[ALL\]' 'no-new-privileges:true' 'pids: [0-9]+' 'external: true' '\$\{AGENTBOX_VERSION\}' '\$\{AGENTBOX_PROFILE' '\$\{TZ'; do
 		grep -qE "${p}" "${f}" || bad+=("missing ${p}")
 	done
 	for p in privileged 'docker\.sock' network_mode cap_add; do
@@ -296,6 +314,7 @@ print_plan() {
 	echo "  host:      ${DEPLOY_HOST}  dir ${DEPLOY_DIR}" >&2
 	echo "  version:   ${AGENTBOX_VERSION} (from ${VERSION_SOURCE})" >&2
 	echo "  profile:   ${AGENTBOX_PROFILE} (from ${PROFILE_SOURCE})" >&2
+	echo "  timezone:  ${TZ_VALUE} (from ${TZ_SOURCE})" >&2
 	echo "  will sync: instances/ (docker-compose.yaml + config.toml + env + file credentials, env as 0600; workspace-init/ excluded)" >&2
 	echo "  instances/ on the server is mirrored; a directory the repo no longer has must be retired with remove first" >&2
 	while IFS= read -r n; do
@@ -388,15 +407,16 @@ sync_host() {
 	# Each instance is a compose project rooted in its own directory, so each gets its own .env.
 	# It is derived from host.env, never synced: connection fields stay local. Every instance
 	# directory gets it, not just the ones this run restarts, because --delete just removed them.
-	# The profile rides along: compose interpolates it into the container environment, so every
-	# instance on a host shares one answer to "which package mirrors" without a line in its env.
+	# The profile and time zone ride along: compose interpolates them into the container
+	# environment, so every instance on a host shares one answer to "which package mirrors" and
+	# "whose wall clock" without a line in its own env file.
 	if [ "${DRY_RUN}" -eq 1 ]; then
-		echo "plan: write ${DEPLOY_DIR}/instances/<name>/.env with AGENTBOX_VERSION=${AGENTBOX_VERSION} AGENTBOX_PROFILE=${AGENTBOX_PROFILE} for every instance" >&2
+		echo "plan: write ${DEPLOY_DIR}/instances/<name>/.env with AGENTBOX_VERSION=${AGENTBOX_VERSION} AGENTBOX_PROFILE=${AGENTBOX_PROFILE} TZ=${TZ_VALUE} for every instance" >&2
 		echo "plan: chmod 600 every file under ${DEPLOY_DIR}/instances/*/ (config.toml and claude/ excepted) and chown -R 1000:1000 ${DEPLOY_DIR}/instances" >&2
 	else
 		while IFS= read -r n; do
 			[ -n "${n}" ] || continue
-			rssh "printf 'AGENTBOX_VERSION=%s\nAGENTBOX_PROFILE=%s\n' '${AGENTBOX_VERSION}' '${AGENTBOX_PROFILE}' > '${DEPLOY_DIR}/instances/${n}/.env'"
+			rssh "printf 'AGENTBOX_VERSION=%s\nAGENTBOX_PROFILE=%s\nTZ=%s\n' '${AGENTBOX_VERSION}' '${AGENTBOX_PROFILE}' '${TZ_VALUE}' > '${DEPLOY_DIR}/instances/${n}/.env'"
 		done < <(all_instances)
 		# Every file credential (env, kubeconfig-*, ssh_key) is 0600; config.toml stays readable
 		# because the container reads it through the bind mount, and claude/ is a read-only code

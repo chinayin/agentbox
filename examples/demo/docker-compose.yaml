@@ -14,9 +14,10 @@ x-agentbox: &agentbox
   deploy: {resources: {limits: {pids: 512}}}
   networks: [agentbox]
   env_file: [./env]
-  # Runtime mirror profile, derived by the deploy skill from hosts/<host>/host.env into this
-  # directory's .env (docs/CN_MIRRORS.md); an instance never sets it in its own env file.
-  environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}"}
+  # Host facts, derived by the deploy skill from hosts/<host>/host.env into this directory's .env:
+  # the runtime mirror profile (docs/CN_MIRRORS.md) and the wall clock cron schedules run against.
+  # An instance never sets them in its own env file.
+  environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}", TZ: "${TZ:-UTC}"}
 
 services:
   demo:

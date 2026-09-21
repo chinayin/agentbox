@@ -21,8 +21,9 @@ Every per-host detail (ssh address, key, proxy, remote directory, target version
 deploy repo at `hosts/<host>/host.env`. Connection fields stay local; only `AGENTBOX_VERSION` and
 `AGENTBOX_PROFILE` are derived into the remote `.env`. The version also has a repo-level default in
 `defaults.env`, so a fleet moves together from one line while a host that must stay behind keeps its
-own in `host.env`. The profile (`cn` or `global`, default `global`) is per host only: it says which
-package mirrors the containers on that host reach, and every instance there inherits it.
+own in `host.env`. The profile (`cn` or `global`, default `global`) and `TZ` (an IANA zone, default
+`UTC`) are per host only: they say which package mirrors the containers on that host reach and which
+wall clock their cron schedules run on, and every instance there inherits both.
 
 ## Actions
 
