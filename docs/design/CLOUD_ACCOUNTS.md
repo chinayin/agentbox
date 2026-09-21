@@ -128,6 +128,7 @@ volc-media-prod
 |---|---|
 | 名册渲染脚本（YAML → 三份 profile 文件 + 主 bot 摘要 + 钩子白名单） | 待做 |
 | 阿里云 CLI 只读 `config.json` 下 STS 续期是否失败；entrypoint 复制方案 | 未实测 |
+| 多个话题会话同时用同一家云的不同 profile 时，阿里云 CLI 并发写回 `config.json` 是否互相覆盖（AWS 缓存按 profile 分文件，无此问题） | 未实测 |
 | 火山 `ramrolearn` 模式的会话名与时长 | 文档未见，需实测 |
 | 托管 PreToolUse 钩子在 cc-connect 拉起的 headless 会话里是否生效、`sandbox.credentials.envVars` 在 Linux 容器里是否生效 | 未实测 |
 | cc-connect 对 `-admin` 别名命令的权限确认是否送到飞书 | 本仓库已依赖，多账号场景未实测 |
