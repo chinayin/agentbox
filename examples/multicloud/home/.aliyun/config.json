@@ -4,7 +4,7 @@
     {
       "name": "acme-prod",
       "mode": "AK",
-      "access_key_id": "LTAIxxxxxxxxxxxxxxxx",
+      "access_key_id": "LTAIxxxxxxxxxxxx",
       "access_key_secret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       "region_id": "cn-beijing",
       "output_format": "json",
@@ -13,7 +13,7 @@
     {
       "name": "acme-dns",
       "mode": "AK",
-      "access_key_id": "LTAIxxxxxxxxxxxxxxxx",
+      "access_key_id": "LTAIxxxxxxxxxxxx",
       "access_key_secret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       "region_id": "cn-hangzhou",
       "output_format": "json",
