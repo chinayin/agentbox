@@ -40,8 +40,8 @@ repo. Templates live in agentbox and go in git; real values live in the deploy r
 ## `host.env`
 
 Connection fields (top half) are read locally by `deploy.sh` and never leave this machine. Only
-`AGENTBOX_VERSION` (bottom half) is derived into the `.env` that `docker compose` reads on the
-server, one copy per instance directory.
+`AGENTBOX_VERSION` and `AGENTBOX_PROFILE` (bottom half) are derived into the `.env` that
+`docker compose` reads on the server, one copy per instance directory.
 
 ```env
 DEPLOY_HOST=root@xxx.xxx.xxx.xxx.sslip.io
@@ -52,6 +52,7 @@ DEPLOY_DIR=/data/agentbox
 
 # Derived into the remote .env; nothing else in this file is.
 AGENTBOX_VERSION=x.x.x
+AGENTBOX_PROFILE=cn
 ```
 
 - `DEPLOY_HOST` / `DEPLOY_KEY` / `DEPLOY_HOST_KEY_ALIAS` / `DEPLOY_SOCKS` follow the same shape as
@@ -62,6 +63,12 @@ AGENTBOX_VERSION=x.x.x
 - `AGENTBOX_VERSION` is the only thing an upgrade or rollback touches: edit this line to a
   different tag, then run `deploy`. Omit it and the repo-level `defaults.env` supplies it; keep it
   only for a host that must stay behind the rest of the fleet.
+- `AGENTBOX_PROFILE` is the runtime mirror profile for every instance on this host: `cn` for a host
+  in mainland China, `global` (the default when the line is absent) elsewhere. It is a fact about
+  where the host sits, so it lives here and not in any instance's `env`; the shared compose block
+  passes it into the container as `environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}"}`
+  and `plan` refuses a compose file without that line. Any other value fails `plan` locally. What
+  the profile changes is listed in agentbox `docs/CN_MIRRORS.md`.
 
 ## `instances/<name>/skills-lock.json`（可选）
 

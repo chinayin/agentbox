@@ -29,4 +29,6 @@ make image BUILD_HTTPS_PROXY=http://proxy:port BUILD_HTTP_PROXY=http://proxy:por
 
 这些只改"从哪下载"，不改工具版本；镜像工具链本身在运行期是离线锁死的（`MISE_OFFLINE`）。
 
+怎么开：这是主机的属性，不是实例的。本地开发在仓库根目录的 `.env` 里写 `AGENTBOX_PROFILE=cn`，compose 透传；正式部署写在部署仓库 `hosts/<host>/host.env`，`deploy` 技能把它和版本一起派生进服务器上每个实例目录的 `.env`，实例 compose 的共享块用 `environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}"}` 接进容器，`plan` 会拒绝少了这行的 compose。实例自己的 `env` 文件不放这个变量。值只认 `cn` 与 `global`，别的在 `plan` 就报错：entrypoint 对未知 profile 只在容器日志里警告一句，然后按上游源跑，必须在部署前拦住（[DECISIONS](DECISIONS.md) 2026-09-21）。
+
 刻意没加的：Electron、Playwright、Puppeteer 的二进制镜像。镜像里没有浏览器运行时依赖，这些包在 agentbox 里本来就跑不起来；真要用时在实例 `config.toml` 的 env 块里自己加。

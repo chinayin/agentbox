@@ -69,7 +69,9 @@ Options:
 The deploy repo path can live in the skill's .env file (.claude/skills/deploy/.env, gitignored;
 copy .env.example). Flags and environment win. Per-host connection details live in the deploy repo
 at hosts/<host>/host.env. The image version comes from --image-version, else that host.env, else
-AGENTBOX_VERSION in the repo-level defaults.env; the plan prints which one it used.
+AGENTBOX_VERSION in the repo-level defaults.env; the plan prints which one it used. AGENTBOX_PROFILE
+in host.env (cn or global, default global) selects the runtime mirror profile for every instance on
+that host; it is derived into the remote .env next to the version.
 
 An instance directory may carry workspace-init/: deploy syncs it into the instance's workspace
 without overwriting files already there, and leaves it out of the instances/ mirror, so a file the
@@ -121,12 +123,15 @@ DEPLOY_SOCKS=""
 DEPLOY_DIR="/data/agentbox"
 AGENTBOX_VERSION=""
 VERSION_SOURCE=""
+AGENTBOX_PROFILE=""
+PROFILE_SOURCE=""
 declare -a SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
 
-# hosts/<host>/host.env: connection fields stay local, AGENTBOX_VERSION is derived to the remote.
-# The version is the one field a fleet usually moves together, so it also has a repo-level default
-# in defaults.env; a host that must stay behind pins its own in host.env. Connection fields are
-# per-host by nature and are never read from defaults.env.
+# hosts/<host>/host.env: connection fields stay local, AGENTBOX_VERSION and AGENTBOX_PROFILE are
+# derived to the remote. The version is the one field a fleet usually moves together, so it also has
+# a repo-level default in defaults.env; a host that must stay behind pins its own in host.env.
+# Connection fields and the profile are per-host by nature and are never read from defaults.env:
+# where the host sits decides which package sources its containers reach (docs/CN_MIRRORS.md).
 load_host_env() {
 	local f="${HOST_DIR}/host.env" d="${REPO}/defaults.env" line name val
 	[ -d "${HOST_DIR}" ] || die "host ${HOST} not found in ${REPO}/hosts"
@@ -144,14 +149,24 @@ load_host_env() {
 		case "${line}" in ''|\#*) continue ;; esac
 		name="${line%%=*}"; val="${line#*=}"
 		case "${name}" in
-			DEPLOY_HOST|DEPLOY_KEY|DEPLOY_HOST_KEY_ALIAS|DEPLOY_SOCKS|DEPLOY_DIR|AGENTBOX_VERSION) ;;
+			DEPLOY_HOST|DEPLOY_KEY|DEPLOY_HOST_KEY_ALIAS|DEPLOY_SOCKS|DEPLOY_DIR|AGENTBOX_VERSION|AGENTBOX_PROFILE) ;;
 			*) continue ;;
 		esac
 		# shellcheck disable=SC2088  # matching a literal leading ~/ from the file is the point here
 		case "${val}" in "~/"*) val="${HOME}/${val#\~/}" ;; esac
 		printf -v "${name}" '%s' "${val}"
 		if [ "${name}" = AGENTBOX_VERSION ]; then VERSION_SOURCE="hosts/${HOST}/host.env"; fi
+		if [ "${name}" = AGENTBOX_PROFILE ]; then PROFILE_SOURCE="hosts/${HOST}/host.env"; fi
 	done < "${f}"
+	# The entrypoint treats an unknown profile as "no defaults" with only a warning in the container
+	# log, so a typo here would silently deploy upstream sources; refuse it locally instead.
+	if [ -z "${AGENTBOX_PROFILE}" ]; then
+		AGENTBOX_PROFILE=global; PROFILE_SOURCE=default
+	fi
+	case "${AGENTBOX_PROFILE}" in
+		cn|global) ;;
+		*) die "${f}: AGENTBOX_PROFILE must be cn or global, got '${AGENTBOX_PROFILE}'" ;;
+	esac
 	if [ -n "${VERSION_FLAG}" ]; then
 		AGENTBOX_VERSION="${VERSION_FLAG}"; VERSION_SOURCE="--image-version"
 	fi
@@ -220,7 +235,7 @@ PY
 # `docker compose config -q` on the rendered file before `up`.
 check_compose() {
 	local name="$1" f="$2" p bad=()
-	for p in 'cap_drop: \[ALL\]' 'no-new-privileges:true' 'pids: [0-9]+' 'external: true' '\$\{AGENTBOX_VERSION\}'; do
+	for p in 'cap_drop: \[ALL\]' 'no-new-privileges:true' 'pids: [0-9]+' 'external: true' '\$\{AGENTBOX_VERSION\}' '\$\{AGENTBOX_PROFILE'; do
 		grep -qE "${p}" "${f}" || bad+=("missing ${p}")
 	done
 	for p in privileged 'docker\.sock' network_mode cap_add; do
@@ -280,6 +295,7 @@ print_plan() {
 	echo "  repo:      ${REPO}" >&2
 	echo "  host:      ${DEPLOY_HOST}  dir ${DEPLOY_DIR}" >&2
 	echo "  version:   ${AGENTBOX_VERSION} (from ${VERSION_SOURCE})" >&2
+	echo "  profile:   ${AGENTBOX_PROFILE} (from ${PROFILE_SOURCE})" >&2
 	echo "  will sync: instances/ (docker-compose.yaml + config.toml + env + file credentials, env as 0600; workspace-init/ excluded)" >&2
 	echo "  instances/ on the server is mirrored; a directory the repo no longer has must be retired with remove first" >&2
 	while IFS= read -r n; do
@@ -372,13 +388,15 @@ sync_host() {
 	# Each instance is a compose project rooted in its own directory, so each gets its own .env.
 	# It is derived from host.env, never synced: connection fields stay local. Every instance
 	# directory gets it, not just the ones this run restarts, because --delete just removed them.
+	# The profile rides along: compose interpolates it into the container environment, so every
+	# instance on a host shares one answer to "which package mirrors" without a line in its env.
 	if [ "${DRY_RUN}" -eq 1 ]; then
-		echo "plan: write ${DEPLOY_DIR}/instances/<name>/.env with AGENTBOX_VERSION=${AGENTBOX_VERSION} for every instance" >&2
+		echo "plan: write ${DEPLOY_DIR}/instances/<name>/.env with AGENTBOX_VERSION=${AGENTBOX_VERSION} AGENTBOX_PROFILE=${AGENTBOX_PROFILE} for every instance" >&2
 		echo "plan: chmod 600 every file under ${DEPLOY_DIR}/instances/*/ (config.toml and claude/ excepted) and chown -R 1000:1000 ${DEPLOY_DIR}/instances" >&2
 	else
 		while IFS= read -r n; do
 			[ -n "${n}" ] || continue
-			rssh "printf 'AGENTBOX_VERSION=%s\n' '${AGENTBOX_VERSION}' > '${DEPLOY_DIR}/instances/${n}/.env'"
+			rssh "printf 'AGENTBOX_VERSION=%s\nAGENTBOX_PROFILE=%s\n' '${AGENTBOX_VERSION}' '${AGENTBOX_PROFILE}' > '${DEPLOY_DIR}/instances/${n}/.env'"
 		done < <(all_instances)
 		# Every file credential (env, kubeconfig-*, ssh_key) is 0600; config.toml stays readable
 		# because the container reads it through the bind mount, and claude/ is a read-only code

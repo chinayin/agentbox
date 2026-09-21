@@ -14,6 +14,9 @@ x-agentbox: &agentbox
   deploy: {resources: {limits: {pids: 512}}}
   networks: [agentbox]
   env_file: [./env]
+  # Runtime mirror profile, derived by the deploy skill from hosts/<host>/host.env into this
+  # directory's .env (docs/CN_MIRRORS.md); an instance never sets it in its own env file.
+  environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}"}
 
 services:
   demo:

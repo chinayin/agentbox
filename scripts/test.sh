@@ -577,6 +577,7 @@ check_instance_compose() {
 		&& grep -q '^      - state:/state$' "$f" && grep -q '^      - cache:/cache$' "$f" \
 		&& grep -q '^  state:$' "$f" && grep -q '^  cache:$' "$f" && grep -q '^    external: true$' "$f" \
 		&& grep -q 'cap_drop: \[ALL\]' "$f" && grep -q 'no-new-privileges:true' "$f" && grep -q 'pids: 512' "$f" \
+		&& grep -q '^  environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}"}$' "$f" \
 		&& ! grep -q '^      #' "$f" && ! grep -q 'demo' "$f" \
 		&& ok "${label} docker-compose.yaml has the shared instance structure" || bad "${label} docker-compose.yaml has the shared instance structure" "$(cat "$f" 2>/dev/null)"
 }
@@ -666,7 +667,7 @@ group "deploy skill"
 dp="$TMP/dp"; mkdir -p "$dp/skill/scripts"; cp "$DP_SRC" "$dp/skill/scripts/"
 mkdir -p "$dp/repo/hosts/h1/instances/a1" "$dp/other/hosts/h2/instances/a2"
 # Every instance is its own compose project; the fixture files carry the shared block the deploy
-# skill enforces (cap_drop, no-new-privileges, pids, external network, version variable).
+# skill enforces (cap_drop, no-new-privileges, pids, external network, version and profile variables).
 compose_fixture() {
 	cat > "$1" <<'YML'
 x-agentbox: &agentbox
@@ -676,6 +677,7 @@ x-agentbox: &agentbox
   deploy: {resources: {limits: {pids: 512}}}
   networks: [agentbox]
   env_file: [./env]
+  environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}"}
 services:
   svc:
     <<: *agentbox
@@ -830,6 +832,29 @@ out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run 
 [ "$rc" -eq 1 ] && grep -q 'defaults.env' <<<"$out" && grep -q 'host.env' <<<"$out" \
 	&& ok "no version anywhere names both files and exits 1" || bad "no version anywhere names both files and exits 1" "rc=$rc $out"
 printf "${h1env}AGENTBOX_VERSION=0.1.0\n" > "$dp/repo/hosts/h1/host.env"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm version ) 2>/dev/null
+# Runtime mirror profile: a host fact, so it lives in host.env and is derived into every instance's
+# remote .env next to the version (2026-09-21: two instances on a cn host ran with upstream sources
+# because nothing in the deploy chain carried AGENTBOX_PROFILE). A typo must fail locally, since the
+# entrypoint only warns about an unknown profile.
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'profile:   global (from default)' <<<"$out" \
+	&& ok "profile defaults to global when host.env omits it" || bad "profile defaults to global when host.env omits it" "rc=$rc $out"
+printf "${h1env}AGENTBOX_VERSION=0.1.0\nAGENTBOX_PROFILE=cn\n" > "$dp/repo/hosts/h1/host.env"
+( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm profile ) 2>/dev/null
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'profile:   cn (from hosts/h1/host.env)' <<<"$out" && grep -q 'AGENTBOX_PROFILE=cn for every instance' <<<"$out" \
+	&& ok "host.env AGENTBOX_PROFILE is derived into every instance's remote .env" || bad "host.env AGENTBOX_PROFILE is derived into every instance's remote .env" "rc=$rc $out"
+printf "${h1env}AGENTBOX_VERSION=0.1.0\nAGENTBOX_PROFILE=CN\n" > "$dp/repo/hosts/h1/host.env"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'AGENTBOX_PROFILE must be cn or global' <<<"$out" \
+	&& ok "an unknown profile value fails plan locally (exit 1)" || bad "an unknown profile value fails plan locally (exit 1)" "rc=$rc $out"
+sed -i.bak '/AGENTBOX_PROFILE/d' "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
+printf "${h1env}AGENTBOX_VERSION=0.1.0\n" > "$dp/repo/hosts/h1/host.env"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'missing .*AGENTBOX_PROFILE' <<<"$out" \
+	&& ok "plan refuses an instance compose that does not pass the profile through" || bad "plan refuses an instance compose that does not pass the profile through" "rc=$rc $out"
+mv "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml.bak" "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm version ) 2>/dev/null
 
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
@@ -1233,6 +1258,7 @@ dc="$ROOT/examples/demo/docker-compose.yaml"
 grep -q 'cap_drop: \[ALL\]' "$dc" && grep -q 'no-new-privileges:true' "$dc" && grep -qE 'pids: [0-9]+' "$dc" \
 	&& grep -q 'external: true' "$dc" && grep -q 'image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}$' "$dc" \
 	&& grep -q '^  env_file: \[./env\]$' "$dc" && grep -q '^      - ./config.toml:/agent/config.toml:ro$' "$dc" \
+	&& grep -q '^  environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}"}$' "$dc" \
 	&& ok "the demo compose template carries the shared block deploy.sh enforces" || bad "the demo compose template carries the shared block deploy.sh enforces" ""
 ls "$ROOT"/examples/*/env "$ROOT/.env" >/dev/null 2>&1 && bad "no real env file in the repo" "an env file without .example was found" || ok "no real env file in the repo"
 
