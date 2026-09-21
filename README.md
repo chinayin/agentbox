@@ -66,6 +66,7 @@ make lock      # 升级工具链到上游最新（通常由 CI 的 lock.yml 跑�
 | [TOOLCHAIN](docs/TOOLCHAIN.md) | 契约 | 工具链组成、版本策略、lock 生成、加工具、CI 与发布 |
 | [CREDENTIALS](docs/CREDENTIALS.md) | 契约 | 密级、三条凭据通道、每个工具的凭据位置与变量、红线、泄露应急 |
 | [INSTANCES](docs/INSTANCES.md) | 契约 | 信任域切分、实例目录、跨实例调用、网络与资源 |
+| [CHANNELS](docs/CHANNELS.md) | 契约 | 飞书、企业微信应用在平台后台要开的权限、事件、回调与凭据变量 |
 | [SKILLS](docs/SKILLS.md) | 契约 | 技能清单、托管层、安装 SOP |
 | [GIT_IDENTITY](docs/GIT_IDENTITY.md) | 契约 | 机器人 git 身份、权限、可追溯性、密钥轮换 |
 | [CN_MIRRORS](docs/CN_MIRRORS.md) | 契约 | 境内运行的镜像源 profile |

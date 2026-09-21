@@ -55,7 +55,7 @@ allow_from = "${ALLOW_FROM_SECOND}"
 `examples/demo/config.toml` 有可直接取消注释的模板。两个坑：
 
 - 表名不带 project 名。`[projects.second.agent]` 会把 agent 放进多余的子表，cc-connect 启动时报缺 agent。`scripts/test.sh` 会把模板里的第二段取消注释后校验。
-- open_id 是「用户 × 应用」的组合，不同应用下同一人的 open_id 不同，放行名单必须各自取值。填错是 fail closed。
+- open_id 是「用户 × 应用」的组合，不同应用下同一人的 open_id 不同，放行名单必须各自取值。填错是 fail closed。 应用在飞书后台要开的权限、事件、回调见 [CHANNELS](CHANNELS.md)。
 
 ## 3. 跨 project 调用
 
