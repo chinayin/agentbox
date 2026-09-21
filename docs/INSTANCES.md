@@ -28,6 +28,8 @@
 
 `deploy` 在服务器上进入该目录运行 compose，每个实例独立 `pull`/`up`。搬迁一个实例只需带走这个目录、它的工作区与两个卷。
 
+多账号云运维实例的完整样例是 `examples/multicloud/`：一个 bot、四个云 subagent（`workspace/`），profile 文件与账号名册在 `home/`，`.claude/skills/deploy/scripts/verify-profiles.sh` 在部署前按名册核对每个 profile 的账号。
+
 新开信任域用 `.claude/skills/new-instance/SKILL.md`：复制 `examples/demo/` 生成骨架、建工作区目录、打出 compose 片段，不写任何真值。已有裸机 cc-connect 要换成容器的，用 `.claude/skills/import-instance/SKILL.md`：只读读取源主机，按挂载契约写进部署仓库，上线仍走 `deploy`。
 
 ## 2. 同信任域加 project：只改配置

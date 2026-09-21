@@ -1,0 +1,67 @@
+# Multi-cloud "cloud steward": ONE bot, ONE Feishu app. Each cloud is a Claude Code subagent
+# (workspace/.claude/agents/<cloud>.md), not a separate bot, so memory and context live in the
+# lead's own sessions. Subagents are for fan-out only (many accounts or clouds, large output);
+# single-account work runs inline so the process stays visible in the chat. Split a cloud out
+# into its own instance only when someone needs to talk to it directly.
+# Values are ${PLACEHOLDER} only, resolved from the env file. Missing placeholders fail at startup.
+
+language = "zh"
+
+[log]
+level = "info"
+
+[display]
+mode = "quiet"
+hide_agent_footer = true
+
+[instant_reply]
+enabled = false
+
+[[projects]]
+name = "multicloud"
+admin_from = "${ADMIN_FROM}"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+work_dir = "${WORK_DIR}"
+# acceptEdits: read-only cloud commands still get a confirmation in the chat. Switch to
+# bypassPermissions only with explicit allow lists (docs/CREDENTIALS.md section 4); the profile
+# files below then decide what the agent can reach, and the hook layer in
+# docs/design/CLOUD_ACCOUNTS.md is what makes --profile mandatory.
+mode = "acceptEdits"
+append_system_prompt = "You are the cloud steward for Alibaba Cloud, AWS, Volcengine and Tencent Cloud. Run single-cloud, single-account tasks yourself so the commands and their output stay in this session. Delegate to a subagent (aliyun / aws / volc / qcloud) only to fan out across several accounts or clouds, or when the output would be very large; one profile per subagent, and say which ones you are querying before you dispatch. Resolve the account a person names through ~/accounts.yaml into a --profile alias first; ask instead of guessing when it does not resolve or is ambiguous. Label every finding with the cloud, the account and the command that produced it. Read-only diagnostics by default; run a change only when a person names it explicitly, and repeat the exact command before running it."
+
+[projects.agent.options.env]
+ANTHROPIC_BASE_URL = "${ANTHROPIC_BASE_URL}"
+ANTHROPIC_AUTH_TOKEN = "${ANTHROPIC_AUTH_TOKEN}"
+# Non-Anthropic model behind the gateway: uncomment together with the same names in the env file.
+# ANTHROPIC_MODEL = "${ANTHROPIC_MODEL}"
+# ANTHROPIC_DEFAULT_HAIKU_MODEL = "${ANTHROPIC_DEFAULT_HAIKU_MODEL}"
+# ANTHROPIC_DEFAULT_SONNET_MODEL = "${ANTHROPIC_DEFAULT_SONNET_MODEL}"
+# ANTHROPIC_DEFAULT_OPUS_MODEL = "${ANTHROPIC_DEFAULT_OPUS_MODEL}"
+# CLAUDE_CODE_SUBAGENT_MODEL = "${CLAUDE_CODE_SUBAGENT_MODEL}"
+# CLAUDE_CODE_AUTO_COMPACT_WINDOW = "${CLAUDE_CODE_AUTO_COMPACT_WINDOW}"
+# pages publishing (publish-artifact skill in skills-lock.json): uncomment with the env lines.
+# IPFS_BASE_URL = "${IPFS_BASE_URL}"
+# IPFS_PUBLISH_ENDPOINT = "${IPFS_PUBLISH_ENDPOINT}"
+# IPFS_PUBLISH_TOKEN = "${IPFS_PUBLISH_TOKEN}"
+# Cloud credentials are NOT here. They live in the home layer (./home, docs/CREDENTIALS.md
+# section 2) at each CLI's default path, one profile per account, and every cloud command carries
+# --profile <alias>. These two lines make a command without --profile fail instead of falling back
+# to instance metadata or a default credential chain.
+AWS_EC2_METADATA_DISABLED = "true"
+VOLCENGINE_DISABLE_DEFAULT_CREDENTIALS = "true"
+
+[[projects.platforms]]
+type = "feishu"
+
+[projects.platforms.options]
+app_id = "${FEISHU_APP_ID}"
+app_secret = "${FEISHU_APP_SECRET}"
+# open_id is per user x app; values from another app never match (fails closed).
+allow_from = "${ALLOW_FROM}"
+# One chat topic = one session: questions asked in parallel topics do not share context, and a
+# topic per cloud is how parallel work across clouds happens, not subagents.
+thread_isolation = true

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "gen-ssh-key": {
+      "source": "chinayin/coding-skillhub",
+      "sourceType": "github",
+      "skillPath": "skills/gen-ssh-key/SKILL.md",
+      "computedHash": "885049ee982945971a63d667a44db509ad7bebb69f24bf1d871d355e08f8bfce"
+    },
+    "publish-artifact": {
+      "source": "chinayin/ipfs-artifact-cluster",
+      "sourceType": "github",
+      "skillPath": "skills/publish-artifact/SKILL.md",
+      "computedHash": "e1881de11179cb1cd2bb98e03da390a5e76f4e69228ad47cbe6fbfd6c2c67e59"
+    },
+    "skill-creator": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/skill-creator/SKILL.md",
+      "computedHash": "5ea13a6d9f0d4bb694405d79acd00cadec0d21bb138c4dd10fcf3c500cb835c2"
+    }
+  }
+}

@@ -1,0 +1,30 @@
+# Account registry: the ONLY place human names map to CLI profile names. `profile` is what goes
+# after --profile; `names` are the words people use in chat; account_id is checked against
+# GetCallerIdentity by .claude/skills/deploy/scripts/verify-profiles.sh before every deploy.
+# One entry per (cloud, account). Profile names below must exist in that cloud's config file here.
+- profile: acme-prod
+  cloud: aliyun
+  account_id: "000000000000"
+  names: [aliyun prod, main account]
+  env: prod
+- profile: acme-dns
+  cloud: aliyun
+  account_id: "000000000001"
+  names: [aliyun dns, dns account]
+  env: prod
+- profile: acme-prod
+  cloud: aws
+  account_id: "000000000002"
+  names: [aws prod]
+  env: prod
+- profile: acme-dev
+  cloud: aws
+  account_id: "000000000003"
+  names: [aws dev, sandbox]
+  env: dev
+# Tencent Cloud and Volcengine: the profile files exist so the subagents have a shape to fill;
+# add an entry here once a real read-only key exists.
+# - profile: qcloud-main
+#   cloud: qcloud
+# - profile: volc-main
+#   cloud: volc

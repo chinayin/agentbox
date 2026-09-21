@@ -1,0 +1,33 @@
+{
+  "current": "none",
+  "profiles": [
+    {
+      "name": "acme-prod",
+      "mode": "AK",
+      "access_key_id": "LTAIxxxxxxxxxxxxxxxx",
+      "access_key_secret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "region_id": "cn-beijing",
+      "output_format": "json",
+      "language": "en"
+    },
+    {
+      "name": "acme-dns",
+      "mode": "AK",
+      "access_key_id": "LTAIxxxxxxxxxxxxxxxx",
+      "access_key_secret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "region_id": "cn-hangzhou",
+      "output_format": "json",
+      "language": "en"
+    },
+    {
+      "name": "none",
+      "mode": "AK",
+      "access_key_id": "",
+      "access_key_secret": "",
+      "region_id": "cn-hangzhou",
+      "output_format": "json",
+      "language": "en"
+    }
+  ],
+  "meta_path": ""
+}

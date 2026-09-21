@@ -105,6 +105,18 @@ missing="$(comm -23 <(echo "$want") <(echo "$have"))"
 [ -z "$missing" ] && ok "every template placeholder is provided by examples/demo/env.example" \
 	|| bad "every template placeholder is provided by examples/demo/env.example" "missing: $(echo "$missing" | tr '\n' ' ')"
 
+# Every other example is held to the same placeholder contract as the demo.
+for ex in "$ROOT"/examples/*/; do
+	exn="$(basename "$ex")"; [ "$exn" != demo ] || continue
+	python3 -c 'import sys,tomllib; tomllib.load(open(sys.argv[1],"rb"))' "$ex/config.toml" 2>/dev/null \
+		&& ok "examples/${exn}/config.toml is valid TOML" || bad "examples/${exn}/config.toml is valid TOML" "parse failed"
+	want="$(toml_placeholders "$ex/config.toml" | grep -vx WORK_DIR)"
+	have="$(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$ex/env.example" | tr -d '=' | sort -u)"
+	missing="$(comm -23 <(echo "$want") <(echo "$have"))"
+	[ -z "$missing" ] && ok "every placeholder in examples/${exn}/config.toml is provided by its env.example" \
+		|| bad "every placeholder in examples/${exn}/config.toml is provided by its env.example" "missing: $(echo "$missing" | tr '\n' ' ')"
+done
+
 # The commented project block must be valid TOML once uncommented and add exactly one more agent.type
 # on top of whatever active projects the demo already has (a deployer may legitimately have added some).
 base="$(toml_agent_types "$DEMO_TOML" 2>/dev/null | wc -l | tr -d ' ')"
@@ -1311,6 +1323,27 @@ bash "$IMPORT" --local --home "$shome" --repo "$im/repo" import --host h1 --name
 	&& ok "a render failure leaves no half-written target directory" || bad "a render failure leaves no half-written target directory" "rc=$rc $(cat "$im/broken.err") $(find "$im/repo/hosts/h1/instances/broken" 2>/dev/null)"
 
 group "template hygiene"
+# examples/*/home/ is a home layer with placeholder credentials only: every key-like value must be an
+# empty string or a vendor prefix followed by x's. A real-looking key here would be a leak in git.
+home_leak=""
+while IFS= read -r f; do
+	while IFS= read -r v; do
+		[ -z "$v" ] || [[ "$v" =~ ^[A-Za-z]{0,4}x{8,}$ ]] || home_leak="${home_leak} ${f#"$ROOT"/}:${v:0:6}..."
+	done < <(grep -hoE '(aws_access_key_id|aws_secret_access_key|access_key_id|access_key_secret|access-key|secret-key|secretId|secretKey)"? *[=:] *"?[^", ]*' "$f" | sed -E 's/^[^=:]*[=:] *"?//')
+done < <(find "$ROOT"/examples/*/home -type f 2>/dev/null)
+[ -z "$home_leak" ] && ok "examples/*/home carries placeholder credentials only" || bad "examples/*/home carries placeholder credentials only" "$home_leak"
+# GitHub push protection matches on shape, not on value: AKID followed by 32 characters is a Tencent
+# Cloud SecretId even when the 32 are x's, and the push is refused. Placeholders stay shorter than
+# the real format.
+! grep -rqE 'AKID[A-Za-z0-9]{32}|AKIA[A-Z0-9]{16}|LTAI[A-Za-z0-9]{16,}' "$ROOT"/examples \
+	&& ok "example placeholders do not match a real key shape" || bad "example placeholders do not match a real key shape" "$(grep -rnoE 'AKID[A-Za-z0-9]{32}|AKIA[A-Z0-9]{16}|LTAI[A-Za-z0-9]{16,}' "$ROOT"/examples | head -3)"
+! grep -rqE '"account_id": *"[0-9]*[1-9][0-9]{5,}"|account_id: *"?[0-9]*[1-9][0-9]{5,}' "$ROOT"/examples/*/home 2>/dev/null \
+	&& ok "examples/*/home names no real account id" || bad "examples/*/home names no real account id" "$(grep -rnE 'account_id' "$ROOT"/examples/*/home | head -3)"
+check_instance_compose "examples/multicloud" "$ROOT/examples/multicloud/docker-compose.yaml" multicloud
+for a in aliyun aws volc qcloud; do
+	[ -f "$ROOT/examples/multicloud/workspace/.claude/agents/${a}.md" ] && grep -q "^name: ${a}$" "$ROOT/examples/multicloud/workspace/.claude/agents/${a}.md" \
+		&& ok "examples/multicloud ships the ${a} subagent the lead prompt names" || bad "examples/multicloud ships the ${a} subagent the lead prompt names" ""
+done
 for f in "$ROOT"/examples/*/config.toml; do
 	n="$(basename "$f")"
 	grep -qE '=[[:space:]]*"(sk-[A-Za-z0-9]|cli_[A-Za-z0-9]{10,})' "$f" && bad "${n} has no plaintext secrets" "a value that looks real was found" || ok "${n} has no plaintext secrets"

@@ -1,0 +1,48 @@
+# Multi-cloud steward: one bot, one Feishu app, one container; the four clouds are Claude Code
+# subagents in the workspace, the cloud profiles and the account registry are the home layer
+# (./home).
+# One instance = one compose project = one trust domain. This directory is the whole unit: the
+# deploy skill runs `docker compose` from inside it, so every path is relative to this file and the
+# compose project (hence the volume prefix) is named after the directory. The shared block below is
+# policy, not preference: `deploy plan` refuses a file that drops any of it. A second container in
+# the same trust domain is one more service with `<<: *agentbox` and its own config, workspace and
+# volumes (docs/INSTANCES.md).
+x-agentbox: &agentbox
+  image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}
+  restart: unless-stopped
+  init: true
+  stop_grace_period: 30s
+  # Liveness only: cc-connect's api.sock answers once its main loop is up. Nothing in cc-connect
+  # exposes the chat platform's link state (docs/DECISIONS.md 2026-09-21), so a healthy container can
+  # still be disconnected from Feishu; `deploy status` shows the state, nothing restarts on it.
+  healthcheck: {test: ["CMD", "curl", "-sf", "--unix-socket", "/state/.cc-connect/run/api.sock", "http://localhost/sessions"], interval: 30s, timeout: 5s, start_period: 120s, retries: 3}
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  deploy: {resources: {limits: {pids: 512}}}
+  networks: [agentbox]
+  env_file: [./env]
+  # Host facts, derived by the deploy skill from hosts/<host>/host.env into this directory's .env:
+  # the runtime mirror profile (docs/CN_MIRRORS.md) and the wall clock cron schedules run against.
+  # An instance never sets them in its own env file.
+  environment: {AGENTBOX_PROFILE: "${AGENTBOX_PROFILE:-global}", TZ: "${TZ:-UTC}"}
+
+services:
+  multicloud:
+    <<: *agentbox
+    container_name: agentbox-multicloud
+    volumes:
+      - ./config.toml:/agent/config.toml:ro
+      - ${WORKSPACES_ROOT:-../../workspaces}/multicloud:/workspace
+      - state:/state
+      - cache:/cache
+      - ./skills-lock.json:/agent/skills-lock.json:ro
+      - ./home:/agent/home:ro
+
+volumes:
+  state:
+  cache:
+
+# Shared by every instance on the host; the deploy skill creates it once (docker network create agentbox).
+networks:
+  agentbox:
+    external: true

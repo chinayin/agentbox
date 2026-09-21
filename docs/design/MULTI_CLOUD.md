@@ -98,7 +98,7 @@ app_secret = "${FEISHU_APP_SECRET_AWS}"
 allow_from = "${ALLOW_FROM_AWS}"
 thread_isolation = true
 
-# aliyun and volcengine projects follow the same shape; see examples/aliyun/config.toml
+# aliyun and volcengine projects follow the same shape; see examples/multicloud/config.toml
 # for the Alibaba Cloud variables and docs/CREDENTIALS.md for the rest.
 ```
 
@@ -115,7 +115,7 @@ thread_isolation = true
 
 ## 4. 拓扑 B：一 bot 一实例，飞书群即总线
 
-四个实例（`instances/cloud-lead`、`instances/aliyun`、`instances/aws`、`instances/volc`），照 `examples/aliyun/config.toml` 的模式各起一个，共用一张外部 `agentbox` 网络但**不靠网络通信**，通信走飞书。
+四个实例（`instances/cloud-lead`、`instances/aliyun`、`instances/aws`、`instances/volc`），照 `examples/multicloud/config.toml` 的模式各起一个，共用一张外部 `agentbox` 网络但**不靠网络通信**，通信走飞书。
 
 **平台能力。** 飞书接收消息事件（`im.message.receive_v1`）的权限要求在 2026 年新增了两个带 `include_bot` 的范围：
 

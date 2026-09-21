@@ -1,0 +1,14 @@
+{
+  "current": "",
+  "profiles": {
+    "volc-main": {
+      "name": "volc-main",
+      "mode": "ak",
+      "access-key": "AKLTxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "secret-key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "region": "cn-beijing"
+    }
+  },
+  "enableColor": false,
+  "sso-session": {}
+}
