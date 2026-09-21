@@ -21,6 +21,7 @@ docker compose up -d
 |---|---|---|---|
 | `/agent/config.toml` | ro | 实例声明，只含 `${占位符}`，可进 git。`/agent/` 下可再挂文件型凭据 | 是 |
 | `/agent/skills-lock.json` | ro | 技能清单（`npx skills add` 生成的 lock，原样用），列出的技能首次启动时装进 `/state`，见 [SKILLS](docs/SKILLS.md) | 否 |
+| `/agent/home` | ro | 家目录声明层：目录结构照 `~` 摆（`.ssh/config`、`.ssh/<key>`、`.kube/config`……），每次启动复制进 `/state`，声明的文件赢、其余不动，见 [TOOLS](docs/TOOLS.md) §1 | 否 |
 | `/workspace` | rw | 工作区，宿主目录 bind mount | 是 |
 | `/state` | rw | 会话与身份状态，`HOME` 指向此 | 是 |
 | `/cache` | rw | 构建缓存，每信任域独占 | 建议 |
@@ -29,7 +30,7 @@ docker compose up -d
 | `/refs/<name>` | ro | 只读引用别的工作区 | 否 |
 | `/knowledge` | ro | 共享知识库 | 否 |
 
-环境变量型密钥走 `env_file`；kubeconfig、SSH 私钥这类文件型凭据逐个 `:ro` 挂到 `/agent/<name>`，映射见 [TOOLS](docs/TOOLS.md)。entrypoint 启动前校验配置文件存在、state 可写、全部占位符有值，缺什么一次性列全后退出 2；配置结构本身的对错由 cc-connect 报。本地开发用根目录的这份 compose，发布到服务器走 `deploy` 技能与独立的部署仓库，镜像按版本从 GHCR 拉取。
+环境变量型密钥走 `env_file`；kubeconfig、SSH 私钥、云 CLI 配置这类文件型凭据放实例目录的 `home/`，照家目录的结构摆，整目录挂到 `/agent/home`，映射见 [TOOLS](docs/TOOLS.md)。entrypoint 启动前校验配置文件存在、state 可写、全部占位符有值，缺什么一次性列全后退出 2；配置结构本身的对错由 cc-connect 报。本地开发用根目录的这份 compose，发布到服务器走 `deploy` 技能与独立的部署仓库，镜像按版本从 GHCR 拉取。
 
 ## 镜像
 

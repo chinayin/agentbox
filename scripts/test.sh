@@ -48,6 +48,11 @@ app_id = "${FEISHU_APP_ID}"
 TOML
 }
 
+# File mode as octal. GNU stat first, BSD second: GNU `stat -f %Lp` does not fail, it prints
+# filesystem fields, so the BSD-first order passed on macOS and failed on the Linux CI runner
+# (2026-09-11, first CI run of the import-instance group). collect.sh already uses this order.
+fmode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
+
 # Run the entrypoint in passthrough mode: full prechecks, then exec into the cc-connect stub
 run_entry() {
 	local dir="$1"; shift
@@ -249,6 +254,38 @@ out="$(env -i PATH="$BASE_PATH" HOME="$TMP" AGENTBOX_PROFILE=cn BAR=mine \
 [ "$out" = "https://cn.example:mine" ] && ok "the cn profile fills only unset variables" || bad "the cn profile fills only unset variables" "got $out"
 out="$(env -i PATH="$BASE_PATH" HOME="$TMP" bash "$TMP/entry.sh" sh -c 'echo "${FOO_PROXY:-unset}"' 2>/dev/null)"
 [ "$out" = unset ] && ok "global exports no mirror variables" || bad "global exports no mirror variables" "got $out"
+
+# ---------- home layer ----------
+# home/ next to the config is laid out like ~ and copied into HOME on every start: declared files
+# win, undeclared state stays, modes are fixed on the way in. Each assertion is one of those rules.
+group "home layer"
+setup_instance "$TMP/h1"
+mkdir -p "$TMP/h1/home/.ssh" "$TMP/h1/home/.kube" "$TMP/h1/state/.ssh" "$TMP/h1/state/.kube"
+printf 'Host git.example.test\n  IdentityFile ~/.ssh/deploy_key\n' > "$TMP/h1/home/.ssh/config"
+printf 'fixture-private-key\n' > "$TMP/h1/home/.ssh/deploy_key"
+printf 'apiVersion: v1\n' > "$TMP/h1/home/.kube/config"
+chmod 644 "$TMP/h1/home/.ssh/deploy_key"
+printf 'git.example.test ssh-ed25519 AAAA\n' > "$TMP/h1/state/.ssh/known_hosts"
+printf 'stale\n' > "$TMP/h1/state/.kube/config"
+out="$(run_entry "$TMP/h1" FEISHU_APP_ID=x)"; rc=$?
+[ $rc -eq 0 ] && ok "an instance with a home layer starts" || bad "an instance with a home layer starts" "rc=$rc / $out"
+[ "$(cat "$TMP/h1/state/.ssh/deploy_key" 2>/dev/null)" = fixture-private-key ] && [ -f "$TMP/h1/state/.ssh/config" ] \
+	&& ok "declared files land at their ~ path" || bad "declared files land at their ~ path" "$(find "$TMP/h1/state" | tr '\n' ' ')"
+[ "$(fmode "$TMP/h1/state/.ssh/deploy_key")" = 600 ] && [ "$(fmode "$TMP/h1/state/.ssh")" = 700 ] \
+	&& ok "files land 0600 and directories 0700 whatever the host mode was" \
+	|| bad "files land 0600 and directories 0700 whatever the host mode was" "key=$(fmode "$TMP/h1/state/.ssh/deploy_key") dir=$(fmode "$TMP/h1/state/.ssh")"
+[ "$(cat "$TMP/h1/state/.kube/config")" = 'apiVersion: v1' ] && ok "a declared file overwrites what the state volume had" \
+	|| bad "a declared file overwrites what the state volume had" "$(cat "$TMP/h1/state/.kube/config")"
+[ -f "$TMP/h1/state/.ssh/known_hosts" ] && ok "runtime state the layer does not declare is left alone" \
+	|| bad "runtime state the layer does not declare is left alone" "known_hosts gone"
+case "$out" in *"home layer: 3 files"*) ok "the start log counts the applied files" ;; *) bad "the start log counts the applied files" "$out" ;; esac
+setup_instance "$TMP/h2"
+out="$(run_entry "$TMP/h2" FEISHU_APP_ID=x)"; rc=$?
+if [ $rc -eq 0 ]; then
+	case "$out" in *"home layer"*) bad "no home/ directory means no home layer step" "$out" ;; *) ok "no home/ directory means no home layer step" ;; esac
+else
+	bad "no home/ directory means no home layer step" "rc=$rc / $out"
+fi
 
 # ---------- contract consistency ----------
 # The mount contract and the entrypoint's error text each exist in two places. Nothing but these
@@ -1102,10 +1139,6 @@ HOME="$im/fakehome" AGENTBOX_DEPLOY_REPO="$im/repo" bash "$IMPORT" --local --hom
 [ -f "$tgt/docker-compose.yaml" ] && [ -f "$tgt/config.toml" ] && [ -f "$tgt/env" ] && [ -f "$tgt/kubeconfig-dev.yaml" ] && [ -f "$tgt/kubeconfig-prod.yaml" ] && [ -f "$tgt/ssh_key" ] \
 	&& [ -f "$tgt/skills-lock.json" ] && [ ! -e "$tgt/claude" ] \
 	&& ok "import writes compose, config, env, credentials and the skill manifest" || bad "import writes compose, config, env, credentials and the skill manifest" "$(find "$tgt" 2>/dev/null)"
-# GNU stat first, BSD second: GNU `stat -f %Lp` does not fail, it prints filesystem fields, so the
-# BSD-first order passed on macOS and failed on the Linux CI runner (2026-09-11, first CI run of
-# this group). collect.sh already uses this order.
-fmode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 [ "$(fmode "$tgt/env")" = 600 ] && [ "$(fmode "$tgt/ssh_key")" = 600 ] \
 	&& [ "$(fmode "$tgt/kubeconfig-dev.yaml")" = 600 ] \
 	&& ok "env and credential files land as 0600" || bad "env and credential files land as 0600" ""

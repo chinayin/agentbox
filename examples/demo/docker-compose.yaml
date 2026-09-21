@@ -25,8 +25,7 @@ services:
       - state:/state
       - cache:/cache
       # Optional mounts, see the mount contract table in README:
-      # - ./kubeconfig:/agent/kubeconfig:ro
-      # - ./ssh_key:/agent/ssh_key:ro
+      # - ./home:/agent/home:ro
       # - ./skill-lock.json:/agent/skill-lock.json:ro
       # - ./claude:/etc/claude-code:ro
 

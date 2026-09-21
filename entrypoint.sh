@@ -26,6 +26,7 @@ so that docker run --rm -it agentbox bash works for debugging.
 Mount contract:
   /agent/config.toml   ro   instance declaration (path overridable via AGENTBOX_CONFIG)
   /agent/skills-lock.json ro optional, skill manifest; named skills are installed into /state
+  /agent/home          ro   optional, declared home layer laid out like ~; copied into /state at every start
   /workspace           rw   workspace, bind-mounted from the host
   /state               rw   session and identity state; HOME points here
   /cache               rw   build cache, one per trust domain
@@ -109,6 +110,29 @@ precheck() {
 		echo "provide them via the compose env_file or -e (never put secrets in config.toml)" >&2
 		exit 2
 	fi
+}
+
+# Project the declared home layer into HOME. The instance directory may carry home/, laid out like
+# the home directory itself (.ssh/config, .ssh/<key>, .kube/config, .aws/config, ...). Tools then
+# find their files at their default paths, so no path variable and no per-file mount is needed.
+# The copy runs on every start and the declared file wins: the deploy repo is the only truth for
+# what it carries, so a credential a tool rewrote (aws configure, gh auth) is reset, while anything
+# it does not carry (known_hosts, sessions, caches) is left alone. Files land 0600, directories
+# 0700, owned by the container user, whatever they were on the host: ssh refuses looser modes.
+apply_home() {
+	local src f n=0
+	src="$(dirname "${CONFIG}")/home"
+	[ -d "${src}" ] || return 0
+	while IFS= read -r f; do
+		f="${f#./}"
+		if [ -d "${src}/${f}" ]; then
+			install -d -m 0700 "${HOME}/${f}" || die "home layer: cannot create directory ${HOME}/${f}"
+		else
+			install -m 0600 "${src}/${f}" "${HOME}/${f}" || die "home layer: cannot place ${HOME}/${f}"
+			n=$((n + 1))
+		fi
+	done < <(cd "${src}" && find . -mindepth 1 -print)
+	info "home layer: ${n} files from ${src} applied to ${HOME}"
 }
 
 # Install the skills the manifest names. The file is whatever `npx skills add` writes -- the
@@ -210,6 +234,7 @@ main() {
 		warn "prechecks skipped (AGENTBOX_PRECHECK=0)"
 	fi
 
+	apply_home
 	install_skills
 
 	info "starting cc-connect with config ${CONFIG}"
