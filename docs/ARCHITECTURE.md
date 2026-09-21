@@ -14,6 +14,8 @@ agentbox 的产出不是 Dockerfile，而是一份**挂载契约**：固定路�
 
 **`HOME=/state` 是拱心石。** agent CLI 与桥接器的状态自动归到一个挂载点（`.claude/`、`.pi/`、`.cc-connect/`、`.ssh/`、`.gitconfig`），备份、迁移、销毁都是对单个卷的操作。cc-connect 的排他锁不在 data-dir 而在配置文件旁（`/agent/.config.toml.lock`，实测 v1.5.0），所以 `/agent` 目录归 agent 用户可写，配置文件本身仍 `:ro`。
 
+**`/agent/home` 是 HOME 的声明层。** `~` 里有两种东西：部署者声明的（`.ssh/config`、私钥、kubeconfig、云 CLI 配置）和运行时长出来的（`known_hosts`、会话、工具回写的令牌）。整挂宿主目录会把两者绑死：只读则工具写不了，可写则配置没有真相。所以实例目录带一个照 `~` 结构摆的 `home/`，只读挂到 `/agent/home`，entrypoint 每次启动把它复制进 `/state`：声明的文件赢，没声明的不动，权限统一为文件 `0600`、目录 `0700`。工具按默认路径找配置，compose 永远只有一行挂载，多一个凭据只是多一个文件。规则与映射见 [TOOLS](TOOLS.md) §1。
+
 **缓存必须显式外迁出 HOME**，否则 state 卷会堆进几个 G 的垃圾：`npm_config_cache`、`GOMODCACHE`、`GOCACHE`、`XDG_CACHE_HOME`、`HELM_CACHE_HOME` 全指向 `/cache`。`/cache` 每信任域一个 named volume，同容器多 project 共用（go/npm 自带文件锁），跨信任域不共享，否则一个域被投毒的包会进入另一个域。
 
 ## 3. 六类数据，六种生命周期
@@ -22,7 +24,7 @@ agentbox 的产出不是 Dockerfile，而是一份**挂载契约**：固定路�
 |---|---|---|---|
 | 工具链 | 随镜像版本 | 镜像层 | 重拉镜像 |
 | 实例声明 | 随配置变更，进 git | bind mount `:ro` | 从配置仓恢复 |
-| 密钥 | 随轮换 | `env_file` | 重新下发 |
+| 密钥 | 随轮换 | `env_file`；文件型走 `home/` → `/agent/home` `:ro` | 重新下发 |
 | 工作区 | 长期，宿主为真相 | **bind mount 宿主目录** | **不可恢复** |
 | 会话状态 | 中期，可丢 | named volume | 丢历史 |
 | 缓存 | 随时可丢 | 每信任域一个 named volume | 变慢 |

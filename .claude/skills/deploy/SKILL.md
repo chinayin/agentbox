@@ -49,6 +49,10 @@ fleet moves together from one line while a host that must stay behind keeps its 
   which compose projects will restart. It never connects, so it is safe at any time.
 - `deploy` interrupts any session in progress on the containers it restarts. Omitting `instance`
   restarts every instance on that host, one compose project at a time. Prefer naming one instance.
+- An instance directory may carry `home/`, laid out like the container's home directory
+  (`home/.ssh/config`, `home/.ssh/<key>`, `home/.kube/config`): it is mirrored with the instance,
+  mounted at `/agent/home`, and the entrypoint copies it into `/state` on every start. Adding a file
+  credential is adding a file there; compose and `config.toml` do not change.
 - An instance directory may carry `workspace-init/`: `deploy` syncs it into the instance's
   workspace without overwriting files already there, and keeps it out of the server's `instances/`
   mirror. `plan` lists the instances it will seed. If the workspace is a git checkout, the clone must exist before the

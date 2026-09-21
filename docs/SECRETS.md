@@ -34,7 +34,13 @@ entrypoint           →  启动前校验每个占位符可解析，缺则 exit 
 部署仓库 hosts/<host>/instances/<name>/env  →  rsync 0600 到服务器  →  compose 的 env_file  →  容器环境变量
 ```
 
-agent 自己要读写的文件型密钥（如某个仓库 gitignored 的 `secrets/`）不走 env，也不能 `:ro` 挂，走另一条：
+工具按家目录默认路径读的文件型凭据（SSH 私钥与 `.ssh/config`、kubeconfig、云 CLI 配置目录）走第二条：
+
+```
+部署仓库 hosts/<host>/instances/<name>/home/  →  rsync 0600 到服务器 instances/<name>/home/  →  :ro 挂 /agent/home  →  entrypoint 每次启动复制进 /state（~），声明的文件赢
+```
+
+agent 自己要读写的文件型密钥（如某个仓库 gitignored 的 `secrets/`）不走 env，也不能 `:ro` 挂，走第三条：
 
 ```
 部署仓库 hosts/<host>/instances/<name>/workspace-init/  →  rsync --ignore-existing 直接进服务器工作区（已有文件不覆盖）

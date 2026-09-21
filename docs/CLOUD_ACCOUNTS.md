@@ -85,8 +85,8 @@ volc-media-prod
 
 三个落地细节：
 
-- **阿里云没有配置路径的环境变量**，两条路：在 `/opt/toolkit/bin` 放一个同名包装脚本永远补 `--config-path`；或者 entrypoint 启动时把 `/agent/aliyun-config.json` 复制到 `/state/.aliyun/config.json`（初始化放 entrypoint 符合 [ARCHITECTURE §1](ARCHITECTURE.md) 第二条）。**后者更稳**：阿里云 CLI 会把续期后的 STS 令牌写回 `config.json`（源码判定，`config/profile.go`），只读挂载可能让续期失败，未实测。
-- **火山不能改路径**，只能 entrypoint 复制到 `/state/.volcengine/`；`ve configure set` 会把 `current` 切到刚配的 profile，渲染时最后一步要把 `current` 置回无效值。
+- **阿里云没有配置路径的环境变量**：渲染产物放 `home/.aliyun/config.json`，entrypoint 启动时复制进 `/state/.aliyun/`（[TOOLS](TOOLS.md) §1 的家目录声明层）。阿里云 CLI 会把续期后的 STS 令牌写回 `config.json`（源码判定，`config/profile.go`），复制件可写所以续期不受影响，下次启动又回到声明值；未实测。
+- **火山不能改路径**，同样放 `home/.volcengine/config.json`；`ve configure set` 会把 `current` 切到刚配的 profile，渲染时最后一步要把 `current` 置回无效值。
 - **AWS 的 STS 缓存**在 `~/.aws/cli/cache`，落在 `/state`，可写，无事。
 - 做不到跨账号角色（比如账号不在同一组织且对方不肯建角色）时退化为每个别名一份静态 AK，仍然写进同一份 profile 文件、仍然按别名调用，只是长期密钥变多、审计里看不到 session name。IAM Identity Center / SSO 登录需要人在浏览器操作，不适合无人值守容器（文档）。
 

@@ -17,7 +17,7 @@ agentbox-deploy/
     hk-test/
       host.env
       instances/
-        aliyun/{docker-compose.yaml,config.toml,env,kubeconfig}
+        aliyun/{docker-compose.yaml,config.toml,env,home/.kube/config}
         demo/{docker-compose.yaml,config.toml,env}
         uufly/{docker-compose.yaml,config.toml,env,workspace-init/}
     prod-cn/
@@ -72,6 +72,22 @@ a scratch directory and commit it, rather than hand-writing JSON.
 There is deliberately no fleet-wide default, in the image or here: an instance either names a skill
 or does not have it. Two instances that want the same skill repeat two lines, which is cheaper to
 read than an inheritance rule.
+
+## `instances/<name>/home/`（可选）
+
+File credentials, laid out exactly like the container's home directory: `home/.ssh/config` and
+`home/.ssh/<key>` for git, `home/.kube/config` for kubectl, `home/.aws/config`,
+`home/.volcengine/config.json`, and so on. The compose file carries one line for all of it,
+`./home:/agent/home:ro`, and the entrypoint copies the tree into `/state` (the container's `HOME`)
+on every start: a declared file wins over whatever the state volume had, undeclared state
+(`known_hosts`, sessions) is left alone, files land `0600` and directories `0700`. Tools then read
+their default paths, so `config.toml` needs no `KUBECONFIG` or `GIT_SSH_COMMAND` for them.
+
+Adding a credential is adding a file here and redeploying; rotating one is replacing the file.
+Keep secrets `0600` in the repo as with `env`; `deploy` enforces `0600` and UID 1000 on the server
+anyway. For an `.ssh/config`, write `IdentityFile ~/.ssh/<key>` and `IdentitiesOnly yes`, and
+prefer `StrictHostKeyChecking accept-new` over a declared `known_hosts`, which would be reset to
+the declared content at every start.
 
 ## `instances/<name>/workspace-init/`（可选）
 
@@ -129,7 +145,7 @@ services:
       - ${WORKSPACES_ROOT:-../../workspaces}/aliyun:/workspace
       - state:/state
       - cache:/cache
-      - ./kubeconfig:/agent/kubeconfig:ro
+      - ./home:/agent/home:ro
 
 volumes:
   state:
@@ -178,8 +194,7 @@ The server holds only deploy artifacts, no source:
   instances/<name>/.env                written by deploy; compose variables only, no ssh info
   instances/<name>/config.toml         0644, owned by UID 1000
   instances/<name>/env                 0600, owned by UID 1000
-  instances/<name>/kubeconfig-*        0600, owned by UID 1000 (file credentials, one file each)
-  instances/<name>/ssh_key             0600, owned by UID 1000
+  instances/<name>/home/**             0600, owned by UID 1000 (file credentials, laid out like ~; mounted at /agent/home)
   instances/<name>/claude/             read-only managed layer for /etc/claude-code (skills, lock)
   workspaces/<name>/                   created and chowned to UID 1000 by deploy; seeded from the repo's workspace-init/
 ```
@@ -231,4 +246,4 @@ opens it, so it can be — and is — tightened to `0600` and owned by UID 1000 
 The two files carrying different modes is not an inconsistency to fix; it follows from one being
 read by the container and the other only ever being read by compose on the host.
 
-File credentials (`kubeconfig-*`, `ssh_key`) follow `env`: 0600 and owned by UID 1000, because the container reads them through a bind mount as that UID and nothing else on the host should. `claude/` is code, not credentials, and keeps the modes it arrived with. `deploy` applies all of this on every run, so an instance written by `import-instance` needs no manual chmod on the server.
+File credentials (everything under `home/`) follow `env`: 0600 and owned by UID 1000, because the container reads them through a bind mount as that UID and nothing else on the host should. `claude/` is code, not credentials, and keeps the modes it arrived with. `deploy` applies all of this on every run, so an instance written by `import-instance` needs no manual chmod on the server.

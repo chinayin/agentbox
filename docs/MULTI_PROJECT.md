@@ -12,7 +12,7 @@
 
 按 project 拆容器的代价：内置的跨 project 调用失效，每个容器常驻一份 agent CLI 内存。
 
-一个实例就是部署仓库里的一个目录 `instances/<name>/`：`docker-compose.yaml`、`config.toml`、`env`、文件型凭据，以及可选的 `workspace-init/`（工作区的一次性种子：agent 要能改写、因而不能 `:ro` 挂的文件，`deploy` 直接不覆盖地同步进工作区，不进服务器的 `instances/` 镜像）。`docker-compose.yaml` 从 `examples/demo/docker-compose.yaml` 生成，所有路径相对该目录，compose 项目名取目录名（卷自动带前缀 `<name>_state`）；`deploy` 在服务器上进入该目录运行 compose，每个实例独立 `pull`/`up`，一个实例的文件坏了不影响其他实例。共用的加固块（`cap_drop`、`no-new-privileges`、pids 上限、外部网络）在文件内用 YAML 锚点引用，不跨文件继承，所以搬迁一个实例只需带走这个目录、它的工作区与两个卷；`deploy plan` 逐文件断言加固块完整，少一行就拒绝。
+一个实例就是部署仓库里的一个目录 `instances/<name>/`：`docker-compose.yaml`、`config.toml`、`env`、可选的 `home/`（文件型凭据，照 `~` 的结构摆，见 [TOOLS](TOOLS.md) §1），以及可选的 `workspace-init/`（工作区的一次性种子：agent 要能改写、因而不能 `:ro` 挂的文件，`deploy` 直接不覆盖地同步进工作区，不进服务器的 `instances/` 镜像）。`docker-compose.yaml` 从 `examples/demo/docker-compose.yaml` 生成，所有路径相对该目录，compose 项目名取目录名（卷自动带前缀 `<name>_state`）；`deploy` 在服务器上进入该目录运行 compose，每个实例独立 `pull`/`up`，一个实例的文件坏了不影响其他实例。共用的加固块（`cap_drop`、`no-new-privileges`、pids 上限、外部网络）在文件内用 YAML 锚点引用，不跨文件继承，所以搬迁一个实例只需带走这个目录、它的工作区与两个卷；`deploy plan` 逐文件断言加固块完整，少一行就拒绝。
 
 新开信任域用仓库自带的 Claude Code 技能 `.claude/skills/new-instance/SKILL.md`：它复制 `examples/demo/` 生成配置骨架、建工作区目录并打出 compose 片段，不写任何真值。
 
