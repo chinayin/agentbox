@@ -43,10 +43,6 @@ ANTHROPIC_AUTH_TOKEN = "${ANTHROPIC_AUTH_TOKEN}"
 # ANTHROPIC_DEFAULT_OPUS_MODEL = "${ANTHROPIC_DEFAULT_OPUS_MODEL}"
 # CLAUDE_CODE_SUBAGENT_MODEL = "${CLAUDE_CODE_SUBAGENT_MODEL}"
 # CLAUDE_CODE_AUTO_COMPACT_WINDOW = "${CLAUDE_CODE_AUTO_COMPACT_WINDOW}"
-# pages publishing (publish-artifact skill in skills-lock.json): uncomment with the env lines.
-# IPFS_BASE_URL = "${IPFS_BASE_URL}"
-# IPFS_PUBLISH_ENDPOINT = "${IPFS_PUBLISH_ENDPOINT}"
-# IPFS_PUBLISH_TOKEN = "${IPFS_PUBLISH_TOKEN}"
 # Cloud credentials are NOT here. They live in the home layer (./home, docs/CREDENTIALS.md
 # section 2) at each CLI's default path, one profile per account, and every cloud command carries
 # --profile <alias>. These two lines make a command without --profile fail instead of falling back
