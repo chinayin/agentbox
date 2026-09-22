@@ -8,8 +8,8 @@
 # the server's instances/ mirror: workspace/ (operator-owned files such as CLAUDE.md and
 # .claude/agents/, overwritten on every deploy) and workspace-init/ (a one-time seed of files the
 # agent owns afterwards, never overwritten).
-# The repo path comes from, in order of precedence: --repo, AGENTBOX_DEPLOY_REPO, the skill's .env
-# file (../.env next to this script, gitignored; template in ../.env.example).
+# The repo path comes from, in order of precedence: --repo, AGENTBOX_DEPLOY_REPO, and the deploy-repo
+# directory at the agentbox root (a clone of the private deploy repo, or a symlink to one; gitignored).
 # Per-host connection details live in the deploy repo at hosts/<host>/host.env and never in here.
 # Exit codes: 0 ok / 1 usage error or remote failure / 2 precondition (unreachable, missing tools)
 
@@ -17,19 +17,6 @@ set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "${SKILL_DIR}/../../.." && pwd)"
-
-# .env fills only variables that are still unset, so the environment and flags always win.
-# A leading ~/ in a value is expanded; nothing else is interpreted.
-if [ -f "${SKILL_DIR}/.env" ]; then
-	while IFS= read -r line || [ -n "${line}" ]; do
-		case "${line}" in ''|\#*) continue ;; esac
-		name="${line%%=*}"; val="${line#*=}"
-		case "${name}" in AGENTBOX_DEPLOY_REPO) ;; *) continue ;; esac
-		# shellcheck disable=SC2088  # matching a literal leading ~/ from the file is the point here
-		case "${val}" in "~/"*) val="${HOME}/${val#\~/}" ;; esac
-		[ -n "${!name:-}" ] || export "${name}=${val}"
-	done < "${SKILL_DIR}/.env"
-fi
 
 REPO="${AGENTBOX_DEPLOY_REPO:-}"
 VERSION_FLAG=""
@@ -59,7 +46,7 @@ Actions:
                              on the server; its state and cache volumes and its workspace are kept
 
 Options:
-      --repo PATH    deploy repository (or the AGENTBOX_DEPLOY_REPO environment variable)
+      --repo PATH    deploy repository (default: <agentbox root>/deploy-repo, or AGENTBOX_DEPLOY_REPO)
       --image-version TAG
                      image tag for this run only; wins over defaults.env and host.env
       --force        proceed even though the deploy repo has uncommitted changes
@@ -67,9 +54,10 @@ Options:
   -v, --verbose      extra diagnostics (to stderr)
   -h, --help         show this help
 
-The deploy repo path can live in the skill's .env file (.claude/skills/deploy/.env, gitignored;
-copy .env.example). Flags and environment win. Per-host connection details live in the deploy repo
-at hosts/<host>/host.env. The image version comes from --image-version, else that host.env, else
+The deploy repo is the private repository described in references/deploy-repo.md. By default it is
+the deploy-repo/ directory at the agentbox root (gitignored; a clone or a symlink). Flags and the
+environment win. Per-host connection details live in the deploy repo at hosts/<host>/host.env. The
+image version comes from --image-version, else that host.env, else
 AGENTBOX_VERSION in the repo-level defaults.env; the plan prints which one it used. AGENTBOX_PROFILE
 in host.env (cn or global, default global) selects the runtime mirror profile for every instance on
 that host; it is derived into the remote .env next to the version. TZ in host.env (an IANA zone
@@ -117,7 +105,10 @@ for t in ssh rsync python3; do
 	command -v "${t}" >/dev/null 2>&1 || pre "${t} is required"
 done
 
-[ -n "${REPO}" ]   || { usage >&2; die "--repo, AGENTBOX_DEPLOY_REPO, or AGENTBOX_DEPLOY_REPO in ${SKILL_DIR}/.env is required"; }
+if [ -z "${REPO}" ]; then
+	[ -d "${ROOT}/deploy-repo" ] || pre "no deploy repo: clone or symlink the private deploy repository to ${ROOT}/deploy-repo, or pass --repo (see .claude/skills/deploy/references/deploy-repo.md)"
+	REPO="${ROOT}/deploy-repo"
+fi
 [ -d "${REPO}" ]   || die "deploy repo ${REPO} is not a directory"
 [ -n "${HOST}" ]   || { usage >&2; die "a host is required"; }
 

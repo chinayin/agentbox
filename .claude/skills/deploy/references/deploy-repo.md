@@ -7,6 +7,16 @@ or `config.toml`. Host it on an internal or self-hosted git server, never on a p
 the only thing protecting them. This page is what a human reads once, when creating that
 repository or adding a new host to it.
 
+## Where it lives
+
+Clone it to `deploy-repo/` at the agentbox root, or symlink an existing clone there. The directory
+is gitignored, so the two repositories never mix, and every skill finds it without configuration
+(`--repo` and `AGENTBOX_DEPLOY_REPO` still override). It is deliberately not under `runtime/`:
+`git clean -fdx` in agentbox deletes `deploy-repo/` too, and since `deploy` refuses a dirty repo,
+what that can cost is uncommitted edits, nothing more. A brand-new repository starts as
+`git init deploy-repo`; `new-instance` lays out `defaults.env`, `hosts/<host>/host.env` and the
+first instance from templates.
+
 ## Repository layout
 
 ```
@@ -42,20 +52,8 @@ repo. Templates live in agentbox and go in git; real values live in the deploy r
 
 Connection fields (top half) are read locally by `deploy.sh` and never leave this machine. Only
 `AGENTBOX_VERSION`, `AGENTBOX_PROFILE` and `TZ` (bottom half) are derived into the `.env` that
-`docker compose` reads on the server, one copy per instance directory.
-
-```env
-DEPLOY_HOST=root@xxx.xxx.xxx.xxx.sslip.io
-DEPLOY_KEY=~/.ssh/xxxx.pem
-DEPLOY_HOST_KEY_ALIAS=xxx.xxx.xxx.xxx
-DEPLOY_SOCKS=127.0.0.1:7890
-DEPLOY_DIR=/data/agentbox
-
-# Derived into the remote .env; nothing else in this file is.
-AGENTBOX_VERSION=x.x.x
-AGENTBOX_PROFILE=cn
-TZ=Asia/Shanghai
-```
+`docker compose` reads on the server, one copy per instance directory. The template is
+`references/host.env.example`; `new-instance` copies it in when a host has none.
 
 - `DEPLOY_HOST` / `DEPLOY_KEY` / `DEPLOY_HOST_KEY_ALIAS` / `DEPLOY_SOCKS` follow the same shape as
   `remote-build`'s `.env.example`, because the network path is the same: behind a rule-based proxy
@@ -130,14 +128,11 @@ chowned to UID 1000 after the sync, the owner every file in a workspace has anyw
 workspace is a git checkout, clone it before the first `deploy` that carries either directory:
 `git clone` refuses a non-empty directory.
 
-Optional, at the repo root, and read for exactly one variable:
+## `defaults.env`
 
-```env
-AGENTBOX_VERSION=x.x.x
-```
-
-Moving every host to a new image is then this one line rather than one edit per host. Connection
-fields are per-host by nature and are never read from here. `--image-version TAG` overrides both
+Optional, at the repo root, and read for exactly one variable, `AGENTBOX_VERSION` (template
+`references/defaults.env.example`). Moving every host to a new image is then this one line rather
+than one edit per host. Connection fields are per-host by nature and are never read from here. `--image-version TAG` overrides both
 files for a single run, which is how you try a tag without writing it down; the version a host
 actually runs stays in git either way, and `plan` prints which source it came from.
 

@@ -1,6 +1,6 @@
 ---
 name: deploy
-description: Publish agentbox instances to a remote docker host from the private deploy repository. Use this whenever the user wants to deploy, publish, release, restart or update an agent on a server, or asks what is currently running on a host, including phrasings like "发布到服务器", "上线", "部署一下", "推到生产", "deploy the aliyun agent", "what is running on hk-test". It reads the deploy repo path from the skill's gitignored .env and every host detail from that repo, so no addresses or secrets are typed in chat.
+description: Publish agentbox instances to a remote docker host from the private deploy repository. Use this whenever the user wants to deploy, publish, release, restart or update an agent on a server, or asks what is currently running on a host, including phrasings like "发布到服务器", "上线", "部署一下", "推到生产", "deploy the aliyun agent", "what is running on hk-test". It finds the deploy repo at deploy-repo/ under the agentbox root and reads every host detail from that repo, so no addresses or secrets are typed in chat.
 ---
 
 # Deploy
@@ -13,9 +13,11 @@ Images come from GHCR pinned to a version. The agentbox source tree never reache
 
 ## Configuration
 
-The deploy repo path lives in `.claude/skills/deploy/.env` (gitignored, template in
-`.env.example`). Flags and environment variables override it. If `.env` is missing, do not guess
-or ask for a path in chat: point the user at `.env.example` and stop.
+The deploy repo is the `deploy-repo/` directory at the agentbox root: a clone of the private
+repository, or a symlink to one, gitignored either way. `--repo` and `AGENTBOX_DEPLOY_REPO` override
+it. If it is missing, do not guess or ask for a path in chat: point the user at
+`references/deploy-repo.md` (clone it there, or `git init deploy-repo` and let `new-instance` lay
+out the skeleton) and stop.
 
 Every per-host detail (ssh address, key, proxy, remote directory, target version) lives in the
 deploy repo at `hosts/<host>/host.env`. Connection fields stay local; only `AGENTBOX_VERSION` and

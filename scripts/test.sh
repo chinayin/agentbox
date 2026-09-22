@@ -682,8 +682,9 @@ grep -qxF '.claude/skills/*/.env' "$ROOT/.gitignore" && ok "skill .env files are
 # environment and flags always win, and with no source at all the script must stop instead of
 # operating on an empty path.
 group "deploy skill"
-dp="$TMP/dp"; mkdir -p "$dp/skill/scripts"; cp "$DP_SRC" "$dp/skill/scripts/"
+dp="$TMP/dp"; dps="$dp/root/.claude/skills/deploy"; mkdir -p "$dps/scripts"; cp "$DP_SRC" "$dps/scripts/"
 mkdir -p "$dp/repo/hosts/h1/instances/a1" "$dp/other/hosts/h2/instances/a2"
+ln -s "$dp/repo" "$dp/root/deploy-repo"
 # Every instance is its own compose project; the fixture files carry the shared block the deploy
 # skill enforces (cap_drop, no-new-privileges, pids, external network, version, profile and TZ variables).
 compose_fixture() {
@@ -740,62 +741,65 @@ type = "claudecode"
 work_dir = "/workspace"
 TOML
 : > "$dp/other/hosts/h2/instances/a2/env"
-printf 'AGENTBOX_DEPLOY_REPO=%s\n' "$dp/repo" > "$dp/skill/.env"
-bash "$dp/skill/scripts/deploy.sh" --help >/dev/null 2>&1 \
+bash "$dps/scripts/deploy.sh" --help >/dev/null 2>&1 \
 	&& ok "deploy --help exits 0" || bad "deploy --help exits 0" ""
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
-[ "$rc" -eq 0 ] && grep -q "$dp/repo" <<<"$out" \
-	&& ok "deploy reads the repo path from the skill .env" || bad "deploy reads the repo path from the skill .env" "rc=$rc $out"
-out="$(AGENTBOX_DEPLOY_REPO="$dp/other" bash "$dp/skill/scripts/deploy.sh" --dry-run plan h2 2>&1)"; rc=$?
-[ "$rc" -eq 0 ] && grep -q "$dp/other" <<<"$out" && ! grep -q "$dp/repo" <<<"$out" \
-	&& ok "environment overrides the deploy skill .env" || bad "environment overrides the deploy skill .env" "rc=$rc $out"
-out="$(bash "$dp/skill/scripts/deploy.sh" --repo "$dp/other" --dry-run plan h2 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "$dp/root/deploy-repo" <<<"$out" \
+	&& ok "deploy defaults to <root>/deploy-repo" || bad "deploy defaults to <root>/deploy-repo" "rc=$rc $out"
+out="$(AGENTBOX_DEPLOY_REPO="$dp/other" bash "$dps/scripts/deploy.sh" --dry-run plan h2 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "$dp/other" <<<"$out" && ! grep -q "deploy-repo" <<<"$out" \
+	&& ok "environment overrides the default deploy repo" || bad "environment overrides the default deploy repo" "rc=$rc $out"
+out="$(bash "$dps/scripts/deploy.sh" --repo "$dp/other" --dry-run plan h2 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q "$dp/other" <<<"$out" \
-	&& ok "flag overrides the deploy skill .env" || bad "flag overrides the deploy skill .env" "rc=$rc $out"
-rm "$dp/skill/.env"
-env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" plan h1 >/dev/null 2>&1; rc=$?
-[ "$rc" -eq 1 ] && ok "deploy without any repo source exits 1" || bad "deploy without any repo source exits 1" "rc=$rc"
-printf 'AGENTBOX_DEPLOY_REPO=%s\n' "$dp/repo" > "$dp/skill/.env"
-[ -f "$ROOT/.claude/skills/deploy/.env.example" ] && ! grep -v '127\.0\.0\.1' "$ROOT/.claude/skills/deploy/.env.example" | grep -qE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' \
-	&& ok "deploy .env.example carries no real address" || bad "deploy .env.example carries no real address" ""
-env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan nosuchhost >/dev/null 2>&1; rc=$?
+	&& ok "flag overrides the default deploy repo" || bad "flag overrides the default deploy repo" "rc=$rc $out"
+rm "$dp/root/deploy-repo"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 2 ] && grep -q 'deploy-repo' <<<"$out" \
+	&& ok "deploy without any repo source exits 2 and names deploy-repo" || bad "deploy without any repo source exits 2 and names deploy-repo" "rc=$rc $out"
+ln -s "$dp/repo" "$dp/root/deploy-repo"
+[ ! -e "$ROOT/.claude/skills/deploy/.env.example" ] && ok "deploy skill has no .env.example (repo path is the deploy-repo directory)" || bad "deploy skill has no .env.example (repo path is the deploy-repo directory)" ""
+for f in host.env.example defaults.env.example; do
+	[ -f "$ROOT/.claude/skills/deploy/references/$f" ] && ! grep -v '127\.0\.0\.1' "$ROOT/.claude/skills/deploy/references/$f" | grep -qE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' \
+		&& ok "deploy references/$f carries no real address" || bad "deploy references/$f carries no real address" ""
+done
+env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run plan nosuchhost >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "deploy rejects an unknown host (exit 1)" || bad "deploy rejects an unknown host (exit 1)" "rc=$rc"
 printf 'DEPLOY_DIR=/data/agentbox\n' > "$dp/repo/hosts/h1/host.env"
-env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 >/dev/null 2>&1; rc=$?
+env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run plan h1 >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "deploy rejects a host.env without DEPLOY_HOST (exit 1)" || bad "deploy rejects a host.env without DEPLOY_HOST (exit 1)" "rc=$rc"
 printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\n' > "$dp/repo/hosts/h1/host.env"
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run plan h1 2>&1)"
 grep -q 'user@h1.example.test' <<<"$out" && grep -q '0.1.0' <<<"$out" \
 	&& ok "deploy reads host and version from host.env" || bad "deploy reads host and version from host.env" "$out"
 # a1's config.toml (set up above) references ANTHROPIC_AUTH_TOKEN, FEISHU_APP_ID, FEISHU_APP_SECRET;
 # drop the last one from env and confirm plan fails locally, naming it, before ever touching a network.
 printf 'ANTHROPIC_AUTH_TOKEN=sk-x\nFEISHU_APP_ID=cli_x\n' > "$dp/repo/hosts/h1/instances/a1/env"
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && grep -q 'FEISHU_APP_SECRET' <<<"$out" \
 	&& ok "deploy names the missing placeholder and exits 1" || bad "deploy names the missing placeholder and exits 1" "rc=$rc $out"
 printf 'ANTHROPIC_AUTH_TOKEN=sk-x\nFEISHU_APP_ID=cli_x\nFEISHU_APP_SECRET=x\n' > "$dp/repo/hosts/h1/instances/a1/env"
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "deploy plan passes once every placeholder has a value" || bad "deploy plan passes once every placeholder has a value" "rc=$rc $out"
 # A dirty deploy repo cannot be traced to a commit; plan/deploy must refuse unless --force says
 # otherwise. Make the fixture a real git repo here, so this and every later assertion in this
 # group runs against git-tracked state.
 ( cd "$dp/repo" && git init -q && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm init ) 2>/dev/null
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "deploy plan passes on a clean deploy repo" || bad "deploy plan passes on a clean deploy repo" "rc=$rc $out"
 printf 'dirty\n' >> "$dp/repo/hosts/h1/instances/a1/env"
-env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 >/dev/null 2>&1; rc=$?
+env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run plan h1 >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "deploy refuses a dirty deploy repo (exit 1)" || bad "deploy refuses a dirty deploy repo (exit 1)" "rc=$rc"
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'uncommitted' <<<"$out" \
 	&& ok "--force proceeds on a dirty repo and says so" || bad "--force proceeds on a dirty repo and says so" "rc=$rc $out"
 ( cd "$dp/repo" && git checkout -q -- hosts/h1/instances/a1/env ) 2>/dev/null
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" plan h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'a1' <<<"$out" && grep -q '0.1.0' <<<"$out" && grep -q 'restart' <<<"$out" \
 	&& ok "plan lists the instances, the version and what will restart" || bad "plan lists the instances, the version and what will restart" "rc=$rc $out"
 # plan must never dial the host: a bogus proxy would make any connection attempt fail loudly
 printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.1.0\nDEPLOY_SOCKS=127.0.0.1:1\n' > "$dp/repo/hosts/h1/host.env"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm socks ) 2>/dev/null
-env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" plan h1 >/dev/null 2>&1; rc=$?
+env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" plan h1 >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "plan stays offline even with an unusable proxy" || bad "plan stays offline even with an unusable proxy" "rc=$rc"
 # DEPLOY_KEY and DEPLOY_SOCKS must be present here so the "connection fields never reach the remote
 # .env" assertion below actually exercises those two patterns, not just DEPLOY_HOST=.
@@ -807,18 +811,18 @@ printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VE
 # host-level compose file (the pre-2026-09-11 shape) is refused outright rather than ignored.
 sed -i.bak -e '/cap_drop/d' -e '/healthcheck/d' "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
 printf '    privileged: true\n' >> "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && grep -q 'missing cap_drop' <<<"$out" && grep -q 'missing healthcheck' <<<"$out" && grep -q 'forbidden privileged' <<<"$out" \
 	&& ok "plan refuses an instance compose that drops the shared block (cap_drop, healthcheck) or adds privileged, naming each" \
 	|| bad "plan refuses an instance compose that drops the shared block (cap_drop, healthcheck) or adds privileged, naming each" "rc=$rc $out"
 mv "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml.bak" "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
 rm "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && grep -q 'docker-compose.yaml' <<<"$out" \
 	&& ok "plan refuses an instance without its own docker-compose.yaml" || bad "plan refuses an instance without its own docker-compose.yaml" "rc=$rc $out"
 ( cd "$dp/repo" && git checkout -q -- hosts/h1/instances/a1/docker-compose.yaml ) 2>/dev/null
 printf 'services: {}\n' > "$dp/repo/hosts/h1/docker-compose.yaml"
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && grep -q 'no longer read' <<<"$out" \
 	&& ok "plan refuses a host-level docker-compose.yaml instead of silently ignoring it" || bad "plan refuses a host-level docker-compose.yaml instead of silently ignoring it" "rc=$rc $out"
 rm "$dp/repo/hosts/h1/docker-compose.yaml"
@@ -833,21 +837,21 @@ h1env='DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\n'
 printf 'AGENTBOX_VERSION=9.9.9\n' > "$dp/repo/defaults.env"
 printf "$h1env" > "$dp/repo/hosts/h1/host.env"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm defaults ) 2>/dev/null
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q '9.9.9 (from defaults.env)' <<<"$out" \
 	&& ok "defaults.env supplies the version when host.env omits it" || bad "defaults.env supplies the version when host.env omits it" "rc=$rc $out"
 printf "${h1env}AGENTBOX_VERSION=0.1.0\n" > "$dp/repo/hosts/h1/host.env"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm pin ) 2>/dev/null
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q '0.1.0 (from hosts/h1/host.env)' <<<"$out" \
 	&& ok "host.env pins a single host past the repo default" || bad "host.env pins a single host past the repo default" "rc=$rc $out"
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --image-version 0.2.0 --dry-run plan h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --image-version 0.2.0 --dry-run plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q '0.2.0 (from --image-version)' <<<"$out" \
 	&& ok "--image-version wins over both files" || bad "--image-version wins over both files" "rc=$rc $out"
 rm "$dp/repo/defaults.env"
 printf "$h1env" > "$dp/repo/hosts/h1/host.env"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm noversion ) 2>/dev/null
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && grep -q 'defaults.env' <<<"$out" && grep -q 'host.env' <<<"$out" \
 	&& ok "no version anywhere names both files and exits 1" || bad "no version anywhere names both files and exits 1" "rc=$rc $out"
 printf "${h1env}AGENTBOX_VERSION=0.1.0\n" > "$dp/repo/hosts/h1/host.env"
@@ -856,51 +860,51 @@ printf "${h1env}AGENTBOX_VERSION=0.1.0\n" > "$dp/repo/hosts/h1/host.env"
 # remote .env next to the version (2026-09-21: two instances on a cn host ran with upstream sources
 # because nothing in the deploy chain carried AGENTBOX_PROFILE). A typo must fail locally, since the
 # entrypoint only warns about an unknown profile.
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'profile:   global (from default)' <<<"$out" \
 	&& ok "profile defaults to global when host.env omits it" || bad "profile defaults to global when host.env omits it" "rc=$rc $out"
 printf "${h1env}AGENTBOX_VERSION=0.1.0\nAGENTBOX_PROFILE=cn\n" > "$dp/repo/hosts/h1/host.env"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm profile ) 2>/dev/null
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'profile:   cn (from hosts/h1/host.env)' <<<"$out" && grep -q 'AGENTBOX_PROFILE=cn TZ=[A-Za-z/_]* for every instance' <<<"$out" \
 	&& ok "host.env AGENTBOX_PROFILE is derived into every instance's remote .env" || bad "host.env AGENTBOX_PROFILE is derived into every instance's remote .env" "rc=$rc $out"
 printf "${h1env}AGENTBOX_VERSION=0.1.0\nAGENTBOX_PROFILE=CN\n" > "$dp/repo/hosts/h1/host.env"
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && grep -q 'AGENTBOX_PROFILE must be cn or global' <<<"$out" \
 	&& ok "an unknown profile value fails plan locally (exit 1)" || bad "an unknown profile value fails plan locally (exit 1)" "rc=$rc $out"
 sed -i.bak '/AGENTBOX_PROFILE/d' "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
 printf "${h1env}AGENTBOX_VERSION=0.1.0\n" > "$dp/repo/hosts/h1/host.env"
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && grep -q 'missing .*AGENTBOX_PROFILE' <<<"$out" \
 	&& ok "plan refuses an instance compose that does not pass the profile through" || bad "plan refuses an instance compose that does not pass the profile through" "rc=$rc $out"
 mv "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml.bak" "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm version ) 2>/dev/null
 # Time zone, same channel as the profile (2026-09-21: "0 9 * * *" fired at 17:00 Beijing time on a
 # UTC container). Default UTC, host.env overrides, a name glibc would silently ignore fails plan.
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'timezone:  UTC (from default)' <<<"$out" && grep -q 'TZ=UTC for every instance' <<<"$out" \
 	&& ok "TZ defaults to UTC and is written into every instance's remote .env" || bad "TZ defaults to UTC and is written into every instance's remote .env" "rc=$rc $out"
 printf "${h1env}AGENTBOX_VERSION=0.1.0\nTZ=Asia/Shanghai\n" > "$dp/repo/hosts/h1/host.env"
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run deploy h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --force --dry-run deploy h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'timezone:  Asia/Shanghai (from hosts/h1/host.env)' <<<"$out" && grep -q 'TZ=Asia/Shanghai for every instance' <<<"$out" \
 	&& ok "host.env TZ is derived into the remote .env" || bad "host.env TZ is derived into the remote .env" "rc=$rc $out"
 printf "${h1env}AGENTBOX_VERSION=0.1.0\nTZ=Asia/Beijing\n" > "$dp/repo/hosts/h1/host.env"
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && grep -q 'TZ Asia/Beijing is not in /usr/share/zoneinfo' <<<"$out" \
 	&& ok "an unknown zone name fails plan locally (exit 1)" || bad "an unknown zone name fails plan locally (exit 1)" "rc=$rc $out"
 printf "${h1env}AGENTBOX_VERSION=0.1.0\nTZ=Asia/Shanghai; rm -rf /\n" > "$dp/repo/hosts/h1/host.env"
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && grep -q 'TZ must be an IANA zone name' <<<"$out" \
 	&& ok "a TZ value with shell metacharacters fails plan locally (exit 1)" || bad "a TZ value with shell metacharacters fails plan locally (exit 1)" "rc=$rc $out"
 sed -i.bak 's/, TZ: "${TZ:-UTC}"//' "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
 printf "${h1env}AGENTBOX_VERSION=0.1.0\n" > "$dp/repo/hosts/h1/host.env"
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && grep -q 'missing .*TZ' <<<"$out" \
 	&& ok "plan refuses an instance compose that does not pass TZ through" || bad "plan refuses an instance compose that does not pass TZ through" "rc=$rc $out"
 mv "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml.bak" "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm tz ) 2>/dev/null
 
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "deploy --dry-run exits 0" || bad "deploy --dry-run exits 0" "rc=$rc $out"
 grep -q 'rsync' <<<"$out" && grep -q 'docker compose up' <<<"$out" && grep -q 'chmod 600' <<<"$out" \
 	&& ok "dry-run shows rsync, compose and the 0600 step" || bad "dry-run shows rsync, compose and the 0600 step" "$out"
@@ -922,21 +926,21 @@ grep -q 'docker network' <<<"$out" && grep -q 'agentbox' <<<"$out" \
 grep -q 'chown -R 1000:1000' <<<"$out" && grep -q 'config.toml and claude/ excepted' <<<"$out" \
 	&& ok "dry-run shows file credentials tightened and the instance directory chowned" || bad "dry-run shows file credentials tightened and the instance directory chowned" "$out"
 # the transport is a whitelist: nothing from the agentbox source tree may appear in the rsync source
-grep -q "rsync .* $dp/repo/hosts/h1/instances " <<<"$out" && ! grep -qE 'Dockerfile|entrypoint\.sh|mise\.toml|hosts/h1/docker-compose' <<<"$out" \
+grep -q "rsync .* $dp/root/deploy-repo/hosts/h1/instances " <<<"$out" && ! grep -qE 'Dockerfile|entrypoint\.sh|mise\.toml|hosts/h1/docker-compose' <<<"$out" \
 	&& ok "rsync source is the instances tree only, no host compose, no agentbox source" || bad "rsync source is the instances tree only, no host compose, no agentbox source" "$out"
 grep -q 'AGENTBOX_VERSION=0.1.0' <<<"$out" \
 	&& ok "the remote .env is derived, not synced" || bad "the remote .env is derived, not synced" "$out"
 ! grep -qE 'DEPLOY_KEY|DEPLOY_SOCKS|DEPLOY_HOST=' <<<"$out" \
 	&& ok "connection fields never reach the remote .env" || bad "connection fields never reach the remote .env" "$out"
 # a1's env carries ANTHROPIC_AUTH_TOKEN=sk-x; even with -v it must never be echoed to the plan output.
-vout="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run -v deploy h1 2>&1)"; rc=$?
+vout="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run -v deploy h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ! grep -q 'sk-x' <<<"$vout" \
 	&& ok "instance secrets never appear in dry-run -v output" || bad "instance secrets never appear in dry-run -v output" "rc=$rc $vout"
 # The skill manifest is an ordinary instance file: rsynced with the rest, no merging, no repo-level
 # default. One instance, one manifest, and nothing inherited to reason about.
 printf '{"version":1,"skills":{"alpha":{"source":"owner/one"}}}\n' > "$dp/repo/hosts/h1/instances/a1/skills-lock.json"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm manifest ) 2>/dev/null
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run -v deploy h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run -v deploy h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ! grep -qi 'merge' <<<"$out" \
 	&& ok "deploy ships the instance manifest without merging anything into it" || bad "deploy ships the instance manifest without merging anything into it" "rc=$rc $out"
 rm "$dp/repo/hosts/h1/instances/a1/skills-lock.json"
@@ -949,8 +953,8 @@ rm "$dp/repo/hosts/h1/instances/a1/skills-lock.json"
 mkdir -p "$dp/repo/hosts/h1/instances/a1/workspace-init/secrets"
 printf 'TOKEN=sk-init\n' > "$dp/repo/hosts/h1/instances/a1/workspace-init/secrets/x.env"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm seed ) 2>/dev/null
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run -v deploy h1 2>&1)"; rc=$?
-[ "$rc" -eq 0 ] && grep -q "rsync -a --ignore-existing $dp/repo/hosts/h1/instances/a1/workspace-init/ user@h1.example.test:/data/agentbox/workspaces/a1/" <<<"$out" \
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run -v deploy h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "rsync -a --ignore-existing $dp/root/deploy-repo/hosts/h1/instances/a1/workspace-init/ user@h1.example.test:/data/agentbox/workspaces/a1/" <<<"$out" \
 	&& ok "workspace-init is synced into the workspace without overwriting" || bad "workspace-init is synced into the workspace without overwriting" "rc=$rc $out"
 grep -q 'chown -R 1000:1000 /data/agentbox/workspaces/a1' <<<"$out" \
 	&& ok "the seeded workspace is chowned to the agent uid" || bad "the seeded workspace is chowned to the agent uid" "$out"
@@ -970,8 +974,8 @@ rm -r "$dp/repo/hosts/h1/instances/a1/workspace-init"
 mkdir -p "$dp/repo/hosts/h1/instances/a1/workspace/.claude/agents"
 printf '# prompt-v2\n' > "$dp/repo/hosts/h1/instances/a1/workspace/CLAUDE.md"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm wsdecl ) 2>/dev/null
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run -v deploy h1 2>&1)"; rc=$?
-[ "$rc" -eq 0 ] && grep -q "rsync -a $dp/repo/hosts/h1/instances/a1/workspace/ user@h1.example.test:/data/agentbox/workspaces/a1/" <<<"$out" \
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run -v deploy h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q "rsync -a $dp/root/deploy-repo/hosts/h1/instances/a1/workspace/ user@h1.example.test:/data/agentbox/workspaces/a1/" <<<"$out" \
 	&& ok "workspace/ is synced into the workspace overwriting existing files" || bad "workspace/ is synced into the workspace overwriting existing files" "rc=$rc $out"
 ! grep -q 'ignore-existing' <<<"$out" && ! grep -q -- '--delete .*workspace/ ' <<<"$out" \
 	&& ok "workspace/ sync uses neither --ignore-existing nor --delete" || bad "workspace/ sync uses neither --ignore-existing nor --delete" "$out"
@@ -984,23 +988,23 @@ grep -q 'will overwrite: workspaces/a1 from instances/a1/workspace' <<<"$out" \
 rm -r "$dp/repo/hosts/h1/instances/a1/workspace"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm nowsdecl ) 2>/dev/null
 
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run status h1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run status h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'compose ps' <<<"$out" \
 	&& ok "status dry-run shows compose ps" || bad "status dry-run shows compose ps" "rc=$rc $out"
 # A skill-less agent is healthy in ps; the marker is the only thing that says otherwise.
 grep -q '.agentbox-skills-missing' <<<"$out" \
 	&& ok "status reads the missing-skills marker out of each container" || bad "status reads the missing-skills marker out of each container" "$out"
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run status 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run status 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && ok "status without a host exits 1" || bad "status without a host exits 1" "rc=$rc"
 # remove retires an instance the repo no longer has: refuse while the directory still exists (a
 # deploy would bring it back), and never touch volumes.
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run remove h1 a1 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run remove h1 a1 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && grep -q 'still in the deploy repo' <<<"$out" \
 	&& ok "remove refuses an instance the repo still has (exit 1)" || bad "remove refuses an instance the repo still has (exit 1)" "rc=$rc $out"
-out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run remove h1 gone 2>&1)"; rc=$?
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run remove h1 gone 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q "instances/gone' && docker compose down" <<<"$out" && grep -q "rm -rf '/data/agentbox/instances/gone'" <<<"$out" && ! grep -q 'down -v\|volume rm' <<<"$out" \
 	&& ok "remove dry-run shows compose down and the directory deletion, volumes untouched" || bad "remove dry-run shows compose down and the directory deletion, volumes untouched" "rc=$rc $out"
-env -u AGENTBOX_DEPLOY_REPO bash "$dp/skill/scripts/deploy.sh" --dry-run remove h1 >/dev/null 2>&1; rc=$?
+env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run remove h1 >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "remove without an instance exits 1" || bad "remove without an instance exits 1" "rc=$rc"
 
 # ---------- import-instance skill ----------
