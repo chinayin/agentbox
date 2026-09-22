@@ -6,6 +6,8 @@
 
 ## 快速开始
 
+**本机跑 demo**：
+
 ```bash
 make image                                                        # agentbox:dev 与 agentbox:dev-pi
 docker network create agentbox                                    # 一次性；compose 声明为 external
@@ -14,6 +16,18 @@ cp examples/demo/env.example examples/demo/env && chmod 600 examples/demo/env
 mkdir -p runtime/workspaces/demo                                  # 属主须与镜像 AGENT_UID（默认 1000）一致
 docker compose up -d
 ```
+
+**发布到服务器**（镜像从 GHCR 拉，配置与密钥住独立的私有部署仓库）：
+
+```bash
+git clone <私有部署仓库> deploy-repo                              # 或 git init deploy-repo；目录已 gitignore
+.claude/skills/new-instance/scripts/scaffold.sh <name>            # 写 deploy-repo/hosts/default/instances/<name>/
+# 填 deploy-repo/defaults.env、hosts/default/host.env、instances/<name>/env，提交部署仓库
+.claude/skills/deploy/scripts/deploy.sh plan default <name>
+.claude/skills/deploy/scripts/deploy.sh deploy default <name>
+```
+
+部署仓库的结构见 `.claude/skills/deploy/references/deploy-repo.md`。
 
 ## 挂载契约
 
@@ -54,7 +68,7 @@ make smoke     # 对已构建镜像做运行期验收
 make lock      # 升级工具链到上游最新（通常由 CI 的 lock.yml 跑）
 ```
 
-本地产物统一落 `runtime/`，已被 git 与 docker 忽略。四个 Claude Code 技能都在 `.claude/skills/`：`new-instance` 从模板造实例、`import-instance` 从裸机实例反向导入、`remote-build` 在远端构建镜像、`deploy` 把部署仓库推到主机。
+本地产物统一落 `runtime/`，已被 git 与 docker 忽略。四个 Claude Code 技能都在 `.claude/skills/`：`new-instance` 把新实例写进 `deploy-repo/`、`import-instance` 从裸机实例反向导入、`remote-build` 在远端构建镜像、`deploy` 把部署仓库推到主机。部署仓库 clone 或软链到根目录的 `deploy-repo/`（gitignored），三个技能都从那里读。
 
 ## 文档
 

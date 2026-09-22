@@ -2,6 +2,8 @@
 /.env
 examples/*/env
 .claude/skills/*/.env
+# the private deploy repository, cloned or symlinked here; see .claude/skills/deploy/references/deploy-repo.md
+/deploy-repo
 *.pem
 id_ed25519*
 

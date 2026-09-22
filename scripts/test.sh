@@ -707,6 +707,8 @@ env -u AGENTBOX_REMOTE bash "$rb/skill/scripts/remote-build.sh" --dry-run build 
 [ -f "$ROOT/.claude/skills/remote-build/.env.example" ] && ! grep -v '127\.0\.0\.1' "$ROOT/.claude/skills/remote-build/.env.example" | grep -qE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' \
 	&& ok "remote-build .env.example carries no real address" || bad "remote-build .env.example carries no real address" ""
 grep -qxF '.claude/skills/*/.env' "$ROOT/.gitignore" && ok "skill .env files are gitignored" || bad "skill .env files are gitignored" ""
+grep -qxF '/deploy-repo' "$ROOT/.gitignore" && ok "deploy-repo/ is gitignored" || bad "deploy-repo/ is gitignored" ""
+grep -q 'deploy-repo' "$ROOT/README.md" && ok "README names deploy-repo/ as the deploy repo location" || bad "README names deploy-repo/ as the deploy repo location" ""
 
 # ---------- deploy skill ----------
 # Same three-level override as remote-build: the skill .env only fills what is still unset, so the

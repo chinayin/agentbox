@@ -24,6 +24,7 @@
 | — | 部署仓库用 sops/age 加密 `env` | 明文提交换来克隆即可用、diff 直接可读、不引入加密工具链；代价是仓库泄露后只能全量轮换。仓库权限是唯一防线 |
 | 2026-09-11 | 镜像或部署仓库带 fleet 级默认技能清单 | 镜像不含身份；部署仓库里也不继承，一个实例要么自己写上，要么就没有 |
 | 2026-09-21 | 文件型凭据以 `/agent/<文件>:ro` 单挂 | 改为实例目录 `home/` 整目录挂 `/agent/home`，entrypoint 复制进 `/state`。原因：整挂宿主目录只读则工具写不了，可写则配置没有真相；单文件挂法每加一个凭据都要改 compose 与指路变量 |
+| 2026-09-22 | 部署仓库路径放技能 `.env`（`AGENTBOX_DEPLOY_REPO`）；`new-instance` 产物落 `examples/<name>/` | 改为约定位置：agentbox 根下 gitignored 的 `deploy-repo/`（真 clone 或软链），三个技能同一解析，`--repo` 与环境变量仍可覆盖；`new-instance` 直接写 `deploy-repo/hosts/<host>/instances/<name>/`，缺 `host.env` / `defaults.env` 时从模板生成，`examples/` 只剩模板与样例。原因：第一次使用要手抄仓库骨架、复制改名 `env.example`，且三个技能两层间接读一个路径。名字不用 `deploy/`（像项目自己的目录）也不用点前缀（每天要进去改）。已有布局迁移：`ln -s <原路径> deploy-repo` |
 
 ## 实测数字
 
