@@ -7,8 +7,9 @@ steps in the final message and keep the wording; each one exists because of a re
    host's ssh address, key, proxy and remote directory, plus its mirror profile and time zone;
    behind a rule-based proxy write the host as `<ip>.sslip.io` and set the alias to the bare ip
    (`.claude/skills/deploy/references/deploy-repo.md`). `defaults.env` is the image tag from the
-   GitHub releases page. Both hold `xxxx` shapes until edited, and `deploy plan` refuses to run
-   with them.
+   GitHub releases page. Both hold `xxxx` shapes until edited; `deploy plan` only checks that every
+   placeholder has some value, so a forgotten `xxxx` is caught by the bot failing to connect, not
+   by `plan`.
 2. **Fill in the values.** The `env` next to `config.toml` is the real file, already `0600`.
    Every `${NAME}` in `config.toml` must have a value in `env`. Use a
    budgeted virtual key for `ANTHROPIC_AUTH_TOKEN`, not a master key (`docs/CREDENTIALS.md` §1).
