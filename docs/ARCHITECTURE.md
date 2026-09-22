@@ -54,7 +54,7 @@
 | 运行期联网补装 | 持有实例密钥时临时联网 | `MISE_OFFLINE=true`、`MISE_NOT_FOUND_AUTO_INSTALL=false`、`MISE_NOT_FOUND_SYSTEM_FALLBACK=false`，缺工具直接失败 |
 | 嵌套挂进 `/state` | docker 以 root 创建嵌套挂载点，`/state/.claude` 之类变成 root 属主，agent 写不进会话状态 | 不在 state 卷内部再挂任何东西；文件型凭据走 `/agent/home`，技能走 `/etc/claude-code` |
 
-**代理：`NO_PROXY` 要同时写 CIDR 与单 IP。** Go 系工具认 CIDR，curl 不认。内网目标既写 CIDR 又单列精确 IP。agent 会自己拼代理行，靠两层挡：`config.toml` 的 `[projects.agent.options.env]` 固化 `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`，系统提示里写明"代理已配置，勿自创"。不要放 `/etc/environment`，agent 不是登录会话读不到。
+**代理：`NO_PROXY` 要同时写 CIDR 与单 IP。** Go 系工具与 curl（7.86 起）认 CIDR，python requests 与 node 不认。内网目标既写 CIDR 又单列精确 IP。agent 会自己拼代理行，靠两层挡：`config.toml` 的 `[projects.agent.options.env]` 固化 `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`，系统提示里写明"代理已配置，勿自创"。不要放 `/etc/environment`，agent 不是登录会话读不到。
 
 ## 6. entrypoint：把挂载投影成运行环境，然后 exec 桥接器
 
