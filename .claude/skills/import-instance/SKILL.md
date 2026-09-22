@@ -9,7 +9,7 @@ description: Import a cc-connect instance that runs directly on a server (npm-in
 
 ## 配置
 
-源主机连接信息在 `.claude/skills/import-instance/.env`（gitignored，模板 `.env.example`），形状与 `remote-build` 相同；Clash 之类规则代理下用 `<ip>.sslip.io` 加 host-key alias。部署仓库路径复用 `deploy` 技能的 `.env`（`AGENTBOX_DEPLOY_REPO`），不另配。两个 `.env` 缺任何一个，都指向对应的 `.env.example` 然后停下，不在 chat 里问地址或路径。
+源主机连接信息在 `.claude/skills/import-instance/.env`（gitignored，模板 `.env.example`），形状与 `remote-build` 相同；Clash 之类规则代理下用 `<ip>.sslip.io` 加 host-key alias。部署仓库是 agentbox 根下的 `deploy-repo/`（见 `deploy` 技能的 `references/deploy-repo.md`），不另配。源主机 `.env` 缺失指向 `.env.example`，`deploy-repo/` 缺失指向 `deploy-repo.md`，然后停下，不在 chat 里问地址或路径。
 
 ## 动作
 

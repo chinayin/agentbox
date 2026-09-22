@@ -5,14 +5,13 @@
 # directory and never through stdout, stderr or this script's variables.
 # Source connection comes from, in order of precedence: flags, environment variables, the skill's
 # .env (../.env next to this script, gitignored; template in ../.env.example). The deploy repo path
-# comes from --repo, AGENTBOX_DEPLOY_REPO, or the deploy skill's .env (shared variable, one truth).
+# comes from --repo, AGENTBOX_DEPLOY_REPO, or the deploy-repo directory at the agentbox root.
 # Exit codes: 0 ok / 1 usage error, target exists or remote failure / 2 precondition not met
 
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "${SKILL_DIR}/../../.." && pwd)"
-DEPLOY_SKILL_DIR="${SKILL_DIR}/../deploy"
 
 # Fill only what is still unset, so the environment and flags always win. A leading ~/ expands.
 load_env_file() {
@@ -29,7 +28,6 @@ load_env_file() {
 	done < "${file}"
 }
 load_env_file "${SKILL_DIR}/.env" AGENTBOX_IMPORT_SOURCE AGENTBOX_IMPORT_KEY AGENTBOX_IMPORT_SOCKS AGENTBOX_IMPORT_HOST_KEY_ALIAS
-load_env_file "${DEPLOY_SKILL_DIR}/.env" AGENTBOX_DEPLOY_REPO
 
 SOURCE="${AGENTBOX_IMPORT_SOURCE:-}"
 KEY="${AGENTBOX_IMPORT_KEY:-}"
@@ -74,7 +72,7 @@ Options:
       --local              <source-dir> is a local directory; no connection is made
       --home DIR           owner's home directory on the source (default: derived from the owner
                            of config.toml); needed with --local
-      --repo DIR           deploy repository (or AGENTBOX_DEPLOY_REPO, or the deploy skill .env)
+      --repo DIR           deploy repository (default: <agentbox root>/deploy-repo, or AGENTBOX_DEPLOY_REPO)
       --host HOST          host directory in the deploy repo (hosts/<host> must already exist)
       --name NAME          instance name: [a-z][a-z0-9-]{0,31}
       --image REPO         image repository written into docker-compose.yaml (default ghcr.io/chinayin/agentbox)
@@ -122,7 +120,10 @@ if [ "${ACTION}" = import ]; then
 	[ -n "${HOST}" ] || { usage >&2; die "import requires --host"; }
 	[ -n "${NAME}" ] || { usage >&2; die "import requires --name"; }
 	[[ "${NAME}" =~ ^[a-z][a-z0-9-]{0,31}$ ]] || die "invalid name '${NAME}': use [a-z][a-z0-9-]{0,31}"
-	[ -n "${REPO}" ] || { usage >&2; die "--repo, AGENTBOX_DEPLOY_REPO, or ${DEPLOY_SKILL_DIR}/.env is required for import"; }
+	if [ -z "${REPO}" ]; then
+		[ -d "${ROOT}/deploy-repo" ] || pre "no deploy repo: clone or symlink the private deploy repository to ${ROOT}/deploy-repo, or pass --repo (see .claude/skills/deploy/references/deploy-repo.md)"
+		REPO="${ROOT}/deploy-repo"
+	fi
 	HOST_DIR="${REPO}/hosts/${HOST}"
 	[ -f "${HOST_DIR}/host.env" ] || pre "host '${HOST}' not found in ${REPO} (expected ${HOST_DIR}/host.env; see .claude/skills/deploy/references/deploy-repo.md)"
 	TARGET="${HOST_DIR}/instances/${NAME}"

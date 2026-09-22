@@ -1012,7 +1012,7 @@ env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run remove h1 >/
 # shape into the deploy repo. Fixture is a fake source instance under mktemp; nothing dials out.
 group "import-instance skill"
 IM_SRC="$ROOT/.claude/skills/import-instance/scripts"
-im="$TMP/im"; mkdir -p "$im/skills/import-instance/scripts" "$im/skills/deploy" "$im/repo/hosts/h1/instances" "$im/other/hosts/h2/instances"
+im="$TMP/im"; mkdir -p "$im/skills/import-instance/scripts" "$im/repo/hosts/h1/instances" "$im/other/hosts/h2/instances"
 cp "$IM_SRC"/* "$im/skills/import-instance/scripts/"
 # render.py resolves lock files via ROOT, which the driver derives from its own script path
 # (SKILL_DIR/../../..); under this fixture's shallower copy that lands on $TMP, not $ROOT. Mirror
@@ -1021,7 +1021,8 @@ cp "$ROOT/mise.lock" "$ROOT/mise.claude.lock" "$ROOT/mise.pi.lock" "$TMP/"
 # The driver also reads the instance compose template from ROOT (examples/demo/docker-compose.yaml).
 mkdir -p "$TMP/examples/demo" && cp "$ROOT/examples/demo/docker-compose.yaml" "$TMP/examples/demo/"
 printf 'AGENTBOX_IMPORT_SOURCE=user@src.example.test\nAGENTBOX_IMPORT_KEY=~/nope.pem\n' > "$im/skills/import-instance/.env"
-printf 'AGENTBOX_DEPLOY_REPO=%s\n' "$im/repo" > "$im/skills/deploy/.env"
+# The driver's ROOT is $TMP under this fixture (see above), so the default deploy repo is $TMP/deploy-repo.
+ln -s "$im/repo" "$TMP/deploy-repo"
 printf 'DEPLOY_HOST=user@h1.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.2.0\n' > "$im/repo/hosts/h1/host.env"
 printf 'DEPLOY_HOST=user@h2.example.test\nDEPLOY_DIR=/data/agentbox\nAGENTBOX_VERSION=0.2.0\n' > "$im/other/hosts/h2/host.env"
 IMPORT="$im/skills/import-instance/scripts/import-instance.sh"
@@ -1035,8 +1036,8 @@ grep -q 'other@env.example.test' <<<"$out" && ! grep -q 'src.example.test' <<<"$
 out="$(bash "$IMPORT" --source flag@flag.example.test --dry-run plan /srv/x 2>&1)"
 grep -q 'flag@flag.example.test' <<<"$out" && ok "flag overrides the import-instance skill .env" || bad "flag overrides the import-instance skill .env" "$out"
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$IMPORT" --dry-run import --host h1 --name x /srv/x 2>&1)"; rc=$?
-[ "$rc" -eq 0 ] && grep -q "$im/repo/hosts/h1/instances/x" <<<"$out" \
-	&& ok "import-instance reads the deploy repo path from the deploy skill .env" || bad "import-instance reads the deploy repo path from the deploy skill .env" "rc=$rc $out"
+[ "$rc" -eq 0 ] && grep -q "$TMP/deploy-repo/hosts/h1/instances/x" <<<"$out" \
+	&& ok "import-instance defaults to <root>/deploy-repo" || bad "import-instance defaults to <root>/deploy-repo" "rc=$rc $out"
 out="$(AGENTBOX_DEPLOY_REPO="$im/other" bash "$IMPORT" --dry-run import --host h2 --name x /srv/x 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && grep -q "$im/other/hosts/h2" <<<"$out" && ! grep -q "$im/repo" <<<"$out" \
 	&& ok "environment overrides the deploy repo path for import-instance" || bad "environment overrides the deploy repo path for import-instance" "rc=$rc $out"
@@ -1047,6 +1048,11 @@ mv "$im/skills/import-instance/.env" "$im/skills/import-instance/.env.off"
 env -u AGENTBOX_IMPORT_SOURCE bash "$IMPORT" --dry-run plan /srv/x >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "import-instance without any source host exits 1" || bad "import-instance without any source host exits 1" "rc=$rc"
 mv "$im/skills/import-instance/.env.off" "$im/skills/import-instance/.env"
+rm "$TMP/deploy-repo"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$IMPORT" --dry-run import --host h1 --name x /srv/x 2>&1)"; rc=$?
+[ "$rc" -eq 2 ] && grep -q 'deploy-repo' <<<"$out" \
+	&& ok "import without any repo source exits 2 and names deploy-repo" || bad "import without any repo source exits 2 and names deploy-repo" "rc=$rc $out"
+ln -s "$im/repo" "$TMP/deploy-repo"
 env -u AGENTBOX_DEPLOY_REPO bash "$IMPORT" --dry-run import --host nosuch --name x /srv/x >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 2 ] && ok "import-instance rejects a host missing from the deploy repo (exit 2)" || bad "import-instance rejects a host missing from the deploy repo (exit 2)" "rc=$rc"
 bash "$IMPORT" --dry-run import --host h1 /srv/x >/dev/null 2>&1; rc=$?
