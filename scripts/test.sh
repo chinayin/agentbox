@@ -603,17 +603,32 @@ check_instance_compose() {
 # make sure the skill can never produce a non-placeholder value or clobber an existing instance.
 group "new-instance scaffold"
 SCAFFOLD="$ROOT/.claude/skills/new-instance/scripts/scaffold.sh"
-sc="$TMP/scaffold"; mkdir -p "$sc/examples"; cp -R "$ROOT/examples/demo" "$sc/examples/"; cp "$ROOT/.gitignore" "$sc/"
+sc="$TMP/scaffold"; mkdir -p "$sc/examples" "$sc/.claude/skills/deploy/references" "$sc/deploy-repo"
+cp -R "$ROOT/examples/demo" "$sc/examples/"
+cp "$ROOT/.claude/skills/deploy/references/host.env.example" "$ROOT/.claude/skills/deploy/references/defaults.env.example" "$sc/.claude/skills/deploy/references/"
+inst="$sc/deploy-repo/hosts/default/instances/data"
 if out="$(bash "$SCAFFOLD" --root "$sc" --agent pi data 2>"$sc/err")"; then
 	ok "scaffold exits 0 for a fresh name"
 else
 	bad "scaffold exits 0 for a fresh name" "$(cat "$sc/err")"
 fi
 [ -z "$out" ] && ok "scaffold prints nothing on stdout (the files are the product)" || bad "scaffold prints nothing on stdout (the files are the product)" "$out"
-python3 -c 'import sys,tomllib; c=tomllib.load(open(sys.argv[1],"rb")); p=c["projects"][0]; assert p["name"]=="data" and p["agent"]["type"]=="pi" and "KUBECONFIG" not in p["agent"]["options"]["env"]' "$sc/examples/data/config.toml" 2>/dev/null \
+[ -f "$inst/docker-compose.yaml" ] && [ -f "$inst/config.toml" ] && [ -f "$inst/env" ] && [ ! -e "$inst/env.example" ] \
+	&& ok "scaffold writes the instance into deploy-repo/hosts/default/instances/<name> with env, not env.example" \
+	|| bad "scaffold writes the instance into deploy-repo/hosts/default/instances/<name> with env, not env.example" "$(ls -A "$inst" 2>/dev/null)"
+[ "$(stat -f '%Lp' "$inst/env" 2>/dev/null || stat -c '%a' "$inst/env")" = "600" ] \
+	&& ok "scaffolded env is 0600" || bad "scaffolded env is 0600" "$(ls -l "$inst/env")"
+[ -f "$sc/deploy-repo/hosts/default/host.env" ] && [ -f "$sc/deploy-repo/defaults.env" ] \
+	&& ok "scaffold lays out host.env and defaults.env when the repo lacks them" || bad "scaffold lays out host.env and defaults.env when the repo lacks them" "$(find "$sc/deploy-repo" -maxdepth 3)"
+grep -vE '^(#|$)' "$sc/deploy-repo/hosts/default/host.env" "$sc/deploy-repo/defaults.env" | grep -vE '=(root@)?(xxx\.xxx\.xxx\.xxx(\.sslip\.io)?|~/\.ssh/xxxx\.pem|127\.0\.0\.1:7890|/data/agentbox|x\.x\.x|global|UTC)$' | grep -q . \
+	&& bad "generated host.env and defaults.env hold placeholders only" "$(grep -vE '^(#|$)' "$sc/deploy-repo/hosts/default/host.env" "$sc/deploy-repo/defaults.env")" \
+	|| ok "generated host.env and defaults.env hold placeholders only"
+grep -q 'host.env' "$sc/err" && grep -q 'defaults.env' "$sc/err" && grep -q 'instances/data/env' "$sc/err" \
+	&& ok "scaffold tells the user which files need values" || bad "scaffold tells the user which files need values" "$(cat "$sc/err")"
+python3 -c 'import sys,tomllib; c=tomllib.load(open(sys.argv[1],"rb")); p=c["projects"][0]; assert p["name"]=="data" and p["agent"]["type"]=="pi" and "KUBECONFIG" not in p["agent"]["options"]["env"]' "$inst/config.toml" 2>/dev/null \
 	&& ok "scaffolded config.toml parses with name and agent type applied and no path variable" \
-	|| bad "scaffolded config.toml parses with name and agent type applied and no path variable" "see $sc/examples/data/config.toml"
-grep -q '^PI_KEY=x' "$sc/examples/data/env.example" \
+	|| bad "scaffolded config.toml parses with name and agent type applied and no path variable" "see $inst/config.toml"
+grep -q '^PI_KEY=x' "$inst/env" \
 	&& ok "pi scaffold uncomments PI_KEY with a placeholder" || bad "pi scaffold uncomments PI_KEY with a placeholder" ""
 # real TOML parse so commented-out template blocks do not count, same as the entrypoint does
 want="$(python3 -c 'import re,sys,tomllib
@@ -626,15 +641,15 @@ def walk(n):
 names=set()
 for v in walk(tomllib.load(open(sys.argv[1],"rb"))): names.update(re.findall(r"\$\{([A-Z_]+)\}",v))
 names.discard("WORK_DIR")
-print("\n".join(sorted(names)))' "$sc/examples/data/config.toml")"
-have="$(grep -oE '^[A-Z_]+=' "$sc/examples/data/env.example" | tr -d = | sort -u)"
+print("\n".join(sorted(names)))' "$inst/config.toml")"
+have="$(grep -oE '^[A-Z_]+=' "$inst/env" | tr -d = | sort -u)"
 [ -z "$(comm -23 <(echo "$want") <(echo "$have"))" ] \
-	&& ok "every placeholder in the scaffolded config has a line in env.example" \
-	|| bad "every placeholder in the scaffolded config has a line in env.example" "$(comm -23 <(echo "$want") <(echo "$have") | tr '\n' ' ')"
-grep -vE '^(#|$)' "$sc/examples/data/env.example" | grep -vE '=(cli_|ou_|sk-)?x+$|=https://[a-z.-]+\.example\.com$' | grep -q . \
-	&& bad "scaffolded env.example holds placeholders only" "$(grep -vE '^(#|$)' "$sc/examples/data/env.example" | grep -vE '=(cli_|ou_|sk-)?x+$|example\.com')" \
-	|| ok "scaffolded env.example holds placeholders only"
-scf="$sc/examples/data/docker-compose.yaml"
+	&& ok "every placeholder in the scaffolded config has a line in env" \
+	|| bad "every placeholder in the scaffolded config has a line in env" "$(comm -23 <(echo "$want") <(echo "$have") | tr '\n' ' ')"
+grep -vE '^(#|$)' "$inst/env" | grep -vE '=(cli_|ou_|sk-)?x+$|=https://[a-z.-]+\.example\.com$' | grep -q . \
+	&& bad "scaffolded env holds placeholders only" "$(grep -vE '^(#|$)' "$inst/env" | grep -vE '=(cli_|ou_|sk-)?x+$|example\.com')" \
+	|| ok "scaffolded env holds placeholders only"
+scf="$inst/docker-compose.yaml"
 grep -q 'image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}-pi$' "$scf" \
 	&& ok "pi scaffold switches the anchor image to the -pi tag" || bad "pi scaffold switches the anchor image to the -pi tag" "$(grep image: "$scf")"
 # File credentials travel through the home layer only (docs/CREDENTIALS.md section 2): the scaffolded
@@ -642,14 +657,30 @@ grep -q 'image: ghcr.io/chinayin/agentbox:${AGENTBOX_VERSION}-pi$' "$scf" \
 grep -q '^      - ./home:/agent/home:ro$' "$scf" && [ "$(grep -c '/agent/' "$scf")" -eq 2 ] \
 	&& ok "scaffold mounts the home layer and nothing else under /agent besides config.toml" \
 	|| bad "scaffold mounts the home layer and nothing else under /agent besides config.toml" "$(grep '/agent/' "$scf")"
-bash "$SCAFFOLD" --root "$sc" --mount kubeconfig gone >/dev/null 2>&1; rc=$?
-[ "$rc" -eq 1 ] && [ ! -e "$sc/examples/gone" ] && ok "scaffold rejects the retired --mount flag (exit 1)" || bad "scaffold rejects the retired --mount flag (exit 1)" "rc=$rc"
 check_instance_compose "new-instance" "$scf" data
-[ -d "$sc/runtime/workspaces/data" ] && ok "scaffold creates the workspace directory" || bad "scaffold creates the workspace directory" ""
+[ ! -d "$sc/runtime" ] && ok "scaffold creates no local workspace (deploy owns it on the server)" || bad "scaffold creates no local workspace (deploy owns it on the server)" ""
+[ ! -e "$sc/examples/data" ] && ok "scaffold writes nothing under examples/" || bad "scaffold writes nothing under examples/" ""
 bash "$SCAFFOLD" --root "$sc" data >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "scaffold refuses to overwrite an existing instance (exit 1)" || bad "scaffold refuses to overwrite an existing instance (exit 1)" "rc=$rc"
+before="$(cat "$sc/deploy-repo/hosts/default/host.env")"
+bash "$SCAFFOLD" --root "$sc" second >/dev/null 2>&1
+[ "$before" = "$(cat "$sc/deploy-repo/hosts/default/host.env")" ] && ok "scaffold never rewrites an existing host.env" || bad "scaffold never rewrites an existing host.env" ""
+bash "$SCAFFOLD" --root "$sc" --host hk data >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ -f "$sc/deploy-repo/hosts/hk/instances/data/env" ] && [ -f "$sc/deploy-repo/hosts/hk/host.env" ] \
+	&& ok "--host selects the host directory and lays out its host.env" || bad "--host selects the host directory and lays out its host.env" "rc=$rc"
+mkdir -p "$sc/elsewhere"; bash "$SCAFFOLD" --root "$sc" --repo "$sc/elsewhere" other >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ -f "$sc/elsewhere/hosts/default/instances/other/env" ] \
+	&& ok "--repo overrides the default deploy repo for scaffold" || bad "--repo overrides the default deploy repo for scaffold" "rc=$rc"
+mv "$sc/deploy-repo" "$sc/deploy-repo.off"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$SCAFFOLD" --root "$sc" nowhere 2>&1)"; rc=$?
+[ "$rc" -eq 2 ] && grep -q 'deploy-repo' <<<"$out" && ok "scaffold without a deploy repo exits 2 and names deploy-repo" || bad "scaffold without a deploy repo exits 2 and names deploy-repo" "rc=$rc $out"
+mv "$sc/deploy-repo.off" "$sc/deploy-repo"
+bash "$SCAFFOLD" --root "$sc" --mount kubeconfig gone >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && [ ! -e "$sc/deploy-repo/hosts/default/instances/gone" ] && ok "scaffold rejects the retired --mount flag (exit 1)" || bad "scaffold rejects the retired --mount flag (exit 1)" "rc=$rc"
 bash "$SCAFFOLD" --root "$sc" Bad_Name >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "scaffold rejects an invalid name (exit 1)" || bad "scaffold rejects an invalid name (exit 1)" "rc=$rc"
+bash "$SCAFFOLD" --root "$sc" --host Bad_Host x >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "scaffold rejects an invalid host name (exit 1)" || bad "scaffold rejects an invalid host name (exit 1)" "rc=$rc"
 bash "$SCAFFOLD" --root "$sc" demo >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "scaffold refuses to target the demo template" || bad "scaffold refuses to target the demo template" "rc=$rc"
 
