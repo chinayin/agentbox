@@ -608,7 +608,7 @@ fi
 [ -f "$inst/docker-compose.yaml" ] && [ -f "$inst/config.toml" ] && [ -f "$inst/env" ] && [ ! -e "$inst/env.example" ] \
 	&& ok "scaffold writes the instance into deploy-repo/hosts/default/instances/<name> with env, not env.example" \
 	|| bad "scaffold writes the instance into deploy-repo/hosts/default/instances/<name> with env, not env.example" "$(ls -A "$inst" 2>/dev/null)"
-[ "$(stat -f '%Lp' "$inst/env" 2>/dev/null || stat -c '%a' "$inst/env")" = "600" ] \
+[ "$(fmode "$inst/env")" = "600" ] \
 	&& ok "scaffolded env is 0600" || bad "scaffolded env is 0600" "$(ls -l "$inst/env")"
 [ -f "$sc/deploy-repo/hosts/default/host.env" ] && [ -f "$sc/deploy-repo/defaults.env" ] \
 	&& ok "scaffold lays out host.env and defaults.env when the repo lacks them" || bad "scaffold lays out host.env and defaults.env when the repo lacks them" "$(find "$sc/deploy-repo" -maxdepth 3)"
