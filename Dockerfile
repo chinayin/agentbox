@@ -15,17 +15,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HELM_PLUGINS=/opt/helm/plugins \
     HELM_DATA_HOME=/opt/helm
 
-# extrepo is removed only after the final install so its deps are not re-downloaded by git/gnupg.
+# 系统依赖来自 Debian；mise 单独按声明版本安装，避免软件源更新改变构建行为。
 RUN set -eu; \
     apt_opts='-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30'; \
     apt-get $apt_opts update -qq; \
-    apt-get $apt_opts install -y --no-install-recommends ca-certificates extrepo; \
-    extrepo enable mise; \
-    apt-get $apt_opts update -qq; \
     apt-get $apt_opts install -y --no-install-recommends \
-      curl wget git file sed gawk gnupg python3 python3-venv openssh-client rsync \
-      unzip tar gzip xz-utils gettext-base tzdata less procps build-essential mise; \
-    apt-get remove -y --auto-remove extrepo; \
+      ca-certificates curl wget git file sed gawk gnupg python3 python3-venv openssh-client rsync \
+      unzip tar gzip xz-utils gettext-base tzdata less procps build-essential; \
     rm -rf /var/lib/apt/lists/*; \
     python3 -c 'import tomllib'
 
@@ -34,7 +30,18 @@ WORKDIR /opt/agentbox-mise
 
 # Locked mode comes from mise.toml ([tool_config] locked = true); versions only from the lock.
 # helm finds plugins only under $HELM_PLUGINS/<name>/plugin.yaml, so the mise install is linked there.
+# mise 与 lock 工作流共用 min_version；只安装通过官方 SHA256 校验的版本化发布包。
 RUN set -eu; \
+    mise_version="$(python3 -c 'import tomllib; print(tomllib.load(open("mise.toml", "rb"))["min_version"])')"; \
+    case "${TARGETARCH}" in amd64) mise_arch=x64 ;; arm64) mise_arch=arm64 ;; *) echo "Error: unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; esac; \
+    mise_asset="mise-v${mise_version}-linux-${mise_arch}.tar.xz"; \
+    mise_url="https://github.com/jdx/mise/releases/download/v${mise_version}"; \
+    curl -fsSL --retry 3 --connect-timeout 15 "${mise_url}/${mise_asset}" -o "/tmp/${mise_asset}"; \
+    curl -fsSL --retry 3 --connect-timeout 15 "${mise_url}/SHASUMS256.txt" -o /tmp/mise-SHASUMS256.txt; \
+    (cd /tmp && awk -v asset="${mise_asset}" '$2 == asset || $2 == "./" asset { print }' mise-SHASUMS256.txt | sha256sum --check --strict -); \
+    tar -xJf "/tmp/${mise_asset}" -C /tmp; \
+    install -m 0755 /tmp/mise/bin/mise /usr/local/bin/mise; \
+    rm -rf /tmp/mise "/tmp/${mise_asset}" /tmp/mise-SHASUMS256.txt; \
     export MISE_TRUSTED_CONFIG_PATHS=/opt/agentbox-mise; \
     MISE_CACHE_DIR=/tmp/mise-cache mise install --system; \
     MISE_CACHE_DIR=/tmp/mise-cache mise reshim --system; \

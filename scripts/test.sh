@@ -482,15 +482,7 @@ grep -q 'lockfile_platforms = \["linux-x64", "linux-arm64"\]' "$ROOT/mise.toml" 
 # ---------- image structure invariants ----------
 group "image structure invariants"
 
-grep -q 'extrepo enable mise' "$DF" && ok "mise is enabled via extrepo" || bad "mise is enabled via extrepo" "missing"
-# extrepo is removed only after the final apt install
-install_line="$(grep -n 'build-essential mise' "$DF" | head -1 | cut -d: -f1)"
-remove_line="$(grep -n 'apt-get remove -y --auto-remove extrepo' "$DF" | head -1 | cut -d: -f1)"
-if [ -n "$install_line" ] && [ -n "$remove_line" ] && [ "$install_line" -lt "$remove_line" ]; then
-	ok "extrepo is removed after the final dependency install"
-else
-	bad "extrepo is removed after the final dependency install" "dependency install=${install_line:-missing} extrepo removal=${remove_line:-missing}"
-fi
+# mise bootstrap 的精确版本由 smoke.sh 对两个真实镜像验证。
 grep -q 'mise install --system' "$DF" && ok "tools are installed in the system scope" || bad "tools are installed in the system scope" "missing"
 grep -q 'mise reshim --system' "$DF" && ok "system shims are generated" || bad "system shims are generated" "missing"
 grep -q '/usr/local/share/mise/shims' "$DF" && ok "PATH uses the system shims" || bad "PATH uses the system shims" "missing"

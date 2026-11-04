@@ -219,6 +219,26 @@ check_version() {
 	fi
 }
 
+# 镜像必须与生成锁文件的工作流使用同一 mise 版本，避免构建器自行升级。
+mise_expected="$(python3 - "${ROOT}/mise.toml" <<'PY_VERSION'
+import sys, tomllib
+with open(sys.argv[1], "rb") as config:
+    print(tomllib.load(config)["min_version"])
+PY_VERSION
+)"
+check_mise_version() {
+	local image="$1" actual
+	run_capture "${image}" -- mise --version
+	actual="$(last_line "${RUN_OUT}")"
+	actual="${actual%% *}"
+	if [ "${RUN_RC}" -eq 0 ] && [ "${actual}" = "${mise_expected}" ]; then
+		ok "mise bootstrap version is ${mise_expected}"
+	else
+		bad "mise bootstrap version is ${mise_expected}" "rc=${RUN_RC} output=${RUN_OUT}"
+	fi
+}
+check_mise_version "${IMAGE}"
+
 # Every lock entry must be installed at its locked version. One loop over the lock; no second tool list.
 lock_pairs() {
 	python3 - "${ROOT}/$1" <<'PY'
@@ -488,6 +508,7 @@ if [ -n "${PI_IMAGE}" ]; then
 	[ "${RUN_RC}" -eq 0 ] \
 		&& ok "pi image selects the pi overlay and carries no Claude Code settings" \
 		|| bad "pi image selects the pi overlay and carries no Claude Code settings" "rc=${RUN_RC} output=${RUN_OUT}"
+	check_mise_version "${PI_IMAGE}"
 	check_lock_installed "${PI_IMAGE}" mise.lock
 	check_lock_installed "${PI_IMAGE}" mise.pi.lock
 	pi_expected="$(lock_version mise.pi.lock "aqua:earendil-works/pi")"

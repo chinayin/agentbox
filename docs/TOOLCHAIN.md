@@ -49,10 +49,13 @@ lock 的生成与校验完全是 mise 官方机制，仓库不加自己的步骤
 
 `pipx:` 条目更进一步：mise 把它归为「语言包安装器」，lock 只记精确版本，没有 URL 也没有 checksum，wheel 在构建时由 PyPI 解析，传递依赖不被锁定。`test.sh` 对 `pipx:` 前缀放过双平台 URL 断言，其余 backend 照旧。接受它是因为 tccli 没有别的官方发行形态；哪天上游出二进制就换回 `github:`。体积也要心里有数：2026-09-21 实测 tccli 的 venv 占 330 MB（腾讯云 SDK 把全部产品都打进一个包），是镜像里最大的单个工具。
 
-需要 mise ≥ `mise.toml` 的 `min_version`，mise 自己会检查。lock 以 CI（Linux）产出为准；mise 总会把当前平台也写进 lock，在 macOS 上跑会多出 `macos-arm64` 条目且之后一直保留，提交前删掉这些块，或加 `--platform linux-x64,linux-arm64` 只刷新 linux。brew 的 mise 通常版本不够：
+`mise.toml` 的 `min_version` 是 mise 构建器的唯一版本来源：镜像 bootstrap 和 `lock.yml` 必须使用该精确版本。Dockerfile 从官方版本化发布包安装 mise，并按同一版本的 `SHASUMS256.txt` 校验后安装；不得从浮动 APT 源安装 mise。`make smoke` 对两个最终镜像核对实际 mise 版本。升级 mise 必须同步验证锁文件生成、镜像构建与冒烟测试。
+
+本机 mise 必须 ≥ `min_version`，mise 自己会检查。lock 以 CI（Linux）产出为准；mise 总会把当前平台也写进 lock，在 macOS 上跑会多出 `macos-arm64` 条目且之后一直保留，提交前删掉这些块，或加 `--platform linux-x64,linux-arm64` 只刷新 linux。brew 的 mise 通常版本不够：
 
 ```bash
-curl -sS https://mise.run | MISE_VERSION=v2026.9.1 MISE_INSTALL_PATH=runtime/mise sh
+mise_version="$(python3 -c 'import tomllib; print(tomllib.load(open("mise.toml", "rb"))["min_version"])')"
+curl -sS https://mise.run | MISE_VERSION="v${mise_version}" MISE_INSTALL_PATH=runtime/mise sh
 MISE=runtime/mise make lock-refresh
 ```
 
