@@ -18,32 +18,34 @@ url = "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15
 url_api = "https://api.github.com/repos/BurntSushi/ripgrep/releases/assets/478120097"
 
 [[tools."aqua:astral-sh/uv"]]
-version = "0.13.6"
+version = "0.13.7"
 backend = "aqua:astral-sh/uv"
 specifiers = ["latest"]
 
 [tools."aqua:astral-sh/uv"."platforms.linux-arm64"]
-checksum = "sha256:229e194255c7958d86d56e8790d969a6f74736592133f0dfd0076f754c642c1d"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.6/uv-aarch64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/679980412"
+checksum = "sha256:71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009469"
 provenance = "github-attestations"
 
 [tools."aqua:astral-sh/uv"."platforms.linux-x64"]
-checksum = "sha256:f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.6/uv-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/679980644"
+checksum = "sha256:c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009823"
 provenance = "github-attestations"
 
 [[tools."aqua:aws/aws-cli"]]
-version = "2.39.3"
+version = "2.39.6"
 backend = "aqua:aws/aws-cli"
 specifiers = ["latest"]
 
 [tools."aqua:aws/aws-cli"."platforms.linux-arm64"]
-url = "https://awscli.amazonaws.com/awscli-exe-linux-aarch64-2.39.3.zip"
+checksum = "sha256:5763332bdcb432c19ee122545856fd350c3bb306753212deedcfccc76f4d20c3"
+url = "https://awscli.amazonaws.com/awscli-exe-linux-aarch64-2.39.6.zip"
 
 [tools."aqua:aws/aws-cli"."platforms.linux-x64"]
-url = "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.39.3.zip"
+checksum = "sha256:7a121264f2637a3b90767aaf5bdd43ee88b8c925a931d0479fa2ce22b1a2fa76"
+url = "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.39.6.zip"
 
 [[tools."aqua:bats-core/bats-core"]]
 version = "1.14.0"
@@ -51,28 +53,30 @@ backend = "aqua:bats-core/bats-core"
 specifiers = ["latest"]
 
 [tools."aqua:bats-core/bats-core"."platforms.linux-arm64"]
+checksum = "sha256:bb537b70b15b732f6d8827dd6578e3d8ce166636ce1f18ea9a074184fcce9177"
 url = "https://github.com/bats-core/bats-core/archive/refs/tags/v1.14.0.tar.gz"
 url_api = "https://api.github.com/repos/bats-core/bats-core/tarball/v1.14.0"
 
 [tools."aqua:bats-core/bats-core"."platforms.linux-x64"]
+checksum = "sha256:bb537b70b15b732f6d8827dd6578e3d8ce166636ce1f18ea9a074184fcce9177"
 url = "https://github.com/bats-core/bats-core/archive/refs/tags/v1.14.0.tar.gz"
 url_api = "https://api.github.com/repos/bats-core/bats-core/tarball/v1.14.0"
 
 [[tools."aqua:betterleaks/betterleaks"]]
-version = "1.9.0"
+version = "1.10.0"
 backend = "aqua:betterleaks/betterleaks"
 specifiers = ["latest"]
 
 [tools."aqua:betterleaks/betterleaks"."platforms.linux-arm64"]
-checksum = "sha256:1d39116e0a58dc94574715e2aa12a2dbd5062f193eee3fec011fef6ba06bd13b"
-url = "https://github.com/betterleaks/betterleaks/releases/download/v1.9.0/betterleaks_1.9.0_linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/betterleaks/betterleaks/releases/assets/599108932"
+checksum = "sha256:3d7585cbe4f947aef6e31662f65beb5b43b104381a691b6b81b157ebfbb0c02d"
+url = "https://github.com/betterleaks/betterleaks/releases/download/v1.10.0/betterleaks_1.10.0_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/betterleaks/betterleaks/releases/assets/710841284"
 provenance = "cosign"
 
 [tools."aqua:betterleaks/betterleaks"."platforms.linux-x64"]
-checksum = "sha256:f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7"
-url = "https://github.com/betterleaks/betterleaks/releases/download/v1.9.0/betterleaks_1.9.0_linux_x64.tar.gz"
-url_api = "https://api.github.com/repos/betterleaks/betterleaks/releases/assets/599108929"
+checksum = "sha256:9d9ad503cd5d80d18a939352266c3fcca52f10da9b83cd5cfe646989b13940fe"
+url = "https://github.com/betterleaks/betterleaks/releases/download/v1.10.0/betterleaks_1.10.0_linux_x64.tar.gz"
+url_api = "https://api.github.com/repos/betterleaks/betterleaks/releases/assets/710841396"
 provenance = "cosign"
 
 [[tools."aqua:cli/cli"]]
@@ -151,19 +155,19 @@ checksum = "sha256:0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe
 url = "https://get.helm.sh/helm-v4.3.1-linux-amd64.tar.gz"
 
 [[tools."aqua:helmfile/helmfile"]]
-version = "1.8.2"
+version = "1.8.3"
 backend = "aqua:helmfile/helmfile"
 specifiers = ["latest"]
 
 [tools."aqua:helmfile/helmfile"."platforms.linux-arm64"]
-checksum = "sha256:9163f0d7ad088d243d7305ba09c3465aac02dfebd658d46c62dbdaa11c224b16"
-url = "https://github.com/helmfile/helmfile/releases/download/v1.8.2/helmfile_1.8.2_linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/helmfile/helmfile/releases/assets/647791347"
+checksum = "sha256:e035c0338e31e0a8054ae798280532d32edcfbb7d6c4993e3b2efa2dc40647ce"
+url = "https://github.com/helmfile/helmfile/releases/download/v1.8.3/helmfile_1.8.3_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/helmfile/helmfile/releases/assets/717197834"
 
 [tools."aqua:helmfile/helmfile"."platforms.linux-x64"]
-checksum = "sha256:f179485c5bb9f8e20fbd8ea16d8807915988aba4d60131ee864fb3232452716e"
-url = "https://github.com/helmfile/helmfile/releases/download/v1.8.2/helmfile_1.8.2_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/helmfile/helmfile/releases/assets/647791185"
+checksum = "sha256:7d79c6d2099a4819213873164eda23bdbd32f1404fec7a7104d934e5d102596f"
+url = "https://github.com/helmfile/helmfile/releases/download/v1.8.3/helmfile_1.8.3_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/helmfile/helmfile/releases/assets/717197960"
 
 [[tools."aqua:jqlang/jq"]]
 version = "1.8.2"
@@ -226,54 +230,53 @@ checksum = "sha256:c04487523e7aa7d1493f7808174c899db93d7a9cf57531420cd76b9bd415f
 url = "https://dl.k8s.io/v1.37.2/bin/linux/amd64/kubectl"
 
 [[tools."aqua:pnpm/pnpm"]]
-version = "12.16.1"
+version = "12.18.0"
 backend = "aqua:pnpm/pnpm"
 specifiers = ["latest"]
 
 [tools."aqua:pnpm/pnpm"."platforms.linux-arm64"]
-checksum = "sha256:f5847699e5d528f8f8e9bcfb385e58cb9fba7482af1b1aa7b70737be42277f81"
-url = "https://github.com/pnpm/pnpm/releases/download/v12.16.1/pnpm-linux-arm64.tar.gz"
-url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/681916052"
+checksum = "sha256:700bd1aa4028465b80e62b7c5bec8455be60bbafaf53a3262a4ab8e2057712ac"
+url = "https://github.com/pnpm/pnpm/releases/download/v12.18.0/pnpm-linux-arm64.tar.gz"
+url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/711505548"
 provenance = "github-attestations"
 
 [tools."aqua:pnpm/pnpm"."platforms.linux-x64"]
-checksum = "sha256:565ff81174a14f6f7bd5d84c1b17e51031a80230d370a1fe24be5d16bd02a825"
-url = "https://github.com/pnpm/pnpm/releases/download/v12.16.1/pnpm-linux-x64.tar.gz"
-url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/681916059"
+checksum = "sha256:3726060e236c0db3e7124c0a5af123c840ba0cb76682149b63ea0baf290017c2"
+url = "https://github.com/pnpm/pnpm/releases/download/v12.18.0/pnpm-linux-x64.tar.gz"
+url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/711505542"
 provenance = "github-attestations"
 
 [[tools."aqua:sharkdp/fd"]]
-version = "10.5.0"
+version = "10.5.2"
 backend = "aqua:sharkdp/fd"
 specifiers = ["latest"]
 
 [tools."aqua:sharkdp/fd"."platforms.linux-arm64"]
-checksum = "sha256:c0ee43802e3313a317c5af2f4eabd6ba13eeedd595af9775f05e18a13ac4f52c"
-url = "https://github.com/sharkdp/fd/releases/download/v10.5.0/fd-v10.5.0-aarch64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/sharkdp/fd/releases/assets/530482307"
+checksum = "sha256:4b144f38bd7352cd4c95020b58e8e575476e60edcdf1dc5e0733e3d01efba6dd"
+url = "https://github.com/sharkdp/fd/releases/download/v10.5.2/fd-v10.5.2-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/sharkdp/fd/releases/assets/719978299"
 
 [tools."aqua:sharkdp/fd"."platforms.linux-x64"]
-checksum = "sha256:a1259cd129636efbc3fef123525c1b49e88fe5088c012630983c310e52fdfa95"
-url = "https://github.com/sharkdp/fd/releases/download/v10.5.0/fd-v10.5.0-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/sharkdp/fd/releases/assets/530481615"
+checksum = "sha256:985e24041e9ef6e9a38e9e088743405dde23d7220aa96740f091862167d9ff28"
+url = "https://github.com/sharkdp/fd/releases/download/v10.5.2/fd-v10.5.2-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/sharkdp/fd/releases/assets/719976301"
 
 [[tools."github:aliyun/aliyun-cli"]]
-version = "3.5.2"
+version = "3.5.3"
 backend = "github:aliyun/aliyun-cli"
 specifiers = ["latest"]
 
 [tools."github:aliyun/aliyun-cli"."platforms.linux-arm64"]
-checksum = "sha256:e2e0b5e6089b2b56822a2a373249227b83fe5ef4a20a134bbf803869299f8926"
-url = "https://github.com/aliyun/aliyun-cli/releases/download/v3.5.2/aliyun-cli-linux-3.5.2-arm64.tgz"
-url_api = "https://api.github.com/repos/aliyun/aliyun-cli/releases/assets/666457084"
+checksum = "sha256:c9986e8f13a1910fe70b9d6354808d8d0e758505129742b28d29358f875f3907"
+url = "https://github.com/aliyun/aliyun-cli/releases/download/v3.5.3/aliyun-cli-linux-3.5.3-arm64.tgz"
+url_api = "https://api.github.com/repos/aliyun/aliyun-cli/releases/assets/712136171"
 provenance = "github-attestations"
 
 [tools."github:aliyun/aliyun-cli"."platforms.linux-x64"]
-checksum = "sha256:8058cb91fa0e2d46a7c5fd47e44ab6a465be8477b28595d408dcc03a0ed5bd4e"
-url = "https://github.com/aliyun/aliyun-cli/releases/download/v3.5.2/aliyun-cli-linux-3.5.2-amd64.tgz"
-url_api = "https://api.github.com/repos/aliyun/aliyun-cli/releases/assets/666455690"
+checksum = "sha256:defcbc01a28c9bbb27706fd53473020175a96886186df176dfa934ab6661fbde"
+url = "https://github.com/aliyun/aliyun-cli/releases/download/v3.5.3/aliyun-cli-linux-3.5.3-amd64.tgz"
+url_api = "https://api.github.com/repos/aliyun/aliyun-cli/releases/assets/712134874"
 provenance = "github-attestations"
-provenance_verified = true
 
 [[tools."github:chenhg5/cc-connect"]]
 version = "1.5.0"
@@ -306,34 +309,34 @@ url = "https://github.com/databus23/helm-diff/releases/download/v3.15.15/helm-di
 url_api = "https://api.github.com/repos/databus23/helm-diff/releases/assets/589788383"
 
 [[tools."github:volcengine/volcengine-cli"]]
-version = "1.2.2"
+version = "1.2.3"
 backend = "github:volcengine/volcengine-cli"
 specifiers = ["latest"]
 
 [tools."github:volcengine/volcengine-cli"."platforms.linux-arm64"]
-checksum = "sha256:9690c18e6ebc0e8a4d7a62b27de826795e76469a008333ebbcc55ef039acad33"
-url = "https://github.com/volcengine/volcengine-cli/releases/download/v1.2.2/volcengine-cli_1.2.2_linux_arm64.tar.gz"
-url_api = "https://api.github.com/repos/volcengine/volcengine-cli/releases/assets/665925146"
+checksum = "sha256:ceba73542f32b4fc7abaa01872a01a1db6111f70758817817e5b7616baf2f00b"
+url = "https://github.com/volcengine/volcengine-cli/releases/download/v1.2.3/volcengine-cli_1.2.3_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/volcengine/volcengine-cli/releases/assets/712782592"
 
 [tools."github:volcengine/volcengine-cli"."platforms.linux-x64"]
-checksum = "sha256:672da035e856fd545eaa710e2cd67e72b3efa95e43324fb4d51bcfe1a95dbe41"
-url = "https://github.com/volcengine/volcengine-cli/releases/download/v1.2.2/volcengine-cli_1.2.2_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/volcengine/volcengine-cli/releases/assets/665925093"
+checksum = "sha256:64a61a9f5a78ddb05c9999d9bb83bd41675d1d5e6bf6bf10afccf8eda5f1824e"
+url = "https://github.com/volcengine/volcengine-cli/releases/download/v1.2.3/volcengine-cli_1.2.3_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/volcengine/volcengine-cli/releases/assets/712782598"
 
 [[tools."gitlab:gitlab-org/cli"]]
-version = "1.126.0"
+version = "1.128.0"
 backend = "gitlab:gitlab-org/cli"
 specifiers = ["latest"]
 
 [tools."gitlab:gitlab-org/cli"."platforms.linux-arm64"]
-checksum = "sha256:de5e92c9c8b306eeebb19daa854d48101b78328850e7b9cd677ecd6f98cd4391"
-url = "https://gitlab.com/gitlab-org/cli/-/releases/v1.126.0/downloads/glab_1.126.0_linux_arm64.tar.gz"
-url_api = "https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/packages/generic/glab/1%2E126%2E0/glab_1%2E126%2E0_linux_arm64%2Etar%2Egz"
+checksum = "sha256:60d0512085a8c1be7c5ef51aa7e4ee28213444cea0376b3260707d90489199ea"
+url = "https://gitlab.com/gitlab-org/cli/-/releases/v1.128.0/downloads/glab_1.128.0_linux_arm64.tar.gz"
+url_api = "https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/packages/generic/glab/1%2E128%2E0/glab_1%2E128%2E0_linux_arm64%2Etar%2Egz"
 
 [tools."gitlab:gitlab-org/cli"."platforms.linux-x64"]
-checksum = "sha256:f386519ba83e9482979992ee7f60eeebee4d95b950f95f4fe7289e0a1b1ea74c"
-url = "https://gitlab.com/gitlab-org/cli/-/releases/v1.126.0/downloads/glab_1.126.0_linux_amd64.tar.gz"
-url_api = "https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/packages/generic/glab/1%2E126%2E0/glab_1%2E126%2E0_linux_amd64%2Etar%2Egz"
+checksum = "sha256:bc024819e7598b19429a199cd87f640d98b2b67416d8ad796f19e4260b57a7c7"
+url = "https://gitlab.com/gitlab-org/cli/-/releases/v1.128.0/downloads/glab_1.128.0_linux_amd64.tar.gz"
+url_api = "https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/packages/generic/glab/1%2E128%2E0/glab_1%2E128%2E0_linux_amd64%2Etar%2Egz"
 
 [[tools.go]]
 version = "1.26.10"
@@ -362,7 +365,7 @@ checksum = "sha256:5848553868b402d3fabb5b09270649977780a390f832155721025a08b5104
 url = "https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-x64.tar.gz"
 
 [[tools."pipx:tccli"]]
-version = "3.1.192.1"
+version = "3.1.198.1"
 backend = "pipx:tccli"
 specifiers = ["latest"]
 
