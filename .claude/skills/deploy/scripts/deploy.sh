@@ -465,11 +465,10 @@ remote_up() {
 	log="${LOG_DIR}/${ts}-deploy-${HOST}.log"
 	# The compose file declares networks: agentbox: external: true, so the network must exist
 	# before the first `docker compose up` on a fresh host; the inspect/create pair is idempotent.
+	# A pinned subnet was already compared against an existing network by check_network.
 	local ensure_net="docker network inspect agentbox >/dev/null 2>&1 || docker network create agentbox"
-	# With a pinned subnet an existing network is compared, never recreated: removing it means
-	# stopping every instance on the host, which is the operator's call. ${cur} expands remotely.
 	if [ -n "${SUBNET_VALUE}" ]; then
-		ensure_net="if docker network inspect agentbox >/dev/null 2>&1; then cur=\$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' agentbox); [ \"\${cur}\" = '${SUBNET_VALUE}' ] || { echo \"Error: docker network agentbox has subnet \${cur}, host.env wants ${SUBNET_VALUE}; stop every instance on this host, docker network rm agentbox, then deploy again\" >&2; exit 2; }; else docker network create --subnet ${SUBNET_VALUE} agentbox; fi"
+		ensure_net="docker network inspect agentbox >/dev/null 2>&1 || docker network create --subnet ${SUBNET_VALUE} agentbox"
 	fi
 	# --force-recreate is what makes a config change land. config.toml and env reach the container
 	# as bind mounts, so compose sees an unchanged service definition and leaves the container
@@ -567,7 +566,16 @@ init_workspaces() {
 	done < <(list_instances)
 }
 
+# Read-only preflight for a pinned subnet: an existing network is compared, never recreated, since
+# removing it means stopping every instance on the host, which is the operator's call. It runs before
+# sync_host so a refused host is left exactly as it was. ${cur} expands remotely.
+check_network() {
+	[ -n "${SUBNET_VALUE}" ] || return 0
+	rssh "if docker network inspect agentbox >/dev/null 2>&1; then cur=\$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' agentbox); [ \"\${cur}\" = '${SUBNET_VALUE}' ] || { echo \"Error: docker network agentbox has subnet \${cur}, host.env wants ${SUBNET_VALUE}; stop every instance on this host, docker network rm agentbox, then deploy again\" >&2; exit 2; }; fi"
+}
+
 do_deploy() {
+	check_network
 	sync_host
 	[ "${DRY_RUN}" -eq 1 ] || prepare_workspaces
 	init_workspaces

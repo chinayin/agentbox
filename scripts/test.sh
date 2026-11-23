@@ -939,6 +939,10 @@ out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --force --dry-r
 [ "$rc" -eq 0 ] && grep -q 'subnet:    198.18.0.0/24 (from hosts/h1/host.env)' <<<"$out" \
 	&& grep -q 'docker network create --subnet 198.18.0.0/24 agentbox' <<<"$out" && grep -q 'host.env wants 198.18.0.0/24' <<<"$out" \
 	&& ok "host.env subnet is used for create and checked against an existing network" || bad "host.env subnet is used for create and checked against an existing network" "rc=$rc $out"
+check_line="$(grep -n 'host.env wants 198.18.0.0/24' <<<"$out" | head -1 | cut -d: -f1)"
+sync_line="$(grep -n 'plan: rsync' <<<"$out" | head -1 | cut -d: -f1)"
+[ -n "$check_line" ] && [ -n "$sync_line" ] && [ "$check_line" -lt "$sync_line" ] \
+	&& ok "the subnet check runs before anything is synced to the server" || bad "the subnet check runs before anything is synced to the server" "check=$check_line sync=$sync_line"
 grep -q 'has subnet ${cur}' <<<"$out" \
 	&& ok "the existing subnet is read on the server, not expanded locally" || bad "the existing subnet is read on the server, not expanded locally" "$out"
 printf "${h1env}AGENTBOX_VERSION=0.1.0\nAGENTBOX_SUBNET=198.18.0.0\n" > "$dp/repo/hosts/h1/host.env"
