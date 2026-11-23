@@ -75,6 +75,9 @@ Connection fields (top half) are read locally by `deploy.sh` and never leave thi
   agent prints follow it, so a job written as `0 9 * * *` means 09:00 in this zone. `plan` checks the
   name against this machine's zoneinfo, because an unknown name would silently fall back to UTC in
   the container.
+- `AGENTBOX_SUBNET` (optional, read locally, never derived) pins the subnet of the host's `agentbox`
+  network; absent, docker picks one. Set it when docker's pick would overlap a network the host must
+  reach. The rule and how to move an existing network are in agentbox `docs/INSTANCES.md` §6.
 
 ## `instances/<name>/skills-lock.json`（可选）
 
@@ -187,6 +190,8 @@ second service with `<<: *agentbox` and its own `container_name`, config file an
 `deploy.sh` creates the `agentbox` network on the host if it is missing (an idempotent
 `docker network inspect || docker network create` before the first `docker compose pull`), so the
 external-network declaration works on a fresh host with no manual `docker network create` step.
+With `AGENTBOX_SUBNET` in `host.env` it creates the network on that subnet, and refuses a host whose
+existing network has another one.
 Every instance on the host joins that one network and containers resolve each other by name; the
 repo root's `docker-compose.yaml` stays a development file pointing at a local `agentbox:dev` build.
 

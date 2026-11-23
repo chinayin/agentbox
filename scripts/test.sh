@@ -928,6 +928,33 @@ out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --force --dry-r
 	&& ok "plan refuses an instance compose that does not pass TZ through" || bad "plan refuses an instance compose that does not pass TZ through" "rc=$rc $out"
 mv "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml.bak" "$dp/repo/hosts/h1/instances/a1/docker-compose.yaml"
 ( cd "$dp/repo" && git add -A && git -c user.email=t@e.test -c user.name=t commit -qm tz ) 2>/dev/null
+# Network subnet (2026-11-23: docker picked 172.20.0.0/16 for agentbox on a host whose VPC peers
+# with a 172.20.0.0/16 VPC, so the host could not reach it). No default: unset keeps docker's own
+# choice; host.env pins it; an existing network with another subnet is refused, never recreated.
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'subnet:    docker default' <<<"$out" && grep -q 'docker network create agentbox' <<<"$out" && ! grep -q -- '--subnet' <<<"$out" \
+	&& ok "unset subnet keeps the plain create" || bad "unset subnet keeps the plain create" "rc=$rc $out"
+printf "${h1env}AGENTBOX_VERSION=0.1.0\nAGENTBOX_SUBNET=198.18.0.0/24\n" > "$dp/repo/hosts/h1/host.env"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --force --dry-run deploy h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'subnet:    198.18.0.0/24 (from hosts/h1/host.env)' <<<"$out" \
+	&& grep -q 'docker network create --subnet 198.18.0.0/24 agentbox' <<<"$out" && grep -q 'host.env wants 198.18.0.0/24' <<<"$out" \
+	&& ok "host.env subnet is used for create and checked against an existing network" || bad "host.env subnet is used for create and checked against an existing network" "rc=$rc $out"
+grep -q 'has subnet ${cur}' <<<"$out" \
+	&& ok "the existing subnet is read on the server, not expanded locally" || bad "the existing subnet is read on the server, not expanded locally" "$out"
+printf "${h1env}AGENTBOX_VERSION=0.1.0\nAGENTBOX_SUBNET=198.18.0.0\n" > "$dp/repo/hosts/h1/host.env"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'AGENTBOX_SUBNET must be an IPv4 CIDR' <<<"$out" \
+	&& ok "a subnet without a prefix length fails plan locally (exit 1)" || bad "a subnet without a prefix length fails plan locally (exit 1)" "rc=$rc $out"
+printf "${h1env}AGENTBOX_VERSION=0.1.0\nAGENTBOX_SUBNET=198.18.0.0/24; rm -rf /\n" > "$dp/repo/hosts/h1/host.env"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --force --dry-run plan h1 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'AGENTBOX_SUBNET must be an IPv4 CIDR' <<<"$out" \
+	&& ok "a subnet with shell metacharacters fails plan locally (exit 1)" || bad "a subnet with shell metacharacters fails plan locally (exit 1)" "rc=$rc $out"
+printf "${h1env}AGENTBOX_VERSION=0.1.0\n" > "$dp/repo/hosts/h1/host.env"
+printf 'AGENTBOX_SUBNET=198.18.0.0/24\n' > "$dp/repo/defaults.env"
+out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --force --dry-run deploy h1 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'subnet:    docker default' <<<"$out" \
+	&& ok "defaults.env cannot set the subnet" || bad "defaults.env cannot set the subnet" "rc=$rc $out"
+rm "$dp/repo/defaults.env"
 
 out="$(env -u AGENTBOX_DEPLOY_REPO bash "$dps/scripts/deploy.sh" --dry-run deploy h1 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "deploy --dry-run exits 0" || bad "deploy --dry-run exits 0" "rc=$rc $out"

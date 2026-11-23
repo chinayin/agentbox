@@ -24,6 +24,7 @@
 | — | 部署仓库用 sops/age 加密 `env` | 明文提交换来克隆即可用、diff 直接可读、不引入加密工具链；代价是仓库泄露后只能全量轮换。仓库权限是唯一防线 |
 | 2026-09-11 | 镜像或部署仓库带 fleet 级默认技能清单 | 镜像不含身份；部署仓库里也不继承，一个实例要么自己写上，要么就没有 |
 | 2026-09-21 | 文件型凭据以 `/agent/<文件>:ro` 单挂 | 改为实例目录 `home/` 整目录挂 `/agent/home`，entrypoint 复制进 `/state`。原因：整挂宿主目录只读则工具写不了，可写则配置没有真相；单文件挂法每加一个凭据都要改 compose 与指路变量 |
+| 2026-11-23 | `agentbox` 网络写死默认网段；用 `daemon.json` 的 `default-address-pools` 统一改 | 改为 `host.env` 可选 `AGENTBOX_SUBNET`，不设沿用 docker 自选。原因：任何私网段都可能与某台宿主连着的网络撞（`10/8`、`172.16/12` 常被企业内网整段路由，`192.168/16` 是常见局域网），只有宿主自己知道哪段安全；改 `daemon.json` 要重启 docker，牵连同机非 agentbox 的容器。已有网络不自动重建：要停掉宿主全部实例，属于运维决定 |
 | 2026-09-22 | 部署仓库路径放技能 `.env`（`AGENTBOX_DEPLOY_REPO`）；`new-instance` 产物落 `examples/<name>/` | 改为约定位置：agentbox 根下 gitignored 的 `deploy-repo/`（真 clone 或软链），三个技能同一解析，`--repo` 与环境变量仍可覆盖；`new-instance` 直接写 `deploy-repo/hosts/<host>/instances/<name>/`，缺 `host.env` / `defaults.env` 时从模板生成，`examples/` 只剩模板与样例。原因：第一次使用要手抄仓库骨架、复制改名 `env.example`，且三个技能两层间接读一个路径。名字不用 `deploy/`（像项目自己的目录）也不用点前缀（每天要进去改）。已有布局迁移：`ln -s <原路径> deploy-repo` |
 
 ## 实测数字
@@ -51,3 +52,4 @@
 | 2026-09-21 | deploy | multicloud 的 `CLAUDE.md` 与四个 subagent 文件原放 `workspace-init/`，改了提示词 deploy 后服务器上仍是旧文件：`--ignore-existing` 对运维声明的文件是错的语义。否决了在服务器留上次种子清单做三方比较（多一份状态还要处理冲突）与 entrypoint 每次启动复制（要发新镜像），改为按所有权分目录：`workspace/` 每次覆盖、`workspace-init/` 只种一次，只改 deploy.sh |
 | 2026-09-21 | devops-agent | multicloud 首次 `up`：home 层 6 个文件复制进 `/state`，`aws sts get-caller-identity --profile` 回正确账号、不带 `--profile` 报 NoCredentials，`/state/.aliyun` 可写。阿里云 CLI 3.5.0 对 `current` 指向不存在的 profile 直接拒绝所有命令（本机 3.4.10 放过，所以 `verify-profiles.sh` 此前全 PASS）；`current` 指向空 AK 的哨兵 profile 后 `--profile` 正常、不带则报凭据未配置 |
 | 2026-11-04 | GitHub Actions / mise | 同一代码树 `3b569352` 在 CI 41414963071 使用 mise 2026.10.25 成功，在 41831130536 使用浮动 APT 源的 2026.11.0 失败：locked 模式拒绝没有 checksum 的 AWS CLI、bats。APT 索引只保留最新版，无法通过固定 APT 版本回退；改用官方版本化发布包及 SHA256 校验，精确版本共用 `mise.toml.min_version`，运行时 smoke 校验两个镜像的 mise 版本。 |
+| 2026-11-23 | devops-agent | docker 自选给 `agentbox` 的 `172.20.0.0/16` 与专线对端一个 VPC 同段：`ip route get` 对端地址走 `br-*` 网桥而非 `eth0`，`tracepath` 第一跳就是网桥网关回 `!H`；同机经同一专线到另一个不重叠的 VPC 正常。由此引入 `AGENTBOX_SUBNET`，该宿主取 RFC 2544 保留段 `198.18.0.0/24` |
