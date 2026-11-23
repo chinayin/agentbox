@@ -62,7 +62,9 @@ AGENTBOX_VERSION in the repo-level defaults.env; the plan prints which one it us
 in host.env (cn or global, default global) selects the runtime mirror profile for every instance on
 that host; it is derived into the remote .env next to the version. TZ in host.env (an IANA zone
 such as Asia/Shanghai, default UTC) is derived the same way and sets the container clock, which is
-what cc-connect's cron and timer schedules run against.
+what cc-connect's cron and timer schedules run against. AGENTBOX_SUBNET in host.env (an optional
+IPv4 CIDR, no default) pins the subnet of the host's agentbox network; unset, docker picks one.
+deploy refuses a host whose existing network has another subnet and never recreates it.
 
 An instance directory may carry two workspace directories, both synced straight into the instance's
 workspace and left out of the instances/ mirror. workspace/ holds operator-owned files (CLAUDE.md,
@@ -124,6 +126,8 @@ AGENTBOX_PROFILE=""
 PROFILE_SOURCE=""
 TZ_VALUE=""
 TZ_SOURCE=""
+SUBNET_VALUE=""
+SUBNET_SOURCE="docker default"
 declare -a SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new)
 
 # hosts/<host>/host.env: connection fields stay local, AGENTBOX_VERSION, AGENTBOX_PROFILE and TZ
@@ -151,6 +155,7 @@ load_host_env() {
 		case "${name}" in
 			DEPLOY_HOST|DEPLOY_KEY|DEPLOY_HOST_KEY_ALIAS|DEPLOY_SOCKS|DEPLOY_DIR|AGENTBOX_VERSION|AGENTBOX_PROFILE) ;;
 			TZ) TZ_VALUE="${val}"; TZ_SOURCE="hosts/${HOST}/host.env"; continue ;;
+			AGENTBOX_SUBNET) SUBNET_VALUE="${val}"; SUBNET_SOURCE="hosts/${HOST}/host.env"; continue ;;
 			*) continue ;;
 		esac
 		# shellcheck disable=SC2088  # matching a literal leading ~/ from the file is the point here
@@ -180,6 +185,12 @@ load_host_env() {
 		*) [ ! -d /usr/share/zoneinfo ] || [ -f "/usr/share/zoneinfo/${TZ_VALUE}" ] \
 			|| die "${f}: TZ ${TZ_VALUE} is not in /usr/share/zoneinfo on this machine" ;;
 	esac
+	# 2026-11-23: docker picked 172.20.0.0/16 for agentbox on a host whose VPC peers with a
+	# 172.20.0.0/16 VPC, and the bridge route shadowed it. The value reaches a remote shell, so only
+	# a plain IPv4 CIDR passes.
+	if [ -n "${SUBNET_VALUE}" ] && ! [[ "${SUBNET_VALUE}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]]; then
+		die "${f}: AGENTBOX_SUBNET must be an IPv4 CIDR such as 198.18.0.0/24, got '${SUBNET_VALUE}'"
+	fi
 	if [ -n "${VERSION_FLAG}" ]; then
 		AGENTBOX_VERSION="${VERSION_FLAG}"; VERSION_SOURCE="--image-version"
 	fi
@@ -310,6 +321,11 @@ print_plan() {
 	echo "  version:   ${AGENTBOX_VERSION} (from ${VERSION_SOURCE})" >&2
 	echo "  profile:   ${AGENTBOX_PROFILE} (from ${PROFILE_SOURCE})" >&2
 	echo "  timezone:  ${TZ_VALUE} (from ${TZ_SOURCE})" >&2
+	if [ -n "${SUBNET_VALUE}" ]; then
+		echo "  subnet:    ${SUBNET_VALUE} (from ${SUBNET_SOURCE})" >&2
+	else
+		echo "  subnet:    ${SUBNET_SOURCE}" >&2
+	fi
 	echo "  will sync: instances/ (docker-compose.yaml + config.toml + env + file credentials, env as 0600; workspace/ and workspace-init/ excluded)" >&2
 	echo "  instances/ on the server is mirrored; a directory the repo no longer has must be retired with remove first" >&2
 	while IFS= read -r n; do
@@ -449,7 +465,11 @@ remote_up() {
 	log="${LOG_DIR}/${ts}-deploy-${HOST}.log"
 	# The compose file declares networks: agentbox: external: true, so the network must exist
 	# before the first `docker compose up` on a fresh host; the inspect/create pair is idempotent.
+	# A pinned subnet was already compared against an existing network by check_network.
 	local ensure_net="docker network inspect agentbox >/dev/null 2>&1 || docker network create agentbox"
+	if [ -n "${SUBNET_VALUE}" ]; then
+		ensure_net="docker network inspect agentbox >/dev/null 2>&1 || docker network create --subnet ${SUBNET_VALUE} agentbox"
+	fi
 	# --force-recreate is what makes a config change land. config.toml and env reach the container
 	# as bind mounts, so compose sees an unchanged service definition and leaves the container
 	# running -- and rsync replaces the file rather than rewriting it, so even the running
@@ -461,7 +481,7 @@ remote_up() {
 		cmd="${cmd} && echo '==> ${n}' && cd '${DEPLOY_DIR}/instances/${n}' && docker compose config -q && docker compose pull && docker compose up -d --force-recreate && docker compose ps"
 	done < <(list_instances)
 	if [ "${DRY_RUN}" -eq 1 ]; then
-		echo "plan: ensure docker network agentbox exists on the host" >&2
+		echo "plan: ensure docker network agentbox exists on the host (subnet: ${SUBNET_VALUE:-${SUBNET_SOURCE}})" >&2
 		echo "plan: ssh ${DEPLOY_HOST} -- ${cmd}" >&2
 		return 0
 	fi
@@ -546,7 +566,16 @@ init_workspaces() {
 	done < <(list_instances)
 }
 
+# Read-only preflight for a pinned subnet: an existing network is compared, never recreated, since
+# removing it means stopping every instance on the host, which is the operator's call. It runs before
+# sync_host so a refused host is left exactly as it was. ${cur} expands remotely.
+check_network() {
+	[ -n "${SUBNET_VALUE}" ] || return 0
+	rssh "if docker network inspect agentbox >/dev/null 2>&1; then cur=\$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' agentbox); [ \"\${cur}\" = '${SUBNET_VALUE}' ] || { echo \"Error: docker network agentbox has subnet \${cur}, host.env wants ${SUBNET_VALUE}; stop every instance on this host, docker network rm agentbox, then deploy again\" >&2; exit 2; }; fi"
+}
+
 do_deploy() {
+	check_network
 	sync_host
 	[ "${DRY_RUN}" -eq 1 ] || prepare_workspaces
 	init_workspaces

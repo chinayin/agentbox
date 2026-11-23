@@ -90,7 +90,9 @@ volumes:
 
 ## 6. 网络与资源
 
-所有 agentbox 容器共用一张宿主级网络 `agentbox`，宿主一次性 `docker network create agentbox`，每个实例的 compose 声明 `external: true`。docker 内置 DNS 按网络划分，任何实例都能用容器名 `agentbox-<name>` 解析到另一个；共用旁路服务（模型网关、内网 git）加入这张网即可。网络互通不等于 agent 互调（§3）。
+所有 agentbox 容器共用一张宿主级网络 `agentbox`，由 `deploy` 在缺失时创建，每个实例的 compose 声明 `external: true`。docker 内置 DNS 按网络划分，任何实例都能用容器名 `agentbox-<name>` 解析到另一个；共用旁路服务（模型网关、内网 git）加入这张网即可。网络互通不等于 agent 互调（§3）。
+
+**网段默认由 docker 自选，与宿主要访问的网络重叠时必须在 `host.env` 写 `AGENTBOX_SUBNET`。** docker 自选的段可能与对端 VPC 或专线重叠，网桥路由会盖住对端，宿主与容器都到不了它。`AGENTBOX_SUBNET` 没有默认值、不进 `defaults.env`：哪一段不撞取决于这台宿主连着什么。已存在的网络网段不符时 `deploy` 报错停止，不自动重建；迁移要停掉该宿主全部实例、`docker network rm agentbox`，再 `deploy`。docker0 与其他 compose 项目的网段由 `daemon.json` 的 `bip` / `default-address-pools` 决定，改它要重启 docker，不归 agentbox 管。
 
 **网络层不做信任域隔离**，隔离靠各自独立的 `env_file` 与卷（[CREDENTIALS](CREDENTIALS.md) §4）。`internal: true` 不能拿来做隔离：它切断的是出站。
 
