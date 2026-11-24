@@ -12,9 +12,11 @@ steps in the final message and keep the wording; each one exists because of a re
    by `plan`.
 2. **Create the chat app.** One app per instance: the long connection is exclusive, so reusing
    another instance's app makes the two steal each other's messages. Follow `docs/CHANNELS.md`
-   for the platform: on Feishu, paste the §2.2 JSON into 权限管理 → 批量导入 instead of picking
-   scopes by hand, subscribe the event and callback in the same table over the long connection,
-   then publish a version. The JSON carries scopes only; the event and callback stay manual.
+   for the platform. On Feishu, create the app by hand in the console (§2.1; the QR template
+   grants far more scopes than needed), then paste the §2.2 JSON into 权限管理 → 批量导入 —
+   copy that JSON into this step so the user has it in hand — subscribe the event and callback
+   in the same table over the long connection, and publish a version. The JSON carries scopes
+   only; the event and callback stay manual.
 3. **Fill in the values.** The `env` next to `config.toml` is the real file, already `0600`.
    Every `${NAME}` in `config.toml` must have a value in `env`. Use a
    budgeted virtual key for `ANTHROPIC_AUTH_TOKEN`, not a master key (`docs/CREDENTIALS.md` §1).

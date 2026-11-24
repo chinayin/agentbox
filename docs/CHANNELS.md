@@ -12,22 +12,15 @@
 
 ## 2. 飞书
 
-### 2.1 建应用的两条路
+### 2.1 建应用
 
-**扫码模板（上游命令）。** cc-connect 内置 `feishu new`：向飞书注册接口申请 `PersonalAgent` 模板应用，终端出二维码，用飞书手机 App 扫码建应用并回填凭据；飞书按模板预配权限与事件订阅。任意装有 cc-connect 的机器都能跑：
+必须在[开放平台](https://open.feishu.cn/)后台手建：控制台 → 创建企业自建应用 → 「应用能力」启用机器人 → 「凭据与基础信息」取 App ID / App Secret → 按 §2.2 配权限、事件、回调 → 「版本管理与发布」创建版本并发布。
 
-```bash
-cc-connect feishu new --config /tmp/onboard.toml --project demo --qr-image /tmp/qr.png
-# Lark international tenant: add --platform-type lark
-```
-
-`--config` 指向一个临时文件，只用来接收 `app_id` / `app_secret`；抄进部署仓库 `env` 后必须删掉临时文件。镜像内跑通这条路是 [ROADMAP](ROADMAP.md) 事项，跑通前以后台核验为准。
-
-**后台手建。** [开放平台](https://open.feishu.cn/) 控制台 → 创建企业自建应用 → 「应用能力」启用机器人 → 「凭据与基础信息」取 App ID / App Secret → 按 §2.2 配权限、事件、回调 → 「版本管理与发布」创建版本并发布。
+不得用扫码模板建应用（`cc-connect feishu new`、`lark-cli config init --new` 都是）：模板不接受权限参数，建出来的权限远超 §2.2，只能在后台逐个删，实测见 [DECISIONS](DECISIONS.md)。
 
 ### 2.2 应用必须具备的配置
 
-两条路的终态相同，以后台实际状态为准。「权限管理 → 批量导入」接受下面的 JSON，可整段粘贴：
+「权限管理 → 批量导入」接受下面的 JSON，整段粘贴：
 
 ```json
 {
