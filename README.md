@@ -91,4 +91,6 @@ make lock      # 升级工具链到上游最新（通常由 CI 的 lock.yml 跑�
 
 ## 参与与许可
 
-干活规则见 [CLAUDE.md](CLAUDE.md)，安全问题报告见 [SECURITY](SECURITY.md)。代码以 [MIT](LICENSE) 许可发布。
+干活规则见 [CLAUDE.md](CLAUDE.md)，安全问题报告见 [SECURITY](SECURITY.md)。
+
+源码以 [Apache License 2.0](LICENSE) 发布，版权与归属声明见 [NOTICE](NOTICE)。许可覆盖本仓库的 Dockerfile、脚本与文档，**不覆盖**镜像中随系统包管理器或上游安装器装入的第三方软件：Debian 基础镜像、mise、Claude Code 与 pi 各自仍受其自身许可与服务条款约束，分发镜像前需自行确认这些条款允许你的分发方式。

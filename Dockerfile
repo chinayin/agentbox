@@ -98,7 +98,8 @@ WORKDIR /workspace
 LABEL org.opencontainers.image.title="agentbox" \
       org.opencontainers.image.version="${AGENTBOX_VERSION}" \
       org.opencontainers.image.description="Mount-driven runtime image for chat-ops AI agents" \
-      org.opencontainers.image.source="https://github.com/chinayin/agentbox"
+      org.opencontainers.image.source="https://github.com/chinayin/agentbox" \
+      org.opencontainers.image.licenses="Apache-2.0"
 
 ENTRYPOINT ["/entrypoint.sh"]
 
