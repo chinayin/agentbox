@@ -1,6 +1,3 @@
-# Matches what the repo already contains: shell and Makefile recipes are tab-indented, everything
-# structured (compose, workflows, toml) is two spaces. Documentation keeps its trailing whitespace
-# because a Markdown line break is two trailing spaces.
 root = true
 
 [*]
@@ -11,13 +8,17 @@ trim_trailing_whitespace = true
 indent_style = space
 indent_size = 4
 
-[*.{sh,bash}]
+[*.go]
 indent_style = tab
 
 [Makefile]
 indent_style = tab
 
-[*.{yaml,yml,toml}]
+# Deviates from the team standard (indent_size = 2): every script in this repo is tab-indented.
+[*.{sh,bash,bats}]
+indent_style = tab
+
+[*.{yaml,yml,toml,json}]
 indent_size = 2
 
 [*.md]

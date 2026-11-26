@@ -35,24 +35,26 @@ BAKE = IMAGE=$(IMAGE) VERSION=$(VERSION) PLATFORMS=$(PLATFORM) \
 # MISE_ENV=claude,pi loads mise.toml plus every agent overlay and writes all lock files in one run.
 LOCK = MISE_ENV=claude,pi MISE_TRUSTED_CONFIG_PATHS=$(CURDIR) $(MISE) lock
 
-.PHONY: help image image-claude image-pi lock lock-refresh test lint smoke check
+.DEFAULT_GOAL := help
+.PHONY: help image image-claude image-pi lock lock-refresh test lint smoke check ensure-docker ensure-mise
 
 help: ## Show this help
-	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  make %-13s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  make %-13s - %s\n", $$1, $$2}'
 
-image: ## Build both images (agentbox:<VERSION> and -pi), in parallel
+image: ensure-docker ## Build both images (agentbox:<VERSION> and -pi), in parallel
 	@$(BAKE)
 
-image-claude: ## Build agentbox:<VERSION> (Claude Code)
+image-claude: ensure-docker ## Build agentbox:<VERSION> (Claude Code)
 	@$(BAKE) claude
 
-image-pi: ## Build agentbox:<VERSION>-pi (pi)
+image-pi: ensure-docker ## Build agentbox:<VERSION>-pi (pi)
 	@$(BAKE) pi
 
-lock: ## Bump every tool to upstream latest and rewrite lock files (network)
+lock: ensure-mise ## Bump every tool to upstream latest and rewrite lock files (network)
 	@$(LOCK) --bump
 
-lock-refresh: ## Re-resolve URLs/checksums for the locked versions without bumping (network)
+lock-refresh: ensure-mise ## Re-resolve URLs/checksums for the locked versions without bumping (network)
 	@$(LOCK)
 
 test: ## Self-test, no docker, no network
@@ -66,3 +68,10 @@ smoke: ## Runtime smoke test against built images (docker)
 	@bash scripts/smoke.sh --image $(IMAGE):$(VERSION) --pi-image $(IMAGE):$(VERSION)-pi $(if $(PLATFORM),--platform $(PLATFORM))
 
 check: test lint ## Pre-commit gate, no docker
+
+# smoke needs no guard here: scripts/smoke.sh checks docker itself.
+ensure-docker:
+	@docker buildx version >/dev/null 2>&1 || { echo "Error: docker with buildx required (https://docs.docker.com/get-docker/)" >&2; exit 2; }
+
+ensure-mise:
+	@command -v $(MISE) >/dev/null || { echo "Error: mise required (https://mise.jdx.dev/getting-started.html), or point MISE=/path/to/mise" >&2; exit 2; }
