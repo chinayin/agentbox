@@ -37,7 +37,7 @@ jobs:
         run: echo "version=$(python3 -c 'import tomllib; print(tomllib.load(open("mise.toml","rb"))["min_version"])')" >> "$GITHUB_OUTPUT"
 
       - name: Install mise
-        uses: jdx/mise-action@v4
+        uses: jdx/mise-action@v5
         with:
           version: ${{ steps.mise.outputs.version }}
           install: false
