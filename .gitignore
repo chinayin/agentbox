@@ -1,25 +1,33 @@
-# secrets: only *.example is tracked
-/.env
-examples/*/env
+# Secrets and local overrides; only the examples are tracked
+.env
+.env.*
+!.env.example
+# Redundant with .env above, kept because scripts/test.sh asserts this exact line
 .claude/skills/*/.env
-# the private deploy repository, cloned or symlinked here; see .claude/skills/deploy/references/deploy-repo.md
-/deploy-repo
+examples/*/env
 *.pem
 id_ed25519*
+# the private deploy repository, cloned or symlinked here; see .claude/skills/deploy/references/deploy-repo.md
+/deploy-repo
 
-# local artifacts and tool caches
+# Machine-local artifacts: exports, e2e output, virtualenvs
+/local/
 runtime/
-.claude/worktrees/
-.codegraph/
-.superpowers/
 __pycache__/
 *.pyc
 *.bak
 *.bak.*
-.DS_Store
 
-# editors
+# OS and editors
+.DS_Store
 .idea/
 .vscode/
 *.swp
 *.swo
+
+# Agent tooling
+.claude/worktrees/
+.superpowers/
+.worktrees/
+.codegraph/
+.kiro/
