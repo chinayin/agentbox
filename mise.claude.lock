@@ -3,16 +3,16 @@
 lockfile_version = 1
 
 [[tools."aqua:anthropics/claude-code"]]
-version = "2.1.330"
+version = "2.1.332"
 backend = "aqua:anthropics/claude-code"
 specifiers = ["latest"]
 
 [tools."aqua:anthropics/claude-code"."platforms.linux-arm64"]
-checksum = "sha256:d14fa911fec091b5e0365fa55f900d3b596e4bf5040a9fac79ca417ec370287c"
-url = "https://github.com/anthropics/claude-code/releases/download/v2.1.330/claude-linux-arm64.tar.gz"
-url_api = "https://api.github.com/repos/anthropics/claude-code/releases/assets/773030060"
+checksum = "sha256:e9378099be748c8dd473884ec47cf8eea5dfcc3ae70cfaeba2695d06846d28f2"
+url = "https://github.com/anthropics/claude-code/releases/download/v2.1.332/claude-linux-arm64.tar.gz"
+url_api = "https://api.github.com/repos/anthropics/claude-code/releases/assets/789036289"
 
 [tools."aqua:anthropics/claude-code"."platforms.linux-x64"]
-checksum = "sha256:4d2cde1b749a0c9badcb7ad2ac49d735eebb66b5d503b6e073b81e356ffd5f54"
-url = "https://github.com/anthropics/claude-code/releases/download/v2.1.330/claude-linux-x64.tar.gz"
-url_api = "https://api.github.com/repos/anthropics/claude-code/releases/assets/773030426"
+checksum = "sha256:cab5bc60de00f7238b7974d281db4c177385490744ee44b329f6509e1606ca3c"
+url = "https://github.com/anthropics/claude-code/releases/download/v2.1.332/claude-linux-x64.tar.gz"
+url_api = "https://api.github.com/repos/anthropics/claude-code/releases/assets/789036647"
